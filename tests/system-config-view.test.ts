@@ -1,8 +1,12 @@
-import { expect, test } from "bun:test"
+import { afterEach, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { runInNewContext } from "node:vm"
 import { getSystemConfig, initializeSystemConfig } from "~/lib/system-config"
 import { systemConfigApiRoutes } from "~/routes/admin/api/system-config"
+
+afterEach(() => {
+  initializeSystemConfig({ save: () => {}, onChange: () => {} })
+})
 
 test("system settings display MiB and save the selected storage budget", async () => {
   const settings = {

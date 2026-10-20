@@ -364,6 +364,15 @@ function buildOAuthAccountFromImportPayload(
       accountId: pickCredentialString("accountId"),
       projectId: pickCredentialString("projectId"),
       deviceId: pickCredentialString("deviceId"),
+      ...(provider === "trae-cn" ?
+        {
+          clientId: pickCredentialString("clientId"),
+          machineId: pickCredentialString("machineId"),
+          apiHost: pickCredentialString("apiHost"),
+          devicePublicKey: pickCredentialString("devicePublicKey"),
+          devicePrivateKey: pickCredentialString("devicePrivateKey"),
+        }
+      : {}),
       email: pickCredentialString("email"),
     },
     settings: {

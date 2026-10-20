@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import { Hono } from "hono"
 
 import {
@@ -22,6 +22,8 @@ import { clearTraceBusForTest, recentTraces } from "~/lib/trace-bus"
 import { statsStore } from "~/lib/stats-store"
 
 describe("log middleware", () => {
+  beforeEach(resetGuardForTest)
+
   afterEach(() => {
     resetGuardForTest()
     logStore.clearForTest()

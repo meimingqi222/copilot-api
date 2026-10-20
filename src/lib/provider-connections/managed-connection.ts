@@ -182,6 +182,15 @@ function tokenContextOf(
       oauthAccountId: readString(credentials, "accountId"),
       projectId: readString(credentials, "projectId"),
       deviceId: readString(credentials, "deviceId"),
+      ...(provider === "trae-cn" ?
+        {
+          clientId: readString(credentials, "clientId"),
+          machineId: readString(credentials, "machineId"),
+          apiHost: readString(credentials, "apiHost"),
+          devicePublicKey: readString(credentials, "devicePublicKey"),
+          devicePrivateKey: readString(credentials, "devicePrivateKey"),
+        }
+      : {}),
       apiKey: readString(credentials, "apiKey"),
       // email 同时落入 context(供 connection 原生 label/subtitle 推断读取)
       // 与 credentialExtras(导出/导入往返)。
@@ -270,7 +279,7 @@ export function managedConnectionFromInput(
   const primaryTokenKey = getPrimaryTokenKey(provider)
   const extras: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(input.credentials ?? {})) {
-    if (key === primaryTokenKey) continue
+    if (key === primaryTokenKey || key === "devicePrivateKey") continue
     if (value !== undefined) extras[key] = value
   }
 
@@ -465,6 +474,18 @@ function connectionCredentialRecord(
   if (extraKeys) {
     for (const [key, value] of Object.entries(extraKeys)) {
       if (value !== undefined) credentials[key] = value
+    }
+  }
+  // 设备密钥以当前 context 为准，不能被导入时的旧展示镜像覆盖。
+  if (provider === "trae-cn" && ctx) {
+    for (const key of [
+      "clientId",
+      "machineId",
+      "apiHost",
+      "devicePublicKey",
+      "devicePrivateKey",
+    ]) {
+      if (ctx[key] !== undefined) credentials[key] = ctx[key]
     }
   }
   return credentials

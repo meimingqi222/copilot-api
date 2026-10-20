@@ -7,7 +7,7 @@
  *   POST /api/agent/v3/llm_utils_chat   永远 text/event-stream 应答
  *
  * 鉴权用 Cloud-IDE-JWT + IDE 指纹头（services/trae-cn/client.ts）。
- * OpenAI chat 请求先翻成 Trae 的消息形状 + `<tool_call>` 文本协议
+ * OpenAI chat 请求先翻成 Trae 的消息形状和原生工具历史
  * （traeCnMessages / traeCnChatBody），SSE 事件翻回 OpenAI chunk
  * （traeCnStreamEvents / traeCnCollect）。
  *

@@ -3,7 +3,7 @@
  *
  * 登录：浏览器走 trae.cn 的授权页（callback 型，回调到本地
  * 127.0.0.1:57557/authorize，query 里 userJwt + userInfo）；
- * ExchangeToken 轮换刷新（refresh token 一次性）；
+ * 优先设备绑定 ExchangeToken，旧版轮换刷新作为兼容回退；
  * 模型走 trae-cn-native adapter 的 IDE agent SSE 通道。
  */
 
@@ -107,12 +107,12 @@ const traeCnStrategy: OAuthProviderStrategy = {
 
 const refreshAuth = prepareOAuthRefresh(
   async (connection, refreshToken, options) => {
+    const account = traeCnAccount(connection)
     const exchanged = await exchangeTraeCnToken(
       refreshToken,
       // clientId 决定 Trae 把新 token 签给谁，不能丢。
-      (connection.credentials[0]?.context?.clientId as string | undefined)
-        ?? undefined,
-      options,
+      account.clientId,
+      { ...options, device: account, token: account.token },
     )
     applyTraeCnTokenBundle(connection, exchanged)
   },
@@ -155,6 +155,7 @@ async function discoverTraeCnModels(
   const listed = await traeCnListModels(
     (url, body) => postJson(connection, url, body),
     account.apiHost,
+    connection.id,
   )
   return listed.map((m) => ({
     publicId: canonicalNativeModelId(m.id),

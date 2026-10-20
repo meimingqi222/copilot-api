@@ -12,10 +12,9 @@
  * - Trae 的一个「chat function」（chat_v3 / solo_work_lite / solo_agent /
  *   solo_agent_lite）不是全模型：模型列表按 function 拿，请求时先试
  *   「列出过这个模型的 function」，code 4001/4023/1005 时轮换下一个。
- * - 会话里无 tool 回合：tools 以系统提示 + 文本协议
- *   `<tool_call>{json}</tool_call>` 下发，历史调用与结果回填成文本；模型把
- *   call 写成块时再从文本里剥出来还原成 OpenAI tool_calls。模型有时不按
- *   提示写 JSON，而用 Trae IDE 插件的
+ * - 声明 tools 时，历史调用与结果使用原生 tool_calls / tool 消息；
+ *   未声明 tools 或 tool_choice=none 时才回填成文本。模型仍可能用
+ *   `<tool_call>{json}</tool_call>` 或 Trae IDE 插件的
  *   `<function=name><parameter=k>v</parameter>` XML 形态——两种都要剥
  *   （见 `~/services/tool-call-text`）。
  */
@@ -88,7 +87,7 @@ export function traeCnIdeHeaders(
 
 // ── function 轮换状态 ──────────────────────────────────────────
 
-// 模型 id → 列出它的 function（模型发现时记下）；function → dev model name。
+// [连接 id, 模型 id] → 该账号发现的 function / dev model name。
 const listedByModel = new Map<string, string>()
 const devNameByModel = new Map<string, { fn: string; name: string }>()
 // 账号 → 上次成功服务的 function。
@@ -118,13 +117,14 @@ export function traeCnFunctionOrder(
   connectionId: string,
   model: string,
 ): Array<{ fn: string; modelName?: string }> {
-  const listed = listedByModel.get(model)
+  const key = JSON.stringify([connectionId, model])
+  const listed = listedByModel.get(key)
   const last = lastFunctionByConnection.get(connectionId)
   const fns: Array<string> = []
   for (const fn of [listed, last, ...TRAE_CN_FUNCTIONS]) {
     if (fn && !fns.includes(fn)) fns.push(fn)
   }
-  const dev = devNameByModel.get(model)
+  const dev = devNameByModel.get(key)
   return fns.map((fn) => ({
     fn,
     modelName: dev?.fn === fn ? dev.name : undefined,
@@ -135,48 +135,12 @@ export function traeCnNoteFunction(connectionId: string, fn: string): void {
   cappedSet(lastFunctionByConnection, connectionId, fn)
 }
 
-// ── 消息翻译（text-only 会话 + 文本 tool 协议） ─────────────────
+// ── 消息翻译（原生工具历史 + 无工具请求的文本回放） ─────────────
 
 interface TraeToolSpec {
   name?: string
   description?: string
   parameters?: unknown
-}
-
-function toolPrompt(
-  tools: Array<Record<string, unknown>>,
-  choice: unknown,
-  parallel: unknown,
-): string {
-  const defs = tools.map((t) => {
-    const f =
-      typeof t.function === "object" && t.function ?
-        (t.function as TraeToolSpec)
-      : (t as TraeToolSpec)
-    return {
-      name: f.name,
-      description: f.description ?? "",
-      parameters: f.parameters ?? {},
-    }
-  })
-  const lines = [
-    "You can call the client's tools, listed below as JSON. They run on the user's machine, not on yours: use no built-in or server tool to reach the user's files.",
-    `To call a tool, write one block per call and nothing after it: ${TOOL_OPEN}{"name":"tool_name","arguments":{...}}${TOOL_CLOSE}. Use an exact tool name and fill arguments from its schema. Then stop and wait: the result comes back in the next message.`,
-    "A call is not done until its result comes back; don't say it is, and don't repeat a call whose result you have.",
-  ]
-  if (parallel === false) lines.push("Call at most one tool at a time.")
-  const named =
-    typeof choice === "object" && choice ?
-      (choice as { function?: { name?: string }; name?: string })
-    : undefined
-  if (choice === "required") lines.push("Call a tool before answering.")
-  else if (named?.function?.name || named?.name) {
-    lines.push(
-      `Call the tool ${named.function?.name ?? named.name} before answering.`,
-    )
-  }
-  lines.push("Tools:", JSON.stringify(defs))
-  return lines.join("\n")
 }
 
 function partText(content: unknown): string {
@@ -200,33 +164,54 @@ function partText(content: unknown): string {
     .join("\n")
 }
 
-/** OpenAI 消息 → Trae 的 {role, content:[{type:text}]} 列表。 */
+interface TraeMessage {
+  role: string
+  content: Array<{ type: string; text: string }> | null
+  tool_calls?: Array<{
+    id: string
+    type: "function"
+    function_call: { name: string; arguments: string }
+  }>
+  tool_call_id?: string
+}
+
+/** OpenAI 消息 → Trae 消息；原生历史与原生 tools 使用同一协议。 */
 export function traeCnMessages(
   payload: ChatCompletionsPayload,
-): Array<{ role: string; content: Array<{ type: string; text: string }> }> {
-  const tools =
-    (
-      Array.isArray(payload.tools)
-      && payload.tools.length > 0
-      && payload.tool_choice !== "none"
-    ) ?
-      (payload.tools as unknown as Array<Record<string, unknown>>)
-    : []
+): Array<TraeMessage> {
+  const native =
+    Array.isArray(payload.tools)
+    && payload.tools.length > 0
+    && payload.tool_choice !== "none"
   const names = new Map<string, string>()
-  const out: Array<{ role: string; text: string }> = []
-  if (tools.length > 0) {
-    out.push({
-      role: "system",
-      text: toolPrompt(
-        tools,
-        payload.tool_choice,
-        (payload as { parallel_tool_calls?: boolean }).parallel_tool_calls,
-      ),
-    })
-  }
+  const dropped = new Set<string>()
+  const out: Array<{
+    role: string
+    text: string
+    tool_calls?: TraeMessage["tool_calls"]
+    tool_call_id?: string
+  }> = []
   for (const m of payload.messages ?? []) {
     const role = m.role === "developer" ? "system" : m.role
     let text = partText(m.content)
+    if (native && role === "assistant" && m.tool_calls?.length) {
+      const calls: NonNullable<TraeMessage["tool_calls"]> = []
+      for (const c of m.tool_calls) {
+        const name = c.function.name.trim()
+        if (!name) {
+          dropped.add(c.id)
+          continue
+        }
+        names.set(c.id, name)
+        calls.push({
+          id: c.id,
+          type: "function",
+          function_call: { name, arguments: c.function.arguments },
+        })
+      }
+      out.push({ role, text, ...(calls.length ? { tool_calls: calls } : {}) })
+      continue
+    }
     if (role === "assistant") {
       const calls = (m.tool_calls ?? []).map((c) => {
         const fn = c.function as { name?: string; arguments?: unknown }
@@ -248,6 +233,12 @@ export function traeCnMessages(
       text = [text, ...calls].filter(Boolean).join("\n")
       out.push({ role: "assistant", text })
     } else if (role === "tool") {
+      const id = m.tool_call_id ?? ""
+      if (native && dropped.has(id)) continue
+      if (native && names.has(id)) {
+        out.push({ role, tool_call_id: id, text: text || "(no output)" })
+        continue
+      }
       out.push({
         role: "user",
         text: `Result of ${names.get(m.tool_call_id ?? "") || m.name || "the tool"} (call ${m.tool_call_id ?? "?"}):\n${text}`,
@@ -256,20 +247,24 @@ export function traeCnMessages(
       out.push({ role: role === "system" ? "system" : "user", text })
     }
   }
-  // Trae 不接受空消息，也不接受同一角色连续两条（system 除外）。
-  const merged: Array<{ role: string; text: string }> = []
+  // 并行调用的 tool 结果必须独立且连续；只合并普通同角色消息。
+  const merged: typeof out = []
   for (const m of out) {
-    if (!m.text) continue
+    if (!m.text && !m.tool_calls?.length) continue
     const last = merged[merged.length - 1]
-    if (last && last.role === m.role && m.role !== "system") {
-      last.text += "\n\n" + m.text
+    if (last && last.role === m.role && !["system", "tool"].includes(m.role)) {
+      last.text = [last.text, m.text].filter(Boolean).join("\n\n")
+      if (m.tool_calls)
+        last.tool_calls = [...(last.tool_calls ?? []), ...m.tool_calls]
     } else {
       merged.push({ ...m })
     }
   }
   return merged.map((m) => ({
     role: m.role,
-    content: [{ type: "text", text: m.text }],
+    content: m.text ? [{ type: "text", text: m.text }] : null,
+    ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+    ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
   }))
 }
 
@@ -843,6 +838,7 @@ interface TraeCnListedModel {
 export async function traeCnListModels(
   post: TraeCnPost,
   apiHost: string,
+  connectionId: string,
 ): Promise<Array<TraeCnListedModel>> {
   let lists = await batchLists(post, apiHost).catch(() => null)
   if (!lists) {
@@ -873,11 +869,12 @@ export async function traeCnListModels(
   }
   const out: Array<TraeCnListedModel> = []
   for (const [id, { m, fn }] of picked) {
-    cappedSet(listedByModel, id, fn)
+    const key = JSON.stringify([connectionId, id])
+    cappedSet(listedByModel, key, fn)
     const dev = devModel(m)
     if (dev?.model_name) {
-      cappedSet(devNameByModel, id, { fn, name: dev.model_name })
-    } else devNameByModel.delete(id)
+      cappedSet(devNameByModel, key, { fn, name: dev.model_name })
+    } else devNameByModel.delete(key)
     const ctxMax = m.context_window_size?.max
     out.push({
       id,

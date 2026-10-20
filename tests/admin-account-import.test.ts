@@ -29,6 +29,18 @@ import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
 import { cancelAllCodebuddyRefreshTimers } from "~/services/codebuddy/token-refresh"
 import { initializeProviderRegistry } from "~/services/providers"
+import {
+  listAccountManagedConnections,
+  serializeConnectionForExport,
+  setConnectionCredentialExtra,
+} from "~/lib/provider-connections"
+import { createOAuthConnection } from "~/services/oauth/strategy-types"
+import {
+  applyTraeCnOAuthBundle,
+  newTraeCnDevice,
+  traeCnAccount,
+} from "~/services/oauth/trae-cn"
+import { cancelAllOAuthRefreshTimers } from "~/services/oauth/refresh-scheduler"
 
 import {
   adminHeaders,
@@ -99,6 +111,7 @@ afterEach(async () => {
   // The codebuddy import branch schedules a long refresh timer; without this
   // the test process hangs on the live handle after the last test.
   cancelAllCodebuddyRefreshTimers()
+  cancelAllOAuthRefreshTimers()
   setTestAccounts(originalAccounts)
   globalThis.fetch = originalFetch
   redirectPathsToDir(isolationRoot)
@@ -338,6 +351,54 @@ describe("standard account import (non-OAuth providers)", () => {
     )
     expect(response.status).toBe(400)
   })
+})
+
+test("Trae export/import preserves the bound device without exposing its private key in ordinary responses", async () => {
+  const device = newTraeCnDevice()
+  const original = createOAuthConnection("trae-cn", "bound-trae")
+  applyTraeCnOAuthBundle(original, {
+    token: "access",
+    refresh: "refresh",
+    expires: Date.now() + 3600_000,
+    clientId: "ono9krqynydwx5",
+    uid: "test-user",
+    name: "bound-trae",
+    api: "https://trae-api-cn.mchost.guru",
+    device,
+  })
+  setConnectionCredentialExtra(original, "devicePublicKey", "stale-public-key")
+  const { body } = await importAccounts([
+    serializeConnectionForExport(original),
+  ])
+  expect(body.imported).toBe(1)
+  expect(body.failed).toBe(0)
+  const restored = listAccountManagedConnections().find(
+    (c) => c.name === "bound-trae",
+  )!
+  const account = traeCnAccount(restored)
+  expect(account.deviceId).toBe(device.deviceId)
+  expect(account.machineId).toBe(device.machineId)
+  expect(
+    account.devicePrivateKey?.trim() === device.devicePrivateKey?.trim(),
+  ).toBe(true)
+  expect(
+    account.devicePublicKey?.trim() === device.devicePublicKey?.trim(),
+  ).toBe(true)
+  expect(account.clientId).toBe("ono9krqynydwx5")
+  expect(account.apiHost).toBe("https://trae-api-cn.mchost.guru")
+  const detail = await adminJson("http://localhost/admin/api/accounts")
+  expect(detail.status).toBe(200)
+  const detailBody = (await detail.json()) as {
+    accounts: Array<{ id: string }>
+  }
+  expect(detailBody.accounts).toContainEqual(
+    expect.objectContaining({ id: restored.id }),
+  )
+  expect(
+    JSON.stringify(detailBody).includes(
+      JSON.stringify(account.devicePrivateKey),
+    ),
+  ).toBe(false)
 })
 
 /** Guard against the extraction dropping the provider on the account shape. */

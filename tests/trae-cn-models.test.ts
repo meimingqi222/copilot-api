@@ -47,6 +47,7 @@ test("TRAE agent metadata wins when the same model has dev entries in multiple m
       },
     }),
     "https://models.example",
+    "account",
   )
 
   expect(models).toEqual([
@@ -77,6 +78,7 @@ test("different upstream IDs remain separate even when their display names match
       },
     }),
     "https://models.example",
+    "account",
   )
   expect(models.map((entry) => entry.id)).toEqual([
     "deepseek-v4.1-flash",
@@ -110,7 +112,49 @@ test("a usable dev configuration still wins over TRAE agent entries without dev"
       },
     }),
     "https://models.example",
+    "account",
   )
   expect(models[0]?.name).toBe("Usable model")
   expect(traeCnFunctionOrder("account", id)[0]?.fn).toBe("chat_v3")
+})
+
+test("model discovery on another account cannot overwrite this account's wire configuration", async () => {
+  for (const [account, fn, wire] of [
+    ["first", "solo_agent", "first-model__dev"],
+    ["second", "chat_v3", "second-model__dev"],
+  ] as const) {
+    await traeCnListModels(
+      async () => ({
+        status: 200,
+        text: "",
+        v: {
+          function_configs: [
+            {
+              function: fn,
+              config_info_list: [
+                {
+                  ...model("shared", account),
+                  model_detail_list: [{ model_name: wire }],
+                },
+              ],
+            },
+          ],
+        },
+      }),
+      "https://models.example",
+      account,
+    )
+  }
+  expect(traeCnFunctionOrder("first", "shared")[0]).toEqual({
+    fn: "solo_agent",
+    modelName: "first-model__dev",
+  })
+  expect(traeCnFunctionOrder("second", "shared")[0]).toEqual({
+    fn: "chat_v3",
+    modelName: "second-model__dev",
+  })
+  expect(traeCnFunctionOrder("undiscovered", "shared")[0]).toEqual({
+    fn: "chat_v3",
+    modelName: undefined,
+  })
 })

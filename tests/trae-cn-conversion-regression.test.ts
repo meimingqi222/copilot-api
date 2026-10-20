@@ -7,7 +7,67 @@ import {
   traeCnSse,
   traeCnStreamEvents,
   traeCnChain,
+  traeCnChatBody,
+  traeCnMessages,
 } from "~/services/trae-cn/client"
+
+test("Trae replays parallel calls natively and keeps empty results as answered calls", () => {
+  const payload = {
+    model: "glm",
+    tools: [
+      { type: "function" as const, function: { name: "read", parameters: {} } },
+    ],
+    messages: [
+      { role: "user" as const, content: "read files" },
+      { role: "assistant" as const, content: "checking" },
+      ...["a", "b"].map((id) => ({
+        role: "assistant" as const,
+        content: null,
+        tool_calls: [
+          {
+            id,
+            type: "function" as const,
+            function: { name: "read", arguments: JSON.stringify({ path: id }) },
+          },
+        ],
+      })),
+      { role: "tool" as const, tool_call_id: "a", content: "alpha" },
+      { role: "tool" as const, tool_call_id: "b", content: "" },
+    ],
+  }
+  const body = traeCnChatBody(payload, "chat_v3", "glm")
+  expect(body.messages).toEqual([
+    { role: "user", content: [{ type: "text", text: "read files" }] },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "checking" }],
+      tool_calls: ["a", "b"].map((id) => ({
+        id,
+        type: "function",
+        function_call: {
+          name: "read",
+          arguments: JSON.stringify({ path: id }),
+        },
+      })),
+    },
+    {
+      role: "tool",
+      tool_call_id: "a",
+      content: [{ type: "text", text: "alpha" }],
+    },
+    {
+      role: "tool",
+      tool_call_id: "b",
+      content: [{ type: "text", text: "(no output)" }],
+    },
+  ])
+  expect(
+    traeCnMessages({ ...payload, tool_choice: "none" }).map((m) => m.role),
+  ).toEqual(["user", "assistant", "user"])
+  expect(traeCnMessages({ ...payload, tools: [] })).toEqual(
+    traeCnMessages({ ...payload, tool_choice: "none" }),
+  )
+})
 
 function parse(text: string, size = 1) {
   const parser = new TraeCnTextTools()

@@ -4,19 +4,20 @@
  *  - trae.cn 的授权页（www.trae.cn/authorization）把浏览器送回本地回调
  *    `http://127.0.0.1:<port>/authorize`，query 里带 userJwt（token 对，
  *    编码后的 JSON）和 userInfo（账号，含该账号的模型 host）。
- *  - refresh token 在 api.trae.cn 的 ExchangeToken 换新 Cloud-IDE-JWT；
- *    每次换新签发新的 refresh token，旧的即作废（不可重放）。
+ *  - 优先用设备密钥签名的 ExchangeToken 换新 Cloud-IDE-JWT；
+ *    不支持时退回旧版交换（会轮换 refresh token）。
  *  - 模型请求打到账号自己的模型 host（默认 trae-api-cn.mchost.guru），
  *    鉴权与指纹见 services/trae-cn/client.ts 的 ideHeaders。
  *  - deviceId / machineId 在登录时生成一次，授权页与之后的每个请求都带：
  *    开源 relay 实测每次都换新的 device 会被服务端丢请求。
  */
 
-import { randomBytes, randomInt } from "node:crypto"
+import { generateKeyPairSync, randomBytes, randomInt, sign } from "node:crypto"
 
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { HTTPError } from "~/lib/error"
+import { logger } from "~/lib/logger"
 import {
   getConnectionProvider,
   getCredentialContextString,
@@ -24,8 +25,8 @@ import {
 } from "~/lib/provider-connections"
 import { getConnectionProxyUrl } from "~/lib/provider-connections"
 
-import { applyOAuthBundleToCredential } from "./apply-bundle"
-import { oauthFetch, type OAuthFetchOptions } from "./fetch"
+import { applyOAuthBundleToCredential } from "~/services/oauth/apply-bundle"
+import { oauthFetch, type OAuthFetchOptions } from "~/services/oauth/fetch"
 
 // ── 端点与客户端常量 ────────────────────────────────────────────
 
@@ -89,10 +90,29 @@ function traeJwtExp(token: string): number {
 // ── 设备指纹 ────────────────────────────────────────────────────
 
 export interface TraeCnDevice {
-  /** 19 位数字串。 */
+  /** 新登录使用 16 位数字串；旧账号保留原设备 ID。 */
   deviceId: string
   /** 16 字节 hex。 */
   machineId: string
+  devicePublicKey?: string
+  devicePrivateKey?: string
+}
+
+function newTraeCnDeviceKey(): {
+  devicePublicKey: string
+  devicePrivateKey: string
+} {
+  const { publicKey, privateKey } = generateKeyPairSync("ec", {
+    namedCurve: "prime256v1",
+  })
+  return {
+    devicePublicKey: publicKey
+      .export({ type: "spki", format: "pem" })
+      .toString(),
+    devicePrivateKey: privateKey
+      .export({ type: "pkcs8", format: "pem" })
+      .toString(),
+  }
 }
 
 export function newTraeCnDevice(): TraeCnDevice {
@@ -101,8 +121,9 @@ export function newTraeCnDevice(): TraeCnDevice {
       i === 0 ? randomInt(1, 10) : randomInt(0, 10),
     ).join("")
   return {
-    deviceId: digits(19),
+    deviceId: digits(16),
     machineId: randomBytes(16).toString("hex"),
+    ...newTraeCnDeviceKey(),
   }
 }
 
@@ -227,6 +248,27 @@ export async function parseTraeCnCallbackCode(
     )
   }
   if (!signIn.expires) signIn.expires = traeJwtExp(signIn.token)
+  // 浏览器回调仍是 IDE 登录；立刻换取绑定这台设备的 JWT。
+  // 绑定不可用时保留有效的回调 token，不额外消耗 refresh token。
+  try {
+    const bound = await exchangeTraeCnDeviceToken(
+      signIn.refresh,
+      signIn.clientId,
+      device,
+      { ...options, token: signIn.token },
+    )
+    Object.assign(signIn, {
+      token: bound.token,
+      refresh: bound.refresh,
+      expires: bound.expires || signIn.expires,
+      device: bound.device,
+    })
+  } catch {
+    options?.signal?.throwIfAborted()
+    logger.warn(
+      "[trae-cn] Device binding unavailable; keeping callback credentials",
+    )
+  }
   return signIn
 }
 
@@ -240,6 +282,135 @@ interface TraeCnTokenExchange {
   uid: string
   name: string
   api: string
+  device?: TraeCnDevice
+}
+
+/** 设备绑定优先；旧账号首次刷新生成密钥但保留已登录的设备身份。 */
+export async function exchangeTraeCnToken(
+  refresh: string,
+  clientId: string | undefined,
+  options?: OAuthFetchOptions & { device?: TraeCnDevice; token?: string },
+): Promise<TraeCnTokenExchange> {
+  const device = options?.device
+  if (device?.deviceId && device.machineId) {
+    const boundDevice = {
+      ...device,
+      ...(device.devicePrivateKey && device.devicePublicKey ?
+        {}
+      : newTraeCnDeviceKey()),
+    }
+    try {
+      return await exchangeTraeCnDeviceToken(
+        refresh,
+        clientId,
+        boundDevice,
+        options,
+      )
+    } catch {
+      options?.signal?.throwIfAborted()
+      logger.warn(
+        "[trae-cn] Device-bound renewal unavailable; trying legacy exchange",
+      )
+    }
+    const exchanged = await exchangeLegacyTraeCnToken(
+      refresh,
+      clientId,
+      options,
+    )
+    return { ...exchanged, device: boundDevice }
+  }
+  return exchangeLegacyTraeCnToken(refresh, clientId, options)
+}
+
+async function exchangeTraeCnDeviceToken(
+  refresh: string,
+  clientId: string | undefined,
+  device: TraeCnDevice,
+  options?: OAuthFetchOptions & { token?: string },
+): Promise<TraeCnTokenExchange> {
+  const boundDevice = {
+    ...device,
+    ...(device.devicePrivateKey && device.devicePublicKey ?
+      {}
+    : newTraeCnDeviceKey()),
+  }
+  const path = "/trae/api/v3/oauth/ExchangeToken"
+  let lastError: unknown
+  for (const client of [
+    { id: "en1oxy7wnw8j9n", platform: "SOLO_PC", version: "0.1.64" },
+    { id: TRAE_CN_CLIENT_ID, platform: "IDE_PC", version: "3.3.99" },
+  ]) {
+    options?.signal?.throwIfAborted()
+    const timestamp = Math.floor(Date.now() / 1000)
+    const nonce = randomBytes(16).toString("hex")
+    const proof = [
+      "POST",
+      path,
+      client.id,
+      refresh,
+      String(timestamp),
+      nonce,
+    ].join("\n")
+    try {
+      const response = await oauthFetch(
+        `${TRAE_CN_AUTH_HOST}${path}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(options?.token ?
+              { Authorization: `Cloud-IDE-JWT ${options.token}` }
+            : {}),
+          },
+          body: JSON.stringify({
+            ClientID: client.id,
+            ClientSecret: "",
+            RefreshToken: refresh,
+            IDEVersion: client.version,
+            DeviceInfo: {
+              DeviceID: boundDevice.deviceId,
+              MachineID: boundDevice.machineId,
+              PlatformCode: client.platform,
+              DeviceType: "PC",
+              DeviceName: "",
+              DeviceModel: "",
+              ClientVersion: client.version,
+              DevicePublicKey: boundDevice.devicePublicKey,
+              DeviceBrand: TRAE_CN_DEVICE_BRAND,
+              DeviceCPU: "AMD",
+              OSInfo: "Windows",
+              OSVersion: "10.0.22631",
+            },
+            DeviceProof: {
+              Signature: sign(
+                "sha256",
+                Buffer.from(proof),
+                boundDevice.devicePrivateKey!,
+              ).toString("base64"),
+              Timestamp: timestamp,
+              Nonce: nonce,
+            },
+          }),
+          signal: options?.signal ?? AbortSignal.timeout(20_000),
+        },
+        options,
+      )
+      const exchanged = await readTraeCnTokenExchange(
+        response,
+        refresh,
+        clientId,
+      )
+      return {
+        ...exchanged,
+        clientId: clientId || TRAE_CN_CLIENT_ID,
+        device: boundDevice,
+      }
+    } catch (error) {
+      options?.signal?.throwIfAborted()
+      lastError = error
+    }
+  }
+  throw lastError
 }
 
 /**
@@ -248,7 +419,7 @@ interface TraeCnTokenExchange {
  * 拒收（400/401/403、code 10101、或消息含 refresh/expired/invalid 等）
  * 在消息里带 (401)，让 OAuth 终态判定把账号标成 auth_error 而不是无限重试。
  */
-export async function exchangeTraeCnToken(
+async function exchangeLegacyTraeCnToken(
   refresh: string,
   clientId: string | undefined,
   options?: OAuthFetchOptions,
@@ -268,6 +439,14 @@ export async function exchangeTraeCnToken(
     },
     options,
   )
+  return readTraeCnTokenExchange(response, refresh, clientId)
+}
+
+async function readTraeCnTokenExchange(
+  response: Response,
+  refresh: string,
+  clientId: string | undefined,
+): Promise<TraeCnTokenExchange> {
   const text = await response.text()
   let v: Record<string, unknown> = {}
   try {
@@ -278,7 +457,10 @@ export async function exchangeTraeCnToken(
   const r = asRecord(v.Result ?? v.result ?? v)
   const token = asStr(r.Token ?? r.token)
   if (response.ok && token) {
-    const info = asRecord(JSON.parse(asStr(r.UserInfo ?? r.userInfo) || "{}"))
+    const userInfo = r.UserInfo ?? r.userInfo
+    const info = asRecord(
+      typeof userInfo === "string" ? JSON.parse(userInfo || "{}") : userInfo,
+    )
     return {
       token,
       refresh: asStr(r.RefreshToken ?? r.refreshToken) || refresh,
@@ -316,14 +498,12 @@ export async function exchangeTraeCnToken(
 
 // ── 账号读取（connection → 会话材料） ───────────────────────────
 
-export interface TraeCnAccount {
+export interface TraeCnAccount extends TraeCnDevice {
   token: string
   refresh: string
   clientId: string
   uid: string
   name: string
-  deviceId: string
-  machineId: string
   /** 该账号的模型 host。 */
   apiHost: string
 }
@@ -352,6 +532,11 @@ export function traeCnAccount(
       ?? "",
     deviceId: getCredentialContextString(connection, "deviceId") ?? "",
     machineId: getCredentialContextString(connection, "machineId") ?? "",
+    devicePublicKey: getCredentialContextString(connection, "devicePublicKey"),
+    devicePrivateKey: getCredentialContextString(
+      connection,
+      "devicePrivateKey",
+    ),
     apiHost: traeCnApiHost(
       typeof ctx.apiHost === "string" ? ctx.apiHost : undefined,
     ),
@@ -452,6 +637,10 @@ export function applyTraeCnOAuthBundle(
   if (signIn.device?.machineId) {
     setCredentialContextField(connection, "machineId", signIn.device.machineId)
   }
+  for (const key of ["devicePublicKey", "devicePrivateKey"] as const) {
+    if (signIn.device?.[key])
+      setCredentialContextField(connection, key, signIn.device[key])
+  }
   if (signIn.api) {
     setCredentialContextField(connection, "apiHost", signIn.api)
   }
@@ -470,6 +659,7 @@ export function applyTraeCnTokenBundle(
     uid: exchange.uid,
     name: exchange.name,
     api: exchange.api,
+    device: exchange.device,
   })
 }
 

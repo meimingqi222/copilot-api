@@ -113,8 +113,11 @@ export function sanitizeCredential(
   credential: ApiCredential,
 ): SanitizedCredential {
   const { value, ...rest } = credential
+  const context = credential.context ? { ...credential.context } : undefined
+  if (context) delete context.devicePrivateKey
   return {
     ...rest,
+    ...(context ? { context } : {}),
     hasSecret: typeof value === "string" && value.length > 0,
     secretPreview: previewSecret(value),
   }
