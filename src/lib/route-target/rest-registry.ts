@@ -84,6 +84,30 @@ function isBackoffReason(reason: RestReason): boolean {
   return reason === "network" || reason === "unknown"
 }
 
+/**
+ * How long a temporary rest may last before the candidate is re-probed.
+ *
+ * A vendor's Retry-After / "resets in 3h" is an estimate, and vendors do reset
+ * windows early. A rest that runs the full stated window keeps the account out
+ * after the upstream already accepts it again — every request in the meantime
+ * answers `all providers are temporarily rate-limited`. So a rate/quota rest
+ * is capped by a ladder: re-probe after 10 minutes, then 30, 60, 120 — a
+ * failed probe re-rests it (failures grow), a successful one ends the rest.
+ * Later probes are spaced further apart, so a genuinely multi-hour window
+ * costs a handful of cheap 429s, not a tight loop.
+ */
+function probeCapMs(failures: number): number {
+  const n = Math.max(1, Math.trunc(failures))
+  const ladder = [10, 30, 60, 120]
+  const minutes = ladder[Math.min(n - 1, ladder.length - 1)]
+  return minutes * 60_000
+}
+
+/** Reasons a probe may shorten: temporary upstream pressure, not the account's state. */
+function isProbeableReason(reason: RestReason): boolean {
+  return reason === "rate" || reason === "quota"
+}
+
 interface RecordRestInput {
   credentialId: string
   reason: RestReason
@@ -146,6 +170,8 @@ export function recordRest(input: RecordRestInput): RestInfo {
   const untilMs =
     isBackoffReason(input.reason) ?
       Math.min(input.untilMs, now + restBackoffMs(failures))
+    : isProbeableReason(input.reason) ?
+      Math.min(input.untilMs, now + probeCapMs(failures))
     : input.untilMs
 
   const entry: RestEntry = {
@@ -174,6 +200,24 @@ export function recordRest(input: RecordRestInput): RestInfo {
 /** Lift a rest (a success, a quota renewal, or a manual `unrest`). */
 export function clearRest(credentialId: string, model?: string): void {
   rests.delete(entryKey(credentialId, model))
+}
+
+/**
+ * Lift every rest a credential holds — the account-scope entry plus any
+ * model-scope ones (`credentialId::model`). Used when the upstream itself
+ * says the account is usable again (a quota window that reset early).
+ */
+export function clearRestsForCredential(credentialId: string): boolean {
+  let cleared = rests.delete(credentialId)
+  const prefix = `${credentialId}::`
+  // Deleting the current key while iterating a Map is well-defined.
+  for (const key of rests.keys()) {
+    if (key.startsWith(prefix)) {
+      rests.delete(key)
+      cleared = true
+    }
+  }
+  return cleared
 }
 
 /** Lift a rest by key, returning whether there was one to lift. */

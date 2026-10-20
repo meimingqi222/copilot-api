@@ -11,13 +11,26 @@ const MAX_BACKOFF_MS = 60_000
 const BASE_BACKOFF_MS = 1_000
 const MAX_QUEUE_SIZE = 100
 
+/** The most a vendor-derived cooldown may last, even after many failures. */
+const MAX_RATE_LIMIT_COOLDOWN_MS = 4 * 60 * 60 * 1_000
+
 /**
- * Windsurf per-model message-rate quotas reset in multi-hour windows
- * (e.g. "Resets in: 3h0m0s"). The default MAX_BACKOFF_MS (60s) is far too
- * short and causes immediate retry → re-trigger. This ceiling applies only
- * to the windsurf-aware `reportUpstreamRateLimitMs` path.
+ * Cooldown before re-probing, by consecutive 429s on the account.
+ *
+ * The vendor's Retry-After / "resets in 3h" is an estimate, and vendors reset
+ * windows early. Waiting the full stated window means the account stays out
+ * after the upstream already accepts it, and every request meanwhile answers
+ * `all providers are temporarily rate-limited`. The first cooldown is short
+ * (10 minutes) so an early reset is noticed quickly; repeated failures space
+ * the probes out (30 / 60 / 120 minutes) so a real multi-hour window costs a
+ * few cheap 429s instead of a tight loop.
  */
-const MAX_WINDSURF_COOLDOWN_MS = 4 * 60 * 60 * 1_000
+function probeCapMs(consecutive429: number): number {
+  const n = Math.max(1, Math.trunc(consecutive429))
+  const ladder = [10, 30, 60, 120]
+  const minutes = ladder[Math.min(n - 1, ladder.length - 1)]
+  return minutes * 60_000
+}
 
 interface AccountRateLimitState {
   limiterLock: Promise<void>
@@ -161,7 +174,7 @@ export async function reportUpstreamRateLimit(
  * such as {"error":{"code":"Permission denied","message":"...Resets in:
  * 3h0m0s..."}} after a 200 OK — no Retry-After header, the duration is
  * embedded in the natural-language message. This applies the real upstream
- * cooldown window (up to MAX_WINDSURF_COOLDOWN_MS) instead of the default
+ * cooldown window (capped by the probe ladder) instead of the default
  * 60s exponential backoff.
  */
 export async function reportUpstreamRateLimitMs(
@@ -177,7 +190,8 @@ export async function reportUpstreamRateLimitMs(
     const adaptivePenaltyMs =
       retryAfterMs ?? computeBackoffMs(state.consecutive429Count)
     appliedCooldownMs = Math.min(
-      MAX_WINDSURF_COOLDOWN_MS,
+      MAX_RATE_LIMIT_COOLDOWN_MS,
+      probeCapMs(state.consecutive429Count),
       Math.max(1, adaptivePenaltyMs),
     )
     const cooldownUntil = Date.now() + appliedCooldownMs
