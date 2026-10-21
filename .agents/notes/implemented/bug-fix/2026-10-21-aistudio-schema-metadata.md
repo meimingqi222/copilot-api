@@ -1,6 +1,7 @@
 # Agent Note: AI Studio schema metadata must not reject tool requests
 
 Status: implemented
+Partly-superseded-by: 2026-10-21-aistudio-agent-tool-schema.md
 
 ## Problem
 
@@ -25,3 +26,7 @@ Tool requests containing metadata produce the same encoded tool schema as equiva
 - `tests/aistudio-codec.test.ts` covers root, property, and array-item metadata, unchanged caller input, literal `$schema` property preservation, and continued `$ref` rejection. The existing strict-tools case retains additionalProperties rejection.
 
 Proved: before the codec change, `bun test tests/aistudio-codec.test.ts --test-name-pattern 'schema metadata'` failed with `AI Studio: unsupported field $schema`; after the fix, both AI Studio test files passed (27 tests). Lint, typecheck, and targeted formatting checks also passed.
+
+## Superseded
+
+Metadata handling and its regression still hold. The original rejection of additionalProperties is superseded by `2026-10-21-aistudio-agent-tool-schema.md`: native constraints are now encoded and unsupported constraint semantics are preserved as schema instructions in the tool description. Unresolved references remain rejected.

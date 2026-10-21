@@ -456,6 +456,15 @@ for (const wire of ["chat", "messages", "responses", "gemini"] as const) {
         },
       ]
       upsertProviderConnection(connection)
+      const parameters = {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          label: { type: "string", minLength: 1 },
+          optional: { anyOf: [{ type: "integer" }, { type: "null" }] },
+        },
+      }
       let generated = false
       globalThis.fetch = (async (url, init) => {
         const address = String(url)
@@ -483,6 +492,10 @@ for (const wire of ["chat", "messages", "responses", "gemini"] as const) {
         )
         const body = JSON.parse(String(init?.body)) as unknown[]
         expect(body[0]).toBe("models/gemini-fixture")
+        const tools = body[6] as unknown[][]
+        const declarations = tools[0][1] as unknown[][]
+        expect(declarations[0][0]).toBe("fixture_tool")
+        expect(declarations[0][1]).toContain(JSON.stringify(parameters))
         expect(body[4]).toBe(
           `proof:${createHash("sha256").update("hello").digest("hex")}`,
         )
@@ -512,7 +525,32 @@ for (const wire of ["chat", "messages", "responses", "gemini"] as const) {
         new Request(`http://localhost${path}`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
+          body: JSON.stringify({
+            ...body,
+            tools:
+              wire === "gemini" ?
+                [
+                  {
+                    functionDeclarations: [
+                      { name: "fixture_tool", parameters },
+                    ],
+                  },
+                ]
+              : wire === "responses" ?
+                [{ type: "function", name: "fixture_tool", parameters }]
+              : wire === "messages" ?
+                [{ name: "fixture_tool", input_schema: parameters }]
+              : [
+                  {
+                    type: "function",
+                    function: {
+                      name: "fixture_tool",
+                      parameters,
+                      strict: false,
+                    },
+                  },
+                ],
+          }),
         }),
       )
       const result = await response.text()

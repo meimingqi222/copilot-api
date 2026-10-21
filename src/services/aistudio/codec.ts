@@ -1,4 +1,5 @@
 import { LocalPayloadUnsupportedError } from "~/lib/error"
+import { encodeAIStudioToolSchema } from "~/services/aistudio/tool-schema"
 import type {
   GeminiGenerateContentRequest,
   GeminiPart,
@@ -93,56 +94,6 @@ function encodePart(part: GeminiPart): unknown[] {
   return wire
 }
 
-function schema(value: Record<string, unknown>): unknown[] {
-  // AIStudio2API accepts schema metadata without encoding it into the wire.
-  // Keep checking constraint keywords; ignoring those would change the tool.
-  keys(value, [
-    "$schema",
-    "$id",
-    "$comment",
-    "title",
-    "type",
-    "format",
-    "description",
-    "nullable",
-    "enum",
-    "items",
-    "properties",
-    "required",
-  ])
-  const types: Record<string, number> = {
-    string: 1,
-    number: 2,
-    integer: 3,
-    boolean: 4,
-    array: 5,
-    object: 6,
-  }
-  const type = types[String(value.type).toLowerCase()]
-  if (!type) unsupported("schema requires a supported explicit type")
-  if (
-    value.enum
-    && (!Array.isArray(value.enum)
-      || !value.enum.every((v) => typeof v === "string"))
-  )
-    unsupported("only string schema enums are supported")
-  const wire: unknown[] = [
-    type,
-    value.format,
-    value.description,
-    value.nullable,
-    value.enum,
-  ]
-  if (value.items) wire[5] = schema(value.items as Record<string, unknown>)
-  if (value.properties)
-    wire[6] = Object.entries(value.properties).map(([name, child]) => [
-      name,
-      schema(child as Record<string, unknown>),
-    ])
-  if (value.required) wire[7] = value.required
-  return wire
-}
-
 function tools(payload: GeminiGenerateContentRequest): unknown[] {
   const choice = payload.toolConfig?.functionCallingConfig
   if (payload.toolConfig) keys(payload.toolConfig, ["functionCallingConfig"])
@@ -163,11 +114,11 @@ function tools(payload: GeminiGenerateContentRequest): unknown[] {
         null,
         tool.functionDeclarations.map((fn) => {
           keys(fn, ["name", "description", "parameters"])
-          return [
-            fn.name,
+          const encoded = encodeAIStudioToolSchema(
+            fn.parameters ?? { type: "object" },
             fn.description,
-            schema(fn.parameters ?? { type: "object" }),
-          ]
+          )
+          return [fn.name, encoded.description, encoded.wire]
         }),
       ])
     if (tool.google_search || tool.googleSearch) {

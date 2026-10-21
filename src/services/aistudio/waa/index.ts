@@ -239,6 +239,10 @@ export function createWaaRuntime(state: WAARuntimeState): WAARuntime {
       orderKeys,
       loadImage,
     })
+    // Bun's vm can use the context object for unqualified global getters,
+    // while globalThis is a separate wrapper. Both belong to this Window.
+    const windowBrand = brands.get(global as object)
+    if (windowBrand) brands.set(context, windowBrand)
     if (kind === "top") topAPI = api
     return { context, global }
   }

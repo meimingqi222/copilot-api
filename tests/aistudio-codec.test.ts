@@ -105,7 +105,7 @@ describe("AI Studio codec", () => {
     expect(encoded.binding).toBe("hi YWJj ")
   })
 
-  test("strict tools and unsupported schemas fail explicitly; NONE suppresses tools", () => {
+  test("strict tools and unresolved references fail explicitly; NONE suppresses tools", () => {
     expect(() =>
       encodeGenerateRequest(
         { ...payload, toolConfig: { functionCallingConfig: { mode: "ANY" } } },
@@ -121,7 +121,7 @@ describe("AI Studio codec", () => {
               functionDeclarations: [
                 {
                   name: "f",
-                  parameters: { type: "object", additionalProperties: false },
+                  parameters: { type: "object", $ref: "#/$defs/missing" },
                 },
               ],
             },
@@ -140,6 +140,82 @@ describe("AI Studio codec", () => {
         "m",
       ).body[6],
     ).toEqual([])
+  })
+
+  test("agent tool constraints encode native fields and preserve remaining constraints in the description", () => {
+    const parameters = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        label: { type: "string", minLength: 1, maxLength: 80, default: "x" },
+        count: {
+          type: "integer",
+          minimum: 0,
+          maximum: 10,
+          exclusiveMinimum: 0,
+        },
+        entries: {
+          type: "array",
+          minItems: 0,
+          maxItems: 5,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: { id: { type: "string" } },
+          },
+        },
+        options: {
+          type: "object",
+          propertyNames: { maxLength: 12 },
+          additionalProperties: { type: "string" },
+        },
+        mode: {
+          anyOf: [
+            { type: "string", enum: ["a", "b"] },
+            { type: "integer", minimum: 1 },
+          ],
+        },
+        optional: { anyOf: [{ type: "string" }, { type: "null" }] },
+      },
+    }
+    const original = structuredClone(parameters)
+    const encoded = encodeGenerateRequest(
+      {
+        ...payload,
+        tools: [
+          {
+            functionDeclarations: [
+              {
+                name: "agent_tool",
+                description: "Original description.",
+                parameters,
+              },
+            ],
+          },
+        ],
+      },
+      "gemini-4-argon",
+    )
+    const tools = encoded.body[6] as unknown[][]
+    const declarations = tools[0][1] as unknown[][]
+    expect(declarations[0][1]).toBe(
+      "Original description.\nArguments must follow this JSON Schema: "
+        + JSON.stringify(parameters),
+    )
+    const wire = declarations[0][2] as unknown[]
+    const properties = Object.fromEntries(wire[6] as Array<[string, unknown[]]>)
+    expect(properties.label[12]).toBe(1)
+    expect(properties.label[13]).toBe(80)
+    expect(properties.count[10]).toBe(0)
+    expect(properties.count[11]).toBe(10)
+    expect(properties.entries[20]).toBe(5)
+    expect(properties.entries[21]).toBe(0)
+    expect(properties.mode[0]).toBe(1)
+    expect(properties.mode[17]).toHaveLength(2)
+    expect(properties.optional[0]).toBe(1)
+    expect(properties.optional[3]).toBe(true)
+    expect(parameters).toEqual(original)
   })
 
   test("asymmetric nested tool arguments and signed thoughts round trip through native results", async () => {
