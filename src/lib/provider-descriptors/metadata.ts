@@ -1,3 +1,4 @@
+import type { CredentialRefresherType } from "~/lib/provider-connections/credential-refresher"
 import type { ProviderDescriptor } from "~/lib/provider-descriptors/types"
 
 interface ProviderCredentials {
@@ -6,6 +7,22 @@ interface ProviderCredentials {
   requiredExtras?: ReadonlyArray<string>
   /** Omitted for OAuth exports, which retain provider-specific extra fields. */
   exportKeys?: ReadonlyArray<string>
+  /** Credential refresher strategy used by account-managed connections. */
+  refresherType?: CredentialRefresherType
+  /** String keys copied from input.credentials into credential.context and back on export. */
+  contextStringKeys?: ReadonlyArray<string>
+  /** Raw keys (e.g. numeric expiresAt) copied from input.credentials into credential.context. */
+  contextValueKeys?: ReadonlyArray<string>
+  /** Runtime state keys mapped into credential.context on creation. */
+  runtimeContextKeys?: ReadonlyArray<
+    "copilotTokenExpiry" | "windsurfJwt" | "windsurfJwtFetchedAt"
+  >
+  /** Runtime state key used as initial credential.value instead of primaryKey. */
+  runtimeValueKey?: "copilotToken"
+  /** Default connection baseUrl when created as an account-managed connection. */
+  defaultBaseUrl?: string
+  /** Default connection headers when created as an account-managed connection. */
+  defaultHeaders?: Readonly<Record<string, string>>
 }
 
 /** Keep literal identity types without depending on the assembled provider catalog. */

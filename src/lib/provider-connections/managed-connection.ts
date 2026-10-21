@@ -111,13 +111,12 @@ function readString(
 /** credential.value:provider 的当前生效 token。 */
 function tokenValueOf(input: ManagedConnectionInput): string {
   const provider = input.provider
-  const credentials = input.credentials
-  if (provider === "copilot") {
-    // copilot 的 credential.value 是刷新得到的 JWT,不由创建输入提供。
-    return input.runtimeState?.copilotToken ?? ""
+  const schema = PROVIDER_METADATA[provider].credentials
+  if (schema?.runtimeValueKey) {
+    return input.runtimeState?.[schema.runtimeValueKey] ?? ""
   }
   const key = getPrimaryTokenKey(provider)
-  return key ? (readString(credentials, key) ?? "") : ""
+  return key ? (readString(input.credentials, key) ?? "") : ""
 }
 
 /** credential.context:刷新所需的源材料。 */
@@ -126,76 +125,43 @@ function tokenContextOf(
 ): Record<string, unknown> {
   const provider = input.provider
   const credentials = input.credentials
-  const base: Record<string, unknown> = { accountId: input.id }
-  if (provider === "copilot") {
-    return {
-      ...base,
-      githubToken: readString(credentials, "githubToken"),
-      copilotTokenExpiry: input.runtimeState?.copilotTokenExpiry,
+  const schema = PROVIDER_METADATA[provider].credentials
+  const context: Record<string, unknown> = { accountId: input.id }
+
+  if (schema?.contextStringKeys) {
+    for (const key of schema.contextStringKeys) {
+      context[key] = readString(credentials, key)
     }
   }
-  if (provider === "windsurf") {
-    return {
-      ...base,
-      windsurfJwt: input.runtimeState?.windsurfJwt,
-      windsurfJwtFetchedAt: input.runtimeState?.windsurfJwtFetchedAt,
+  if (schema?.contextValueKeys) {
+    for (const key of schema.contextValueKeys) {
+      context[key] = credentials?.[key]
     }
   }
-  if (provider === "codebuddy" || provider === "codebuddy-cn") {
-    return {
-      ...base,
-      refreshToken: readString(credentials, "refreshToken"),
-      expiresAt: credentials?.expiresAt,
+  if (schema?.runtimeContextKeys) {
+    for (const key of schema.runtimeContextKeys) {
+      context[key] = input.runtimeState?.[key]
     }
   }
-  if (provider === "lobsterai") {
-    return {
-      ...base,
-      refreshToken: readString(credentials, "refreshToken"),
-      expiresAt: credentials?.expiresAt,
-      // keyfrom 归因字段:refresh 时回传,缺失时服务端默认 official。
-      uuid: readString(credentials, "uuid"),
-      userId: readString(credentials, "userId"),
-      firstKeyfrom: readString(credentials, "firstKeyfrom"),
-      latestKeyfrom: readString(credentials, "latestKeyfrom"),
-    }
-  }
+
   if (isOAuthProviderId(provider)) {
-    return {
-      ...base,
-      accessToken: readString(credentials, "accessToken"),
-      refreshToken: readString(credentials, "refreshToken"),
-      expiresAt: credentials?.expiresAt,
-      idToken: readString(credentials, "idToken"),
-      oauthAccountId: readString(credentials, "accountId"),
-      projectId: readString(credentials, "projectId"),
-      deviceId: readString(credentials, "deviceId"),
-      ...(provider === "trae-cn" ?
-        {
-          clientId: readString(credentials, "clientId"),
-          machineId: readString(credentials, "machineId"),
-          apiHost: readString(credentials, "apiHost"),
-          devicePublicKey: readString(credentials, "devicePublicKey"),
-          devicePrivateKey: readString(credentials, "devicePrivateKey"),
-        }
-      : {}),
-      apiKey: readString(credentials, "apiKey"),
-      // email 同时落入 context(供 connection 原生 label/subtitle 推断读取)
-      // 与 credentialExtras(导出/导入往返)。
-      email: readString(credentials, "email"),
-    }
+    context.accessToken = readString(credentials, "accessToken")
+    context.refreshToken = readString(credentials, "refreshToken")
+    context.expiresAt = credentials?.expiresAt
+    context.idToken = readString(credentials, "idToken")
+    context.oauthAccountId = readString(credentials, "accountId")
+    context.projectId = readString(credentials, "projectId")
+    context.deviceId = readString(credentials, "deviceId")
+    context.apiKey = readString(credentials, "apiKey")
+    context.email = readString(credentials, "email")
   }
-  return base
+  return context
 }
 
 function refresherTypeOf(provider: ProviderId): CredentialRefresherType {
-  if (provider === "copilot") return "copilot-token"
+  const explicit = PROVIDER_METADATA[provider].credentials?.refresherType
+  if (explicit) return explicit
   if (isOAuthProviderId(provider)) return "oauth-token"
-  if (provider === "windsurf") return "windsurf-jwt"
-  if (provider === "codebuddy" || provider === "codebuddy-cn") {
-    return "codebuddy-token"
-  }
-  if (provider === "lobsterai") return "lobsterai-token"
   return "static"
 }
 
@@ -314,19 +280,12 @@ export function managedConnectionFromInput(
   if (typeof settings.proxy === "string") metadata.proxy = settings.proxy
   if (typeof settings.userId === "string") metadata.userId = settings.userId
 
-  // CodeBuddy 国内版/国际版默认 baseUrl + X-Domain header。
-  // codebuddy-native adapter 从 connection.baseUrl / connection.headers 读取,
-  // account-managed 路径需在此设置默认值(其他 account-managed 协议的
-  // baseUrl 由 metadata.settings.baseUrl 承载,保持 "")。
-  let baseUrl = ""
-  let headers: Record<string, string> | undefined
-  if (provider === "codebuddy") {
-    baseUrl = "https://www.workbuddy.ai/v2"
-    headers = { "X-Domain": "www.workbuddy.ai" }
-  } else if (provider === "codebuddy-cn") {
-    baseUrl = "https://copilot.tencent.com/v2"
-    headers = { "X-Domain": "www.codebuddy.cn" }
-  }
+  const credentialSchema = PROVIDER_METADATA[provider].credentials
+  const baseUrl = credentialSchema?.defaultBaseUrl ?? ""
+  const headers =
+    credentialSchema?.defaultHeaders ?
+      { ...credentialSchema.defaultHeaders }
+    : undefined
 
   return {
     id: input.id,
@@ -414,38 +373,18 @@ function connectionCredentialRecord(
   if (!cred) return {}
   const credentials: Record<string, unknown> = {}
   const ctx = cred.context
-  if (ctx) {
-    if (provider === "codebuddy" || provider === "codebuddy-cn") {
-      if (typeof ctx.refreshToken === "string") {
-        credentials.refreshToken = ctx.refreshToken
-      }
-      if (typeof ctx.expiresAt === "number")
-        credentials.expiresAt = ctx.expiresAt
+  const schema = PROVIDER_METADATA[provider].credentials
+
+  if (ctx && isOAuthProviderId(provider)) {
+    for (const key of ["refreshToken", "idToken", "expiresAt"]) {
+      if (ctx[key] !== undefined) credentials[key] = ctx[key]
     }
-    if (provider === "lobsterai") {
-      for (const key of [
-        "refreshToken",
-        "expiresAt",
-        "uuid",
-        "userId",
-        "firstKeyfrom",
-        "latestKeyfrom",
-      ]) {
-        if (ctx[key] !== undefined) credentials[key] = ctx[key]
-      }
+    if (typeof ctx.oauthAccountId === "string") {
+      credentials.accountId = ctx.oauthAccountId
     }
-    if (isOAuthProviderId(provider)) {
-      for (const key of ["refreshToken", "idToken", "expiresAt"]) {
-        if (ctx[key] !== undefined) credentials[key] = ctx[key]
-      }
-      if (typeof ctx.oauthAccountId === "string") {
-        credentials.accountId = ctx.oauthAccountId
-      }
-      if (typeof ctx.projectId === "string")
-        credentials.projectId = ctx.projectId
-      if (typeof ctx.deviceId === "string") credentials.deviceId = ctx.deviceId
-      if (typeof ctx.apiKey === "string") credentials.apiKey = ctx.apiKey
-    }
+    if (typeof ctx.projectId === "string") credentials.projectId = ctx.projectId
+    if (typeof ctx.deviceId === "string") credentials.deviceId = ctx.deviceId
+    if (typeof ctx.apiKey === "string") credentials.apiKey = ctx.apiKey
   }
   const extraKeys = getConnectionCredentialExtras(conn)
   if (extraKeys) {
@@ -453,19 +392,21 @@ function connectionCredentialRecord(
       if (value !== undefined) credentials[key] = value
     }
   }
-  // 设备密钥以当前 context 为准，不能被导入时的旧展示镜像覆盖。
-  if (provider === "trae-cn" && ctx) {
-    for (const key of [
-      "clientId",
-      "machineId",
-      "apiHost",
-      "devicePublicKey",
-      "devicePrivateKey",
-    ]) {
-      if (ctx[key] !== undefined) credentials[key] = ctx[key]
+  // 刷新器与设备绑定写入 credential.context 的最新值优先于导入时的旧 credentialExtras 镜像。
+  if (ctx) {
+    if (schema?.contextStringKeys) {
+      for (const key of schema.contextStringKeys) {
+        if (typeof ctx[key] === "string") credentials[key] = ctx[key]
+      }
+    }
+    if (schema?.contextValueKeys) {
+      for (const key of schema.contextValueKeys) {
+        if (typeof ctx[key] === "number" || typeof ctx[key] === "string") {
+          credentials[key] = ctx[key]
+        }
+      }
     }
   }
-  const schema = PROVIDER_METADATA[provider].credentials
   if (schema) {
     const value =
       schema.primarySource === "context" ? ctx?.[schema.primaryKey] : cred.value

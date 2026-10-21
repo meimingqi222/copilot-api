@@ -75,6 +75,32 @@ interface DiscoverModelsParams {
 export interface ProtocolAdapter {
   protocol: ProviderProtocol
 
+  /**
+   * Override the model id sent to the adapter when a protocol needs the
+   * public head id rather than the pre-resolved `upstreamModelId` (e.g.
+   * Windsurf selects its SKU from `reasoning_effort` inside the adapter).
+   */
+  resolveDispatchModel?(target: RouteTarget): string
+
+  /**
+   * Handle a model-scoped rate limit (e.g. CodeBuddy 6004) without penalizing
+   * the whole credential/connection. Returns `true` when handled.
+   */
+  recordModelRateLimit?(params: {
+    connection: ProviderConnection
+    credential: ApiCredential
+    model: string
+    status: number
+    body?: string
+  }): boolean
+
+  /**
+   * True when `model` on `connection` is an explicit zero-credit model whose
+   * credit refusal should be scoped to that model rather than exhausting the
+   * entire account.
+   */
+  isModelCreditExempt?(connection: ProviderConnection, model: string): boolean
+
   /** 自动发现模型(可选)。返回上游模型映射,调用方按 mode 合并到 connection.models。 */
   discoverModels?(params: DiscoverModelsParams): Promise<Array<ModelMapping>>
 

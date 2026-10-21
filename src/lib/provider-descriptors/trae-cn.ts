@@ -9,6 +9,16 @@ import { OAUTH_ACCOUNT_FIELDS } from "~/lib/provider-descriptors/shared"
 export const providerMetadata = defineProviderMetadata({
   protocol: "trae-cn-native",
   oauth: true,
+  credentials: {
+    primaryKey: "accessToken",
+    contextStringKeys: [
+      "clientId",
+      "machineId",
+      "apiHost",
+      "devicePublicKey",
+      "devicePrivateKey",
+    ],
+  },
   descriptor: {
     id: "trae-cn",
     presentation: {

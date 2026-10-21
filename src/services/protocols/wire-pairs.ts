@@ -1,3 +1,4 @@
+import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 import { measureLocalWork } from "~/lib/upstream-performance"
 
 /**
@@ -83,6 +84,10 @@ import {
   decodeResponsesStream,
   encodeResponsesStream,
 } from "~/services/ir/codecs/responses/stream"
+import { applyPromptCaching } from "~/services/claude/prompt-cache"
+import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
+import type { ResponsesPayload } from "~/services/protocols/responses/types"
+import type { AnthropicMessagesPayload } from "./anthropic"
 import { isPlainResult } from "./result-shape"
 
 /** Every codec reads SSE frames off `.data`; the rest of the frame is ignored. */
@@ -248,6 +253,95 @@ interface TranslationPhaseDetails {
   targetPayload?: unknown
 }
 
+/**
+ * Protocols whose own `createMessages` already places cache breakpoints and
+ * must keep doing so — `claude-native` mirrors Claude Code's exact layout
+ * (billing header + 1h ephemeral TTL) in `create-messages-once`, and
+ * pre-seeding breakpoints here would suppress it.
+ */
+const SELF_CACHING_PROTOCOLS = new Set(["claude-native"])
+
+function withPromptCacheBreakpoints(
+  payload: AnthropicMessagesPayload,
+): AnthropicMessagesPayload {
+  const next: AnthropicMessagesPayload = {
+    ...payload,
+    ...(typeof payload.system === "string"
+      && payload.system.length > 0 && {
+        system: [{ type: "text" as const, text: payload.system }],
+      }),
+  }
+  applyPromptCaching(
+    next as unknown as Parameters<typeof applyPromptCaching>[0],
+    {
+      type: "ephemeral",
+    },
+  )
+  return next
+}
+
+interface DirectionDefaults {
+  cacheControlPolicy?: "caller" | "target"
+  transformTargetRequest?: (payload: unknown) => unknown
+  decorateExecutorContext?: (
+    ctx: RequestExecutionContext | undefined,
+  ) => RequestExecutionContext | undefined
+  onPhase?: (phase: TranslationPhase, details: TranslationPhaseDetails) => void
+}
+
+function defaultDirectionHooks(
+  source: IRWire,
+  target: IRWire,
+  protocol: string,
+  targetPayload: unknown,
+  ctx?: RequestExecutionContext,
+): DirectionDefaults {
+  if (source === "chat" && target === "messages") {
+    const selfCaching = SELF_CACHING_PROTOCOLS.has(protocol)
+    return {
+      cacheControlPolicy: selfCaching ? "target" : "caller",
+      transformTargetRequest: (encoded) =>
+        selfCaching ? encoded : (
+          withPromptCacheBreakpoints(encoded as AnthropicMessagesPayload)
+        ),
+    }
+  }
+  if (source === "messages" && target === "chat") {
+    return {
+      decorateExecutorContext: (c) => ({ ...c, collectChatStreamTwin: true }),
+    }
+  }
+  if (source === "responses" && target === "chat") {
+    const responsesPayload = targetPayload as ResponsesPayload | undefined
+    return {
+      onPhase: (phase, details) => {
+        if (phase === "request_decoded")
+          updateMemoryTrace(ctx?.memoryTraceId, "responses_to_chat_start", {
+            inputItems:
+              Array.isArray(responsesPayload?.input) ?
+                responsesPayload.input.length
+              : 1,
+          })
+        else if (phase === "request_encoded") {
+          const chat = details.targetPayload as ChatCompletionsPayload
+          updateMemoryTrace(ctx?.memoryTraceId, "responses_to_chat_complete", {
+            messageCount: chat.messages.length,
+            toolCount: chat.tools?.length ?? 0,
+          })
+        } else if (phase === "result_decoded")
+          updateMemoryTrace(ctx?.memoryTraceId, "chat_to_responses_start", {
+            responseMode: "non_streaming",
+          })
+        else if (phase === "complete")
+          updateMemoryTrace(ctx?.memoryTraceId, "chat_to_responses_complete", {
+            responseMode: "non_streaming",
+          })
+      },
+    }
+  }
+  return {}
+}
+
 interface TranslatedCallParams {
   /** Wire the client speaks. */
   source: IRWire
@@ -296,6 +390,20 @@ export async function createTranslatedCall(
   params: TranslatedCallParams,
 ): Promise<{ credentialId: string; response: unknown }> {
   const { source, target, targetPayload, connection, routeTarget } = params
+  const defaults = defaultDirectionHooks(
+    source,
+    target,
+    routeTarget.protocol,
+    targetPayload,
+    params.ctx,
+  )
+  const cacheControlPolicy =
+    params.cacheControlPolicy ?? defaults.cacheControlPolicy
+  const transformTargetRequest =
+    params.transformTargetRequest ?? defaults.transformTargetRequest
+  const decorateExecutorContext =
+    params.decorateExecutorContext ?? defaults.decorateExecutorContext
+  const onPhase = params.onPhase ?? defaults.onPhase
   clearUsagePricingRounds(params.ctx?.c)
   const translationStarted = performance.now()
   const sourceSpec = WIRE_SPECS[source]
@@ -323,7 +431,7 @@ export async function createTranslatedCall(
       errorBody,
     )
   }
-  params.onPhase?.("request_decoded", { request: requestIR })
+  onPhase?.("request_decoded", { request: requestIR })
   // Only a search intent on a wire that cannot carry it pays for the searcher
   // lookup.
   const searchers =
@@ -334,8 +442,8 @@ export async function createTranslatedCall(
     providerId: connection.protocol,
     model: routeTarget.upstreamModelId,
     issuer: connection.id,
-    ...(params.cacheControlPolicy && {
-      cacheControlPolicy: params.cacheControlPolicy,
+    ...(cacheControlPolicy && {
+      cacheControlPolicy,
     }),
     ...(orchestrate && { orchestratedWebSearch: true }),
   })
@@ -362,8 +470,8 @@ export async function createTranslatedCall(
       payload,
       signal: params.signal,
       ctx:
-        params.decorateExecutorContext ?
-          params.decorateExecutorContext(params.ctx)
+        decorateExecutorContext ?
+          decorateExecutorContext(params.ctx)
         : params.ctx,
     })
 
@@ -412,10 +520,8 @@ export async function createTranslatedCall(
     preserveHistoricalReasoning,
   })
   const targetRequest =
-    params.transformTargetRequest ?
-      params.transformTargetRequest(encoded)
-    : encoded
-  params.onPhase?.("request_encoded", {
+    transformTargetRequest ? transformTargetRequest(encoded) : encoded
+  onPhase?.("request_encoded", {
     request: requestIR,
     targetPayload: targetRequest,
   })
@@ -431,14 +537,14 @@ export async function createTranslatedCall(
         request: requestIR,
       }),
     )
-    params.onPhase?.("result_decoded", { request: requestIR })
+    onPhase?.("result_decoded", { request: requestIR })
     const response = measureLocalWork("responseTranslationMs", () =>
       sourceSpec.encodeResult(decoded, {
         model: routeTarget.upstreamModelId,
         request: requestIR,
       }),
     )
-    params.onPhase?.("complete", { request: requestIR })
+    onPhase?.("complete", { request: requestIR })
     return { credentialId: result.credentialId, response }
   }
   return {

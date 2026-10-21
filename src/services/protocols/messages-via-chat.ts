@@ -1,13 +1,8 @@
 /**
  * Serves Anthropic Messages requests via a Chat Completions upstream.
  *
- * Thin delegate over {@link createTranslatedCall}: the IR pipeline plans the
- * translation, enforces the capability preflight, runs search orchestration,
- * and renders the Anthropic SSE frame shape. This file only binds the wires,
- * the adapter executor, and the one per-direction hint below — the producer is
- * asked for its structured delta twin so the stream translator can skip
- * re-parsing SSE JSON it just serialized (a per-token win on long streams;
- * other adapters ignore the hint and stay on the JSON path).
+ * Thin delegate over {@link createTranslatedCall}. The structured delta twin
+ * hint (`collectChatStreamTwin`) is applied by `wire-pairs.ts` for `messages -> chat`.
  */
 
 import type {
@@ -58,7 +53,6 @@ export async function createMessagesViaChat(
     routeTarget: target,
     signal,
     ctx,
-    decorateExecutorContext: (c) => ({ ...c, collectChatStreamTwin: true }),
     executor: (p) =>
       chatExecutor({
         target: p.target,

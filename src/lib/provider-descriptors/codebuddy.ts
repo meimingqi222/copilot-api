@@ -9,12 +9,19 @@ import { OAUTH_ACCOUNT_FIELDS } from "~/lib/provider-descriptors/shared"
 const credentials = {
   primaryKey: "accessToken",
   exportKeys: ["accessToken", "refreshToken", "expiresAt"],
+  refresherType: "codebuddy-token" as const,
+  contextStringKeys: ["refreshToken"],
+  contextValueKeys: ["expiresAt"],
 }
 
 export const codebuddyMetadata = defineProviderMetadata({
   protocol: "codebuddy-native",
   oauth: false,
-  credentials,
+  credentials: {
+    ...credentials,
+    defaultBaseUrl: "https://www.workbuddy.ai/v2",
+    defaultHeaders: { "X-Domain": "www.workbuddy.ai" },
+  },
   descriptor: {
     id: "codebuddy",
     presentation: {
@@ -35,7 +42,11 @@ export const codebuddyMetadata = defineProviderMetadata({
 export const codebuddyCnMetadata = defineProviderMetadata({
   protocol: "codebuddy-native",
   oauth: false,
-  credentials,
+  credentials: {
+    ...credentials,
+    defaultBaseUrl: "https://copilot.tencent.com/v2",
+    defaultHeaders: { "X-Domain": "www.codebuddy.cn" },
+  },
   descriptor: {
     id: "codebuddy-cn",
     presentation: {

@@ -6,6 +6,7 @@ import {
   type ResponsesPayload,
   withDefaultReasoningSummary,
 } from "~/services/protocols/responses/types"
+export { pruneUnansweredToolCalls } from "~/services/responses/transcript-cache"
 
 /**
  * Codex outbound body assembly, extracted from create-responses-once.ts so
@@ -207,81 +208,6 @@ export function stripReasoningItems(input: Array<unknown>): Array<unknown> {
  * Since the transcript is what we replay, we must prune the half we own rather
  * than let the upstream reject the whole turn.
  */
-/** Output type → its call type, for pairing tool calls with their outputs. */
-const TOOL_OUTPUT_CALL_TYPES: Record<string, string> = {
-  function_call_output: "function_call",
-  custom_tool_call_output: "custom_tool_call",
-}
-
-function toolItemType(item: unknown): string | undefined {
-  if (item === null || typeof item !== "object" || Array.isArray(item)) {
-    return undefined
-  }
-  const type = (item as { type?: unknown }).type
-  return typeof type === "string" ? type : undefined
-}
-
-function toolItemCallId(item: unknown): string | undefined {
-  if (item === null || typeof item !== "object" || Array.isArray(item)) {
-    return undefined
-  }
-  const callId = (item as { call_id?: unknown }).call_id
-  return typeof callId === "string" && callId.trim() ? callId.trim() : undefined
-}
-
-/**
- * Drop tool calls that have no matching output in `input`.
- *
- * Used on self-contained replay payloads, which are assembled by us and are
- * therefore the only side whose half-pairs we can safely remove. Caller-
- * supplied deltas are left untouched — the client owns their semantics.
- *
- * Only well-formed items participate: an entry without a `call_id` cannot be
- * matched either way and is always kept, so this can never silently drop an
- * item it does not understand. Outputs are never pruned (dropping one while
- * its call remains is the *other* upstream 400, and the output is the side
- * the client is waiting on).
- */
-export function pruneUnansweredToolCalls(
-  input: Array<unknown>,
-): Array<unknown> {
-  const answered = answeredToolCallKeys(input)
-  const result = input.filter((entry) => !isUnansweredToolCall(entry, answered))
-  return result.length === input.length ? input : result
-}
-
-/** Count the tool calls in `input` that have no matching output. */
-export function countUnansweredToolCalls(input: Array<unknown>): number {
-  const answered = answeredToolCallKeys(input)
-  let count = 0
-  for (const entry of input) {
-    if (isUnansweredToolCall(entry, answered)) count += 1
-  }
-  return count
-}
-
-/** Keys (`<callType>:<call_id>`) of every tool call that has an output. */
-function answeredToolCallKeys(input: Array<unknown>): Set<string> {
-  const answered = new Set<string>()
-  for (const entry of input) {
-    const callType = TOOL_OUTPUT_CALL_TYPES[toolItemType(entry) ?? ""]
-    const callId = toolItemCallId(entry)
-    if (callType && callId) answered.add(`${callType}:${callId}`)
-  }
-  return answered
-}
-
-function isUnansweredToolCall(entry: unknown, answered: Set<string>): boolean {
-  const callType = toolItemType(entry)
-  if (callType !== "function_call" && callType !== "custom_tool_call") {
-    return false
-  }
-  const callId = toolItemCallId(entry)
-  // A call with no `call_id` is unmatchable; keep it rather than guess.
-  if (!callId) return false
-  return !answered.has(`${callType}:${callId}`)
-}
-
 /**
  * Remove `prompt_cache_breakpoint` markers from input items — both item-level
  * and inside `content`/`output` part arrays. Clients that forward Copilot-CLI-

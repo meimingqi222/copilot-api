@@ -47,6 +47,7 @@ import {
   recordCodebuddyModelCooldown,
   resolveCodebuddyModelCooldownMs,
 } from "~/services/codebuddy/model-cooldown"
+import { isCodebuddyModelFree } from "~/lib/codebuddy-model-pricing"
 import { HTTPError } from "~/lib/error"
 import {
   connectionFetch,
@@ -737,6 +738,21 @@ function parseCodebuddyModels(
 
 export const codebuddyNativeAdapter: ProtocolAdapter = {
   protocol: "codebuddy-native",
+
+  recordModelRateLimit({ connection, credential, model, status, body }) {
+    if (!isCodebuddyModelRateLimit(status, body)) return false
+    recordCodebuddyModelCooldown({
+      connectionId: connection.id,
+      credentialId: credential.id,
+      model,
+      body: body ?? "",
+    })
+    return true
+  },
+
+  isModelCreditExempt(connection, model) {
+    return isCodebuddyModelFree(connection, model)
+  },
 
   async discoverModels({ connection, credential, signal }) {
     const accessToken = await ensureCodebuddyAccessToken(

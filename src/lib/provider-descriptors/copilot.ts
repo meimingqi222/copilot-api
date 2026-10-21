@@ -7,6 +7,10 @@ export const providerMetadata = defineProviderMetadata({
     primaryKey: "githubToken",
     primarySource: "context",
     exportKeys: ["githubToken"],
+    refresherType: "copilot-token",
+    contextStringKeys: ["githubToken"],
+    runtimeContextKeys: ["copilotTokenExpiry"],
+    runtimeValueKey: "copilotToken",
   },
   descriptor: {
     id: "copilot",

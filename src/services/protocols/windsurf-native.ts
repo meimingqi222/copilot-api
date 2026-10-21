@@ -12,6 +12,10 @@ import type { AdapterChatResult, ProtocolAdapter } from "./types"
 export const windsurfNativeAdapter: ProtocolAdapter = {
   protocol: "windsurf-native",
 
+  resolveDispatchModel(target) {
+    return target.publicModelId
+  },
+
   async createChatCompletions({
     connection,
     credential,

@@ -14,6 +14,15 @@ export const providerMetadata = defineProviderMetadata({
       "firstKeyfrom",
       "latestKeyfrom",
     ],
+    refresherType: "lobsterai-token",
+    contextStringKeys: [
+      "refreshToken",
+      "uuid",
+      "userId",
+      "firstKeyfrom",
+      "latestKeyfrom",
+    ],
+    contextValueKeys: ["expiresAt"],
   },
   descriptor: {
     id: "lobsterai",
