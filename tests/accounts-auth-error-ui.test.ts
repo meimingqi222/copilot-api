@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import { runInNewContext } from "node:vm"
 
 /**
  * 认证失败必须在账号卡片上直接可见。
@@ -28,6 +29,48 @@ describe("账号卡片:认证失败可见", () => {
     expect(bannerBody).toContain('x-text="account.authError"')
     // 就地提供重新认证入口
     expect(bannerBody).toContain('@click="openReauthModal(account)"')
+  })
+
+  test("重新认证入口由供应商认证模式决定，不依赖供应商名称名单", () => {
+    const buttons = [...html.matchAll(/<button\b[^>]*>/g)]
+      .map(([tag]) => tag)
+      .filter((tag) => tag.includes('@click="openReauthModal(account)"'))
+    expect(buttons).toHaveLength(2)
+    const view = runInNewContext(
+      readFileSync(join(ROOT, "pages/js/views/accounts.js"), "utf8")
+        + "\naccountsView()",
+      { ViewHelpers: {} },
+    ) as Record<string, unknown>
+    const providers = [
+      { id: "codebuddy", authMode: "oauth" },
+      { id: "codebuddy-cn", authMode: "oauth" },
+      { id: "codex", authMode: "oauth" },
+      { id: "future-provider", authMode: "oauth" },
+      { id: "token-only", authMode: "direct" },
+      { id: "device-only", authMode: "device_flow" },
+    ]
+    for (const provider of [...providers.map(({ id }) => id), "unknown"]) {
+      for (const button of buttons) {
+        const expression = button.match(/x-show="([^"]+)"/)?.[1]
+        expect(expression).toBeDefined()
+        for (const authStatus of ["error", "ready"]) {
+          expect(
+            runInNewContext(`view.${expression}`, {
+              view: { ...view, providers },
+              account: { provider, authStatus },
+            }),
+          ).toBe(
+            authStatus === "error"
+              && [
+                "codebuddy",
+                "codebuddy-cn",
+                "codex",
+                "future-provider",
+              ].includes(provider),
+          )
+        }
+      }
+    }
   })
 
   test("文案在中英文里都有", () => {

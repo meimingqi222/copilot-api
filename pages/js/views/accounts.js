@@ -612,6 +612,16 @@ function accountsView() {
       })
     },
 
+    canReauthenticate(account) {
+      return (
+        account.authStatus === "error"
+        && this.providers.some(
+          (provider) =>
+            provider.id === account.provider && provider.authMode === "oauth",
+        )
+      )
+    },
+
     /**
      * 原地重认证：复用 OAuth 新增流程，但把新 token 写回原账号
      *（保留 id/label/用量统计）。仅 OAuth provider 且 authStatus=error 时展示。

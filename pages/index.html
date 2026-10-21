@@ -1681,7 +1681,7 @@
                               x-text="t('accounts.authErrorHint') || '这个账号需要重新认证'"
                             ></span>
                             <button
-                              x-show="['codex','claude','xai','antigravity','kimi','lobsterai','minimax','qoder'].includes(account.provider)"
+                              x-show="canReauthenticate(account)"
                               @click="openReauthModal(account)"
                               class="btn btn-sm"
                               style="
@@ -1988,7 +1988,7 @@
                         </div>
                         <div class="flex items-center gap-1.5 mt-auto">
                           <button
-                            x-show="account.authStatus === 'error' && ['codex','claude','xai','antigravity','kimi','lobsterai','minimax','qoder'].includes(account.provider)"
+                            x-show="canReauthenticate(account)"
                             @click="openReauthModal(account)"
                             class="btn btn-sm flex-1"
                             style="
@@ -7552,7 +7552,7 @@
     <script src="/admin/static/js/views/system-config.js?v=0.7.2"></script>
     <script src="/admin/static/js/views/dashboard.js?v=0.7.3"></script>
     <script src="/admin/static/js/views/users.js?v=0.7.3"></script>
-    <script src="/admin/static/js/views/accounts.js?v=0.7.3"></script>
+    <script src="/admin/static/js/views/accounts.js?v=0.7.4"></script>
     <script src="/admin/static/js/views/connections.js?v=0.7.9"></script>
     <script src="/admin/static/js/views/model-aliases.js?v=0.7.3"></script>
     <script src="/admin/static/js/views/routing-groups.js?v=0.7.7"></script>
