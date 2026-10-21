@@ -21,12 +21,13 @@ interface GenerationSample {
 /**
  * 该行的"首输出后"生成样本。返回 undefined 表示这行不参与解码 TPS：
  * 非流式行没有首输出边界，历史行没有 performance_json，零输出行没有意义。
+ * 已知缓冲或突发样本不参与；不能用端到端 TPS 替代缺失的解码速度。
  */
 export function readGenerationSample(
   row: UsageRawRow,
 ): GenerationSample | undefined {
   const metrics = readRequestPerformance(row)
-  if (!metrics) return undefined
+  if (!metrics || metrics.decodeTpsEligible === false) return undefined
   const generationMs = metrics.generationMs
   if (
     row.streaming !== 1

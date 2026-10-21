@@ -34,6 +34,7 @@ type PerformanceRow = {
 
 type PerformanceResponse = {
   details: Array<{
+    model: string
     connectionId: string
     connectionName: string
     endpoint: string
@@ -315,6 +316,13 @@ test("GET /admin/api/usage/performance reports decode TPS without TTFT", async (
     timestamp: ts + 2,
     performance: metrics(1),
   })
+  // Known buffered output would look like 500 tok/s, below the old 800 guard.
+  // Keep its usage/end-to-end rate but exclude it from every decode view.
+  statsStore.recordUsage({
+    ...base,
+    timestamp: ts + 3,
+    performance: { ...metrics(600), decodeTpsEligible: false },
+  })
 
   const response = await server.fetch(
     adminRequest("http://localhost/admin/api/usage/performance?range=all"),
@@ -323,13 +331,16 @@ test("GET /admin/api/usage/performance reports decode TPS without TTFT", async (
   expect(response.status).toBe(200)
   const body = (await response.json()) as PerformanceResponse
   const row = body.performance.find((it) => it.model === "decode-tps-model")
-  expect(row?.requests).toBe(3)
+  expect(row?.requests).toBe(4)
   // 两列的分母不同，覆盖样本也不同
   expect(row?.avgStreamingTps).toBeCloseTo(30, 5)
   expect(row?.decodeSamples).toBe(2)
   expect(row?.avgDecodeTps).toBeCloseTo(600 / 12, 5)
   expect(
     body.byProvider.find((it) => it.model === "decode-tps-model")?.avgDecodeTps,
+  ).toBeCloseTo(600 / 12, 5)
+  expect(
+    body.details.find((it) => it.model === "decode-tps-model")?.generationTps,
   ).toBeCloseTo(600 / 12, 5)
 })
 

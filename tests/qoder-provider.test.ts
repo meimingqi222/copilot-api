@@ -10,7 +10,16 @@
  * - 外层 statusCodeValue ≠ 200 是错误，状态要归一到 200–599
  * - 模型发现走 /algo/api/v2/model/list
  */
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  spyOn,
+  test,
+} from "bun:test"
+import { Hono, type Context } from "hono"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -29,6 +38,14 @@ import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import { resetProtectedRouteGuardForTest } from "~/lib/protected-route-guard"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
+import {
+  startRequestPerformance,
+  markPerformanceOutput,
+  requestPerformanceSnapshot,
+} from "~/lib/request-performance"
+import { computePerformanceSummary } from "~/lib/stats/range-query"
+import { computePerformanceDetails } from "~/lib/stats/performance-detail"
+import type { UsageRawRow } from "~/lib/stats/types"
 import { server } from "~/server"
 import { decodeRequestBody } from "~/services/qoder/codec"
 import { qoderChatUrl } from "~/services/qoder/endpoints"
@@ -816,6 +833,133 @@ describe("qoderNativeAdapter.createChatCompletions", () => {
   })
 })
 
+describe("Qoder decode speed samples", () => {
+  test.each([
+    {
+      name: "single output with a slow usage tail",
+      gap: 600,
+      content: ["hello"],
+      eligible: false,
+    },
+    { name: "multi-frame burst", gap: 0, content: ["a", "b"], eligible: false },
+    {
+      name: "short measurement window",
+      gap: 99,
+      content: ["a", "b"],
+      eligible: false,
+    },
+    {
+      name: "sustained stream at the window boundary",
+      gap: 100,
+      content: ["a", "b"],
+      eligible: true,
+    },
+    {
+      name: "XML tools after sustained text and before more text",
+      gap: 200,
+      content: [
+        "hello",
+        " world",
+        "<tool_call><function=get_time>",
+        '<parameter=tz>"UTC"</parameter></function>',
+        "</tool_call>",
+        "done",
+      ],
+      eligible: false,
+    },
+  ])(
+    "$name keeps usage and end-to-end TPS but gates decode TPS",
+    async ({ gap, content, eligible }) => {
+      let c: Context | undefined
+      const app = new Hono().get("/", (context) => {
+        c = context
+        return context.text("ok")
+      })
+      await app.request("/")
+      if (!c) throw new Error("Missing context")
+      startRequestPerformance(c, 0)
+      markPerformanceOutput(c, 0)
+      let now = 0
+      const clock = spyOn(performance, "now").mockImplementation(() => now)
+      try {
+        globalThis.fetch = mock(async () =>
+          sseResponse([
+            ...content.map((text) =>
+              outerFrame({
+                choices: [{ delta: { content: text }, finish_reason: null }],
+              }),
+            ),
+            outerFrame({ choices: [{ delta: {}, finish_reason: "stop" }] }),
+            outerFrame({
+              choices: [],
+              usage: {
+                prompt_tokens: 10,
+                completion_tokens: 300,
+                total_tokens: 310,
+              },
+            }),
+          ]),
+        ) as unknown as typeof fetch
+        const result = await qoderNativeAdapter.createChatCompletions?.({
+          target: chatTarget("claude-sonnet-4-6"),
+          connection: makeConnection(),
+          credential: makeCredential(),
+          payload: {
+            model: "claude-sonnet-4-6",
+            stream: true,
+            messages: [{ role: "user", content: "hi" }],
+          },
+          ctx: { c },
+        })
+        const frames: Array<Record<string, unknown>> = []
+        for await (const event of (
+          result as { response: AsyncIterable<{ data?: string }> }
+        ).response) {
+          if (event.data && event.data !== "[DONE]")
+            frames.push(JSON.parse(event.data))
+          now += gap
+        }
+        expect(frames.find((frame) => frame.usage)?.usage).toEqual({
+          prompt_tokens: 10,
+          completion_tokens: 300,
+          total_tokens: 310,
+        })
+        if (content.some((text) => text.includes("<tool_call>"))) {
+          expect(JSON.stringify(frames)).toContain('"name":"get_time"')
+        }
+        const row: UsageRawRow = {
+          model: "claude-sonnet-4-6",
+          provider: "qoder",
+          account_id: "account",
+          user_id: null,
+          prompt_tokens: 10,
+          completion_tokens: 300,
+          total_tokens: 310,
+          cache_read_tokens: 0,
+          cache_write_tokens: 0,
+          cost: 0,
+          timestamp: 0,
+          ttft_ms: 9400,
+          tps: 30,
+          streaming: 1,
+          performance_json: JSON.stringify(
+            requestPerformanceSnapshot(c, true, 600),
+          ),
+        }
+        const summary = computePerformanceSummary([row])
+        expect(summary.avgStreamingTps).toBe(30)
+        expect(summary.avgDecodeTps).toBe(eligible ? 500 : null)
+        expect(summary.decodeSamples).toBe(eligible ? 1 : 0)
+        const [detail] = computePerformanceDetails([row])
+        expect(detail?.generationTps).toBe(eligible ? 500 : null)
+        expect(detail?.generationSamples).toBe(eligible ? 1 : 0)
+      } finally {
+        clock.mockRestore()
+      }
+    },
+  )
+})
+
 // ── 端到端路由 ──────────────────────────────────────────────────────
 
 describe("Qoder end-to-end routing", () => {
@@ -882,6 +1026,15 @@ describe("Qoder end-to-end routing", () => {
               id: "e2e-1",
               choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
             }),
+            outerFrame({
+              id: "e2e-1",
+              choices: [],
+              usage: {
+                prompt_tokens: 11,
+                completion_tokens: 5,
+                total_tokens: 16,
+              },
+            }),
           ]),
         )
       },
@@ -914,5 +1067,13 @@ describe("Qoder end-to-end routing", () => {
     const text = await response.text()
     expect(text).toContain("chat.completion.chunk")
     expect(text).toContain("[DONE]")
+    const [summary] = statsStore.getPerformanceByModelInRange({
+      startMs: 0,
+      endMs: Date.now() + 1,
+    })
+    expect(summary?.requests).toBe(1)
+    expect(summary?.avgStreamingTps).toBeGreaterThan(0)
+    expect(summary?.decodeSamples).toBe(0)
+    expect(summary?.avgDecodeTps).toBeNull()
   })
 })

@@ -125,6 +125,57 @@ describe("channels table row disclosure", () => {
 })
 
 describe("incremental admin icons", () => {
+  test("opening account models from a card renders the modal action icons", async () => {
+    const frames: Array<() => void> = []
+    const icons = ["tags", "pencil"].map((name) => ({
+      localName: "i",
+      getAttribute: () => name,
+      setAttribute: () => {},
+    }))
+    const root = {
+      isConnected: true,
+      contains: () => false,
+      querySelectorAll: () => icons,
+    }
+    const button = { ...root, querySelectorAll: () => [] }
+    const models = [{ publicId: "gemini-4-argon", enabled: true }]
+    const view = runInNewContext(
+      readFileSync("pages/js/admin-icons.js", "utf8")
+        + "\n"
+        + readFileSync("pages/js/views/accounts.js", "utf8")
+        + "\naccountsView()",
+      {
+        ViewHelpers: {},
+        API: { accounts: { getModels: async () => ({ models }) } },
+        requestAnimationFrame: (callback: () => void) => frames.push(callback),
+        lucide: {
+          createIcons(options: {
+            root: { querySelectorAll(selector: string): typeof icons }
+          }) {
+            for (const icon of options.root.querySelectorAll("[data-lucide]"))
+              icon.localName = "svg"
+          },
+        },
+      },
+    ) as {
+      $root: typeof root
+      $el: typeof button
+      $nextTick(callback: () => void): void
+      showAccountModels: boolean
+      accountModelsConn: { id: string; models: typeof models }
+      openAccountModels(account: { id: string }): Promise<void>
+    }
+    // Alpine's $el is the clicked card button; the modal lives under $root.
+    view.$root = root
+    view.$el = button
+    view.$nextTick = (callback) => callback()
+    await view.openAccountModels({ id: "account-1" })
+    for (const frame of frames) frame()
+    expect(view.showAccountModels).toBe(true)
+    expect(view.accountModelsConn).toEqual({ id: "account-1", models })
+    expect(icons.map((icon) => icon.localName)).toEqual(["svg", "svg"])
+  })
+
   test("saving a connection from a modal renders the new card's action icons", async () => {
     const frames: Array<() => void> = []
     const icon = {

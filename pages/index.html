@@ -2687,6 +2687,7 @@
                       :key="m.publicId"
                     >
                       <div
+                        x-init="$nextTick(() => refreshAdminIcons($el))"
                         class="px-3 py-2 rounded-lg hover:bg-[var(--apple-gray-6)]"
                       >
                         <div

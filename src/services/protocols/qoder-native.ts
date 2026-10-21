@@ -17,7 +17,10 @@
  * 上游只会流式，客户端要非流式时在这里聚合。
  */
 
+import type { Context } from "hono"
+
 import { HTTPError } from "~/lib/error"
+import { setDecodeTpsEligible } from "~/lib/request-performance"
 import { maskUpstream } from "~/lib/redaction/context"
 import type { ModelMapping } from "~/lib/provider-connections"
 import { getConnectionProvider } from "~/lib/provider-connections"
@@ -200,6 +203,7 @@ function chunkFrame(chunk: Record<string, unknown>): CopilotStreamEvent {
 async function* decodeQoderStream(
   upstream: AsyncIterable<SimpleSseEventLike>,
   model: string,
+  c?: Context,
 ): AsyncGenerator<CopilotStreamEvent> {
   const splitter = new QoderToolCallSplitter()
   let xmlCallIndex = 0
@@ -208,6 +212,11 @@ async function* decodeQoderStream(
   let usageSent = false
   let id = ""
   let created = Math.floor(Date.now() / 1000)
+  let firstOutputAt: number | undefined
+  let bufferedOutput = false
+  // A single/burst delivery has no reliable decode interval. Require at least
+  // 100ms between output-bearing upstream frames, excluding trailing usage wait.
+  setDecodeTpsEligible(c, false)
 
   const base = (): Record<string, unknown> => ({
     id: id || `chatcmpl-${newQoderId()}`,
@@ -238,6 +247,10 @@ async function* decodeQoderStream(
         }
         continue
       }
+      // XML arguments were accumulated before emitting this call. Counting all
+      // their tokens against the shorter downstream interval inflates TPS.
+      bufferedOutput = true
+      setDecodeTpsEligible(c, false)
       out.push(
         chunkFrame({
           ...base(),
@@ -275,6 +288,15 @@ async function* decodeQoderStream(
 
     const choice = chunk.choices?.[0]
     const delta = choice?.delta
+    if (
+      delta?.reasoning_content
+      || delta?.content
+      || delta?.tool_calls?.length
+    ) {
+      const now = performance.now()
+      firstOutputAt ??= now
+      setDecodeTpsEligible(c, !bufferedOutput && now - firstOutputAt >= 100)
+    }
     if (delta?.reasoning_content) {
       yield chunkFrame({
         ...base(),
@@ -415,6 +437,7 @@ export const qoderNativeAdapter: ProtocolAdapter = {
     credential,
     payload,
     signal,
+    ctx,
   }) {
     const model = resolveModelInfo(
       connection,
@@ -472,6 +495,7 @@ export const qoderNativeAdapter: ProtocolAdapter = {
     const stream = decodeQoderStream(
       upstream as unknown as AsyncIterable<SimpleSseEventLike>,
       target.upstreamModelId,
+      ctx?.c,
     )
 
     if (!payload.stream) {

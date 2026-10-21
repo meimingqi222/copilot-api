@@ -1200,7 +1200,7 @@ function accountsView() {
         this.accountModelsAliasFor = null
         this.accountModelsAliasInput = ""
         this.showAccountModels = true
-        this.$nextTick(() => refreshAdminIcons(this.$el))
+        this.$nextTick(() => refreshAdminIcons(this.$root))
       } catch (e) {
         this.showToast(e.message || I18n.t("error.load"), "error")
       }

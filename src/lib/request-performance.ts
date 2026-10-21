@@ -9,6 +9,8 @@ export interface RequestPerformance {
   translated: boolean
   requestBodyBytes?: number
   generationMs?: number
+  /** False when adapter buffering or a burst prevents measuring decode speed. */
+  decodeTpsEligible?: boolean
   outputTtftMs?: number
   textTtftMs?: number
   firstWriteMs?: number
@@ -53,6 +55,7 @@ interface PerformanceState {
   upstreamEvent?: number
   outputWrite?: number
   responseReady?: number
+  decodeTpsEligible?: boolean
 }
 
 export type PerformanceTiming =
@@ -170,6 +173,14 @@ export function markPerformanceOutput(
 ): void {
   const state = requests.get(c)
   if (state && state.output === undefined) state.output = now
+}
+
+export function setDecodeTpsEligible(
+  c: Context | undefined,
+  eligible: boolean,
+): void {
+  const state = c && requests.get(c)
+  if (state) state.decodeTpsEligible = eligible
 }
 
 export function markPerformanceWrite(
@@ -299,6 +310,7 @@ export function requestPerformanceSnapshot(
       streaming && state.output !== undefined && now > state.output ?
         now - state.output
       : undefined,
+    decodeTpsEligible: state.decodeTpsEligible,
     outputTtftMs: elapsed(state.output),
     textTtftMs: elapsed(state.text),
     firstWriteMs: elapsed(state.write),
