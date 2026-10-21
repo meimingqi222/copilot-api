@@ -38,11 +38,12 @@ OpenAI Responses）互转时的信息落差，以及历史回归。下文列出�
 
 ### 选路层级
 
-`selectRouteTarget()`（`src/lib/route-target/select.ts`）的分层判别**优先于**
-`connectionPriority`：
+`selectRouteTarget()`（`src/lib/route-target/select.ts`）先选择专用候选，仅当没有
+专用候选时才使用通配候选。在该层内，显式 `connectionPriority` 优先于是否需要
+协议转换；只有同一优先级内才优先原生 endpoint：
 
 ```
-专用原生  >  专用转换  >  通配原生  >  通配转换
+专用 / 通配分层 → 可用容量与额度 → connectionPriority → 原生 / 转换 → 策略选取
 ```
 
 回退到非原生 endpoint 的 target 由 `build.ts` 打上 `RouteTarget.isTranslated`。

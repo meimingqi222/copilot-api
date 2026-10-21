@@ -1,14 +1,12 @@
 /**
  * RouteTarget 选择算法。
  *
- * 0. 分层过滤(层级判别优先于 connectionPriority):
+ * 0. 分层过滤:
  *    a. 优先专用(非通配) target,仅当无专用 target 时才用通配。
- *       这取代了旧的 WILDCARD_PRIORITY_BASE 标量编码——isWildcard 是类型化
- *       字段,直接用它做层级判别。
- *    b. 同层内优先原生 endpoint(isTranslated 为假),仅当没有原生候选时
- *       才用需要协议转换的 target。
- *    connectionPriority 只在最终层级内比较。
- * 1. 智能策略先排除接近耗尽的账号（全耗尽时保留后备），再按 connectionPriority 找到最低数字层。
+ *    b. 同一 credential 保留最优 endpoint(原生优先,其次按回退顺序)。
+ * 1. 按 connectionPriority 找到最小数字层(智能策略先排除接近耗尽的账号);
+ *    在同一 connectionPriority 层内,优先原生 endpoint(isTranslated 为假),
+ *    仅当该优先级层没有原生候选时才使用需要协议转换的 target。
  * 2. 在该层内按 strategy:
  *    - quota (default): 额度压力与重置时间；least-used: 使用量。
  *    - fill-first: 固定选排序后第一个 (CPA FillFirstSelector)
@@ -109,8 +107,15 @@ function preferredRouteTargets(
 ): Array<RouteTarget> {
   const dedicated = targets.filter((t) => !t.isWildcard)
   const tier = dedicated.length > 0 ? dedicated : targets
-  const native = tier.filter((t) => !t.isTranslated)
-  return preferredEndpoints(native.length > 0 ? native : tier)
+  return preferredEndpoints(tier)
+}
+
+/** Prefer native-endpoint targets over cross-protocol translated ones within the same priority tier. */
+function preferNativeEndpoints(
+  targets: Array<RouteTarget>,
+): Array<RouteTarget> {
+  const native = targets.filter((t) => !t.isTranslated)
+  return native.length > 0 ? native : targets
 }
 
 function findByAuthKey(
@@ -210,9 +215,9 @@ export function selectRouteTarget(
   const allPool = candidates.filter((t) => !exclude.has(targetKey(t)))
   if (allPool.length === 0) return null
 
-  // 0) 分层过滤,层级判别优先于 connectionPriority:
+  // 0) 专用 / 通配分层优先于 connectionPriority:
   //    a. 优先专用(非通配) target,仅当无专用 target 时才用通配。
-  //    b. 同层内优先原生 endpoint,仅当没有原生候选时才用协议转换 target。
+  //    b. 同一 credential 保留最优 endpoint；跨连接的原生优先在同 priority 层内比较。
   //       转换是有损的(丢 cache_control 断点、字段降级),同优先级下
   //       不应抢占一个原生支持该 endpoint 的 provider。
   //       failover 把原生 target 排除后,转换 target 仍会作为后备被选中。
@@ -224,9 +229,11 @@ export function selectRouteTarget(
   // its retryable local 429 instead of an unrelated model-not-found error.
   const pool = withCapacity.length ? withCapacity : preferred
 
-  // 1) connection priority 最小值
+  // 1) connection priority 最小值（显式优先级高于协议转换标记，同优先级内优先原生端点）
   let minConnPrio = Math.min(...pool.map((t) => t.connectionPriority))
-  let topConn = pool.filter((t) => t.connectionPriority === minConnPrio)
+  let topConn = preferNativeEndpoints(
+    pool.filter((t) => t.connectionPriority === minConnPrio),
+  )
   const strategy =
     options.strategy
     ?? effectiveStrategyFor(
@@ -240,8 +247,8 @@ export function selectRouteTarget(
       minConnPrio = Math.min(
         ...unspent.map((target) => target.connectionPriority),
       )
-      topConn = unspent.filter(
-        (target) => target.connectionPriority === minConnPrio,
+      topConn = preferNativeEndpoints(
+        unspent.filter((target) => target.connectionPriority === minConnPrio),
       )
     }
   }

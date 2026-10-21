@@ -457,9 +457,10 @@ describe("unified endpoint fallback (cross-protocol)", () => {
     expect(next?.endpoint).toBe("messages")
   })
 
-  test("lower-priority native still loses to a higher-priority translated target", async () => {
-    // 层级判别只在同一 wildcard 层内生效之后才比较 priority;
-    // 但转换层级判别本身优先于 priority —— 这里显式固定该行为。
+  test("higher-priority translated target wins over a lower-priority native target", async () => {
+    // 显式配置的账号/连接优先级(connectionPriority)高于是否需要协议转换:
+    // 例如用户将 AI Studio / Anthropic 设为高优先级(0),Windsurf / OpenAI
+    // 设为低优先级(99)时,应优先走 priority 0 的账号;仅当同优先级时才优先原生端点。
     await createConnection({
       id: "anthropic-p0",
       name: "anthropic-p0",
@@ -481,8 +482,8 @@ describe("unified endpoint fallback (cross-protocol)", () => {
     const selected = selectRouteTarget(
       buildRouteTargets({ publicModelId: "shared-model", endpoint: "chat" }),
     )
-    // 原生优先于协议转换,即使原生 connection 的 priority 数字更大。
-    expect(selected?.connectionId).toBe("openai-p99")
+    expect(selected?.connectionId).toBe("anthropic-p0")
+    expect(selected?.endpoint).toBe("messages")
   })
 })
 
