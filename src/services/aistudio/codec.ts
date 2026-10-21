@@ -94,7 +94,13 @@ function encodePart(part: GeminiPart): unknown[] {
 }
 
 function schema(value: Record<string, unknown>): unknown[] {
+  // AIStudio2API accepts schema metadata without encoding it into the wire.
+  // Keep checking constraint keywords; ignoring those would change the tool.
   keys(value, [
+    "$schema",
+    "$id",
+    "$comment",
+    "title",
     "type",
     "format",
     "description",
