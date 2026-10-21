@@ -3,9 +3,16 @@ import { readFileSync } from "node:fs"
 import { runInNewContext } from "node:vm"
 import type { ProviderConnection } from "~/lib/provider-connections"
 import {
+  managedConnectionFromInput,
   markCredentialCooldown,
+  removeProviderConnection,
+  setConnectionQuotaState,
   upsertProviderConnection,
 } from "~/lib/provider-connections"
+import {
+  clearAccountRateLimitState,
+  reportUpstreamRateLimitMs,
+} from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 import { publishTrace } from "~/lib/trace-bus"
@@ -314,6 +321,52 @@ describe("Admin Dashboard API", () => {
       expect(view.globalStats.avgTps).toBeCloseTo(63.333333, 5)
     } finally {
       clock.mockRestore()
+    }
+  })
+
+  test("CodeBuddy zero credits are not displayed as an account-wide HTTP 429 cooldown", async () => {
+    const conn = managedConnectionFromInput({
+      id: "dashboard-zero-credit",
+      name: "CodeBuddy-Zero",
+      provider: "codebuddy",
+      credentials: { accessToken: "fixture-token" },
+    })
+    upsertProviderConnection(conn)
+    setConnectionQuotaState(conn, "exhausted")
+    conn.credentials[0].lastError = "HTTP 429"
+    try {
+      const response = await server.fetch(
+        adminRequest("http://localhost/admin/api/dashboard"),
+      )
+      expect(response.status).toBe(200)
+      const data = (await response.json()) as {
+        alerts: {
+          connectionId: string
+          type: string
+          message: string
+          cooldownRemainingMs?: number
+        }[]
+      }
+      const alert = data.alerts.find((item) => item.connectionId === conn.id)!
+      expect(alert.type).toBe("exhausted")
+      expect(alert.message).toContain("免费模型")
+      expect(alert.cooldownRemainingMs).toBeUndefined()
+
+      // Credit exhaustion does not cancel a genuine, simultaneous rate limit.
+      await reportUpstreamRateLimitMs(conn.id, 60_000)
+      const limited = await server.fetch(
+        adminRequest("http://localhost/admin/api/dashboard"),
+      )
+      const limitedData = (await limited.json()) as typeof data
+      const limitedAlert = limitedData.alerts.find(
+        (item) => item.connectionId === conn.id,
+      )!
+      expect(limitedAlert.type).toBe("cooldown")
+      expect(limitedAlert.cooldownRemainingMs).toBeGreaterThan(0)
+      expect(limitedAlert.cooldownRemainingMs).toBeLessThanOrEqual(60_000)
+    } finally {
+      clearAccountRateLimitState(conn.id)
+      removeProviderConnection(conn.id)
     }
   })
 

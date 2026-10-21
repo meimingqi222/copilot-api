@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 
 import { logStore } from "~/lib/log-store"
+import { getRemainingCooldownSeconds } from "~/lib/rate-limit"
 import {
   getConnectionAuthError,
   getConnectionAuthStatus,
@@ -153,7 +154,14 @@ function collectFleetAndAlerts(
 
   for (const conn of connections) {
     const cred = conn.credentials?.[0]
-    const cooldownUntil = getConnectionCooldownUntil(conn)
+    // CodeBuddy's credit-reprobe timestamp is not an account-wide rate limit:
+    // zero-credit models can still run. Only the pacing limiter blocks them.
+    const creditExhausted =
+      conn.protocol === "codebuddy-native" && cred?.status === "quota_exhausted"
+    const cooldownUntil =
+      creditExhausted ?
+        now + getRemainingCooldownSeconds(conn.id) * 1000
+      : getConnectionCooldownUntil(conn)
     const authStatus = getConnectionAuthStatus(conn)
     const authError = getConnectionAuthError(conn)
     const exhaustedAt = getConnectionExhaustedAt(conn)
@@ -219,7 +227,8 @@ function collectFleetAndAlerts(
       })
     } else if (exhaustedAt || cred?.status === "quota_exhausted") {
       status = "exhausted"
-      statusMessage = "配额已耗尽"
+      statusMessage =
+        creditExhausted ? "积分已耗尽；免费模型不受积分限制" : "配额已耗尽"
       errorCount += 1
       alerts.push({
         id: `exhausted-${conn.id}`,
