@@ -15,6 +15,10 @@ Provider 随应用编译、发布，通过 `services/providers/modules/<id>.ts` 
   （纯数据，UI 与路由能力判断在 runtime 启动前读取）；模块声明自己的
   `descriptor`，注册时校验与 `module.id` 一致。页面从 API 读取分类、徽标、
   提示和手动回调配置，不再维护这些 Provider 名单。
+  同一贡献的 `credentials` 声明主凭据字段、可选的 context 来源、必需附加字段
+  和固定导出字段；OAuth 分类默认主字段为 `accessToken`。连接构造、凭据存在性
+  和导出共用此描述，不再各加一份 Provider 分支。Copilot 的 GitHub 刷新源与
+  运行态 JWT 仍区分处理，凭据存在不等于当前可发送或额度可用。
 - `services/providers/module.ts`：模块契约与注册前校验。
 - `services/providers/modules/`：各家的 adapter、runtime 工厂、登录策略、
   OAuth 凭证刷新、提前刷新时间、模型发现、fallback 目录与额度拉取。

@@ -5,7 +5,8 @@
  * 承载于 `ProviderConnection.metadata` 内的 `ConnectionMetadata` 子结构。
  * 本模块提供类型安全的字段读取器，替代散装 `metadata.xxx as string` 强转。
  */
-import { isOAuthProviderId, type ProviderId } from "~/lib/provider-config"
+import { isProviderId, type ProviderId } from "~/lib/provider-config"
+import { PROVIDER_METADATA } from "~/lib/provider-metadata"
 import { getSystemSettings } from "~/lib/system-config"
 
 import { PROTOCOL_PROVIDER_MAP as PROTOCOL_TO_PROVIDER } from "~/lib/provider-definitions"
@@ -364,27 +365,9 @@ export function getCredentialContextNumber(
  * 该字段不放入 credentialExtras（它在 credential.value 或 context 中）。
  */
 export function getPrimaryTokenKey(provider: string): string | undefined {
-  switch (provider) {
-    case "copilot": {
-      return "githubToken"
-    }
-    case "codebuff": {
-      return "authToken"
-    }
-    case "windsurf": {
-      return "apiKey"
-    }
-    case "mimo-aistudio": {
-      return "serviceToken"
-    }
-    case "aistudio": {
-      return "cookie"
-    }
-    default: {
-      if (isOAuthProviderId(provider)) return "accessToken"
-      return undefined
-    }
-  }
+  return isProviderId(provider) ?
+      PROVIDER_METADATA[provider].credentials?.primaryKey
+    : undefined
 }
 
 // ── Connection 级别写入器 ─────────────────────────────────────────

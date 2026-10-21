@@ -3,6 +3,18 @@ import { defineProviderMetadata } from "~/lib/provider-descriptors/metadata"
 export const providerMetadata = defineProviderMetadata({
   protocol: "lobsterai-native",
   oauth: false,
+  credentials: {
+    primaryKey: "accessToken",
+    exportKeys: [
+      "accessToken",
+      "refreshToken",
+      "expiresAt",
+      "uuid",
+      "userId",
+      "firstKeyfrom",
+      "latestKeyfrom",
+    ],
+  },
   descriptor: {
     id: "lobsterai",
     presentation: {

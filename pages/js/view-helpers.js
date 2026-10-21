@@ -116,6 +116,38 @@ const PNG_BRAND_ICONS = new Set([
 ])
 
 const ViewHelpers = {
+  async addModelAliasFor(model, options) {
+    const { connection, inputKey } = options
+    if (!connection) return
+    const value = (this[inputKey] || "").trim()
+    if (!value) return
+    const current = model.aliases || []
+    if (current.some((alias) => alias.toLowerCase() === value.toLowerCase())) {
+      this[inputKey] = ""
+      return
+    }
+    if (await this.saveModelAliasesFor(model, [...current, value], options)) {
+      this[inputKey] = ""
+    }
+  },
+
+  async removeModelAliasFor(model, alias, options) {
+    if (!options.connection) return
+    const next = (model.aliases || []).filter((value) => value !== alias)
+    await this.saveModelAliasesFor(model, next, options)
+  },
+
+  async saveModelAliasesFor(model, aliases, { connection, updateModel }) {
+    try {
+      await updateModel(connection.id, model.publicId, { aliases })
+      model.aliases = aliases
+      return true
+    } catch (e) {
+      this.showToast(e.message || I18n.t("error.update"), "error")
+      return false
+    }
+  },
+
   t(key, params) {
     const app = document.querySelector("[x-data^=adminApp]")
     if (app) void Alpine.$data(app).lang

@@ -3,6 +3,7 @@ import { defineProviderMetadata } from "~/lib/provider-descriptors/metadata"
 export const providerMetadata = defineProviderMetadata({
   protocol: "codebuff-native",
   oauth: false,
+  credentials: { primaryKey: "authToken", exportKeys: ["authToken"] },
   descriptor: {
     id: "codebuff",
     presentation: {

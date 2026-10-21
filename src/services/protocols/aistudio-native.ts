@@ -1,5 +1,9 @@
+import { LocalPayloadUnsupportedError } from "~/lib/error"
 import { createAIStudioClient } from "~/services/aistudio/session"
-import { decodeAIStudioModels } from "~/services/aistudio/models"
+import {
+  decodeAIStudioModels,
+  isAIStudioModelAllowed,
+} from "~/services/aistudio/models"
 import {
   encodeGenerateRequest,
   decodeGenerateStream,
@@ -12,7 +16,8 @@ export const aistudioNativeAdapter: ProtocolAdapter = {
   async discoverModels({ connection, credential, signal }) {
     const client = createAIStudioClient(connection, credential, signal)
     await client.initialize()
-    return decodeAIStudioModels(await client.rpc("ListModels"))
+    const catalog = await client.rpc("ListModels")
+    return decodeAIStudioModels(catalog, await client.getBenefitTier())
   },
   async createGeminiGenerateContent({
     target,
@@ -24,6 +29,10 @@ export const aistudioNativeAdapter: ProtocolAdapter = {
     const metadata = connection.models?.find(
       (model) => model.upstreamId === target.upstreamModelId,
     )?.metadata
+    if (metadata?.supported === false)
+      throw new LocalPayloadUnsupportedError(
+        "AI Studio: this model requires an unsupported upstream route (for example Interactions, Live or media generation).",
+      )
     const encoded = encodeGenerateRequest(
       payload,
       target.upstreamModelId,
@@ -31,6 +40,16 @@ export const aistudioNativeAdapter: ProtocolAdapter = {
     )
     const client = createAIStudioClient(connection, credential, signal)
     await client.initialize()
+    const tier = await client.getBenefitTier()
+    if (
+      !isAIStudioModelAllowed(
+        Array.isArray(metadata?.accessModes) ? metadata.accessModes : [],
+        tier,
+      )
+    )
+      throw new LocalPayloadUnsupportedError(
+        "AI Studio: this account does not have the model's required subscription or paid API-key access.",
+      )
     const upstream = await client.generate(encoded.body, encoded.binding)
     const chunks = (async function* () {
       for await (const chunk of decodeGenerateStream(upstream, signal)) {

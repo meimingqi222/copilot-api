@@ -14,6 +14,7 @@
  */
 
 import { isOAuthProviderId } from "~/lib/provider-config"
+import { PROVIDER_METADATA } from "~/lib/provider-metadata"
 
 import type { ProviderConnection } from "./types"
 
@@ -30,13 +31,6 @@ function getCredentialValue(conn: ProviderConnection): string | undefined {
 }
 
 // ── Provider-specific 凭据访问器 ──────────────────────────────
-
-/** Copilot githubToken(刷新源材料,存于 credential.context)。 */
-function getConnectionGithubToken(
-  conn: ProviderConnection,
-): string | undefined {
-  return getCredentialContextString(conn, "githubToken")
-}
 
 /** Copilot token(JWT,存于 credential.value)。 */
 export function getConnectionCopilotToken(
@@ -80,13 +74,6 @@ export function getConnectionOAuthAccessToken(
   return getCredentialValue(conn)
 }
 
-/** OAuth apiKey(存于 credential.context)。 */
-function getConnectionOAuthApiKey(
-  conn: ProviderConnection,
-): string | undefined {
-  return getCredentialContextString(conn, "apiKey")
-}
-
 /** OAuth accountId(存于 credential.context,键名 oauthAccountId)。 */
 export function getConnectionOAuthAccountId(
   conn: ProviderConnection,
@@ -105,24 +92,19 @@ export function isOAuthConnection(conn: ProviderConnection): boolean {
 /** 判断 connection 是否有凭据(替代 getHasCredentials)。 */
 export function connectionHasCredentials(conn: ProviderConnection): boolean {
   const provider = getConnectionProvider(conn)
-  if (provider === "copilot") {
-    return Boolean(getConnectionGithubToken(conn))
-  }
-  if (provider === "codebuff") {
-    return Boolean(getConnectionCodebuffAuthToken(conn))
-  }
-  if (provider === "windsurf") {
-    return Boolean(getConnectionWindsurfApiKey(conn))
-  }
-  if (provider === "aistudio") {
-    return Boolean(getCredentialValue(conn))
-  }
-  if (provider !== undefined && isOAuthProviderId(provider)) {
-    return Boolean(
-      getConnectionOAuthAccessToken(conn) || getConnectionOAuthApiKey(conn),
+  if (!provider) return false
+  const schema = PROVIDER_METADATA[provider].credentials
+  if (!schema) return false
+  const primary =
+    schema.primarySource === "context" ?
+      getCredentialContextString(conn, schema.primaryKey)
+    : getCredentialValue(conn)
+  const alternate =
+    isOAuthProviderId(provider) && getCredentialContextString(conn, "apiKey")
+  return (
+    Boolean(primary || alternate)
+    && (schema.requiredExtras ?? []).every((key) =>
+      Boolean(getCredentialExtraString(conn, key)),
     )
-  }
-  return Boolean(
-    getConnectionMimoServiceToken(conn) && getConnectionMimoPh(conn),
   )
 }

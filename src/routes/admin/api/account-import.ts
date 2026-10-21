@@ -25,21 +25,18 @@ import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { readJsonBody } from "~/lib/request-body"
 import { refreshModelsForConnection } from "~/lib/utils"
 import { cookieHeader, parseCookieHeader } from "~/services/aistudio/auth"
-import { scheduleCodebuddyRefresh } from "~/services/codebuddy/token-refresh"
 import {
   cancelConnectionTokenRefresh,
   refreshCopilotTokenForConnection,
 } from "~/services/copilot/token-refresh"
-import {
-  scheduleLobsteraiRefresh,
-  scheduleLobsteraiRefreshForAllConnections,
-} from "~/services/lobsterai/token-refresh"
+import { scheduleLobsteraiRefreshForAllConnections } from "~/services/lobsterai/token-refresh"
 import {
   importCpaAuthRecords,
   parseCpaAuthPayload,
 } from "~/services/oauth/cpa-import"
 import { scheduleOAuthRefreshForConnection } from "~/services/oauth/refresh-scheduler"
 import { initializeProviderRegistry } from "~/services/providers"
+import { getBuiltinProviderModule } from "~/services/providers/builtins"
 import { getProviderRuntime } from "~/services/providers/registry"
 export const importAccountRoutes = new Hono()
 
@@ -316,13 +313,10 @@ function initializeImportedAccount(
       .catch(warn)
     return
   }
-  if (provider === "codebuddy" || provider === "codebuddy-cn") {
-    scheduleCodebuddyRefresh(conn)
-  }
-  if (provider === "lobsterai") {
-    scheduleLobsteraiRefresh(conn)
-  }
-  void refreshModelsForConnection(conn).catch(warn)
+  void Promise.resolve()
+    .then(() => getBuiltinProviderModule(provider)?.afterAuthentication?.(conn))
+    .then(() => refreshModelsForConnection(conn))
+    .catch(warn)
 }
 
 /** OAuth import: schedule refresh, discover models, and fetch quota if the runtime supports it. */

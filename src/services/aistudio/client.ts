@@ -35,6 +35,7 @@ interface ClientOptions {
 export class AIStudioClient {
   private cookies: Map<string, string>
   private apiKey = ""
+  private benefitTier = 0
   private options: ClientOptions
 
   constructor(options: ClientOptions) {
@@ -161,7 +162,7 @@ export class AIStudioClient {
   }
 
   async rpc(
-    method: "ListModels" | "GetLoggingContext",
+    method: "ListModels" | "GetLoggingContext" | "GetAiStudioBenefitTier",
     body: unknown[] = [],
   ): Promise<unknown> {
     const response = await this.checked(
@@ -173,6 +174,17 @@ export class AIStudioClient {
       method,
     )
     return parseRpcJson(await response.text())
+  }
+
+  async getBenefitTier(): Promise<number> {
+    const result = await this.rpc("GetAiStudioBenefitTier")
+    if (
+      !Array.isArray(result)
+      || (result[0] != null && ![0, 1, 2, 3].includes(result[0]))
+    )
+      throw new Error("Invalid AI Studio benefit tier")
+    this.benefitTier = (result[0] as number | undefined) ?? 0
+    return this.benefitTier
   }
 
   private async challenge(): Promise<{
@@ -251,6 +263,13 @@ export class AIStudioClient {
         method: "POST",
         headers: {
           ...this.headers(),
+          ...(this.benefitTier ?
+            {
+              "X-AIStudio-G1-Tier": ["", "TIER1", "TIER2", "TIER0"][
+                this.benefitTier
+              ],
+            }
+          : {}),
           "X-Aistudio-Visit-Id": `v1_${Buffer.from(randomUUID()).toString("base64")}`,
           "X-Goog-Ext-519733851-Bin": logging,
         },

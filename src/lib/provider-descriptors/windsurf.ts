@@ -3,6 +3,7 @@ import { defineProviderMetadata } from "~/lib/provider-descriptors/metadata"
 export const providerMetadata = defineProviderMetadata({
   protocol: "windsurf-native",
   oauth: false,
+  credentials: { primaryKey: "apiKey", exportKeys: ["apiKey"] },
   descriptor: {
     id: "windsurf",
     presentation: {

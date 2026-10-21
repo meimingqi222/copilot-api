@@ -1292,36 +1292,18 @@ function accountsView() {
     },
 
     async addAccountModelAlias(m) {
-      if (!this.accountModelsConn) return
-      const value = (this.accountModelsAliasInput || "").trim()
-      if (!value) return
-      const current = m.aliases || []
-      if (current.some((a) => a.toLowerCase() === value.toLowerCase())) {
-        this.accountModelsAliasInput = ""
-        return
-      }
-      try {
-        await API.accounts.updateModel(this.accountModelsConn.id, m.publicId, {
-          aliases: [...current, value],
-        })
-        m.aliases = [...current, value]
-        this.accountModelsAliasInput = ""
-      } catch (e) {
-        this.showToast(e.message || I18n.t("error.update"), "error")
-      }
+      await this.addModelAliasFor(m, {
+        connection: this.accountModelsConn,
+        inputKey: "accountModelsAliasInput",
+        updateModel: (...args) => API.accounts.updateModel(...args),
+      })
     },
 
     async removeAccountModelAlias(m, alias) {
-      if (!this.accountModelsConn) return
-      const next = (m.aliases || []).filter((a) => a !== alias)
-      try {
-        await API.accounts.updateModel(this.accountModelsConn.id, m.publicId, {
-          aliases: next,
-        })
-        m.aliases = next
-      } catch (e) {
-        this.showToast(e.message || I18n.t("error.update"), "error")
-      }
+      await this.removeModelAliasFor(m, alias, {
+        connection: this.accountModelsConn,
+        updateModel: (...args) => API.accounts.updateModel(...args),
+      })
     },
 
     isUniqueSubtitle(subtitle) {

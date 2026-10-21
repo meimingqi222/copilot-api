@@ -12,6 +12,10 @@ import type { TestAccount as Account } from "./helpers/set-accounts"
 
 import { listTestAccounts as listAccounts } from "./helpers/set-accounts"
 import { PATHS, redirectPathsToDir } from "~/lib/paths"
+import {
+  listAccountManagedConnections,
+  setConnectionCredentialExtra,
+} from "~/lib/provider-connections"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
@@ -106,6 +110,80 @@ describe("admin account view parity (Phase 4 G1 freeze)", () => {
     clearAdminPasswordConfig()
     setTestAccounts(originalAccounts)
     globalThis.fetch = originalFetch
+  })
+
+  test("credential presence follows each provider's requirements, not the legacy OAuth classification", async () => {
+    setTestAccounts([
+      ...(["codebuddy", "codebuddy-cn", "lobsterai"] as const).flatMap(
+        (provider) => [
+          {
+            id: provider,
+            label: provider,
+            provider,
+            credentials: { accessToken: `${provider}-token` },
+          },
+          {
+            id: `${provider}-empty`,
+            label: `${provider}-empty`,
+            provider,
+            credentials: { refreshToken: "refresh-only" },
+          },
+        ],
+      ),
+      {
+        id: "mimo-half",
+        label: "mimo-half",
+        provider: "mimo-aistudio",
+        credentials: { serviceToken: "service" },
+      },
+      {
+        id: "mimo-full",
+        label: "mimo-full",
+        provider: "mimo-aistudio",
+        credentials: { serviceToken: "service", xiaomichatbotPh: "ph" },
+      },
+      {
+        id: "copilot-jwt",
+        label: "copilot-jwt",
+        provider: "copilot",
+        runtimeState: { copilotToken: "jwt-without-refresh-source" },
+      },
+      {
+        id: "copilot-source",
+        label: "copilot-source",
+        provider: "copilot",
+        credentials: { githubToken: "github-refresh-source" },
+      },
+      {
+        id: "oauth-key",
+        label: "oauth-key",
+        provider: "claude",
+        credentials: { apiKey: "api-key-without-access-token" },
+      },
+    ])
+    initializeProviderRegistry()
+    const res = await adminJson("http://localhost/admin/api/accounts")
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      accounts: Array<{ id: string; hasCredentials: boolean }>
+    }
+    expect(
+      Object.fromEntries(
+        body.accounts.map((account) => [account.id, account.hasCredentials]),
+      ),
+    ).toEqual({
+      codebuddy: true,
+      "codebuddy-empty": false,
+      "codebuddy-cn": true,
+      "codebuddy-cn-empty": false,
+      lobsterai: true,
+      "lobsterai-empty": false,
+      "mimo-half": false,
+      "mimo-full": true,
+      "copilot-jwt": false,
+      "copilot-source": true,
+      "oauth-key": true,
+    })
   })
 
   test("copilot account: publicAccountFromConnection produces expected JSON shape", async () => {
@@ -262,6 +340,44 @@ describe("admin account view parity (Phase 4 G1 freeze)", () => {
     expect(putAccount.hasCredentials).toBe(listAccount.hasCredentials)
     expect(putAccount.settings).toEqual(listAccount.settings)
     expect(putAccount.providerFeatures).toEqual(listAccount.providerFeatures)
+  })
+
+  test("export uses the current token rather than a legacy credentialExtras mirror", async () => {
+    setTestAccounts(
+      (["codebuddy", "codebuddy-cn", "lobsterai", "claude"] as const).map(
+        (provider) => ({
+          id: provider,
+          label: provider,
+          provider,
+          credentials: { accessToken: "original", refreshToken: "refresh" },
+        }),
+      ),
+    )
+    for (const connection of listAccountManagedConnections()) {
+      setConnectionCredentialExtra(connection, "accessToken", "stale-mirror")
+      connection.credentials[0].value = `${connection.id}-rotated`
+    }
+    const res = await adminJson("http://localhost/admin/api/accounts/export")
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      accounts: Array<{
+        provider: string
+        credentials: { accessToken: string }
+      }>
+    }
+    expect(
+      Object.fromEntries(
+        body.accounts.map((account) => [
+          account.provider,
+          account.credentials.accessToken,
+        ]),
+      ),
+    ).toEqual({
+      codebuddy: "codebuddy-rotated",
+      "codebuddy-cn": "codebuddy-cn-rotated",
+      lobsterai: "lobsterai-rotated",
+      claude: "claude-rotated",
+    })
   })
 
   test("export endpoint returns accounts array shape", async () => {

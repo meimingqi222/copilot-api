@@ -1,5 +1,13 @@
 import type { ProviderDescriptor } from "~/lib/provider-descriptors/types"
 
+interface ProviderCredentials {
+  primaryKey: string
+  primarySource?: "context"
+  requiredExtras?: ReadonlyArray<string>
+  /** Omitted for OAuth exports, which retain provider-specific extra fields. */
+  exportKeys?: ReadonlyArray<string>
+}
+
 /** Keep literal identity types without depending on the assembled provider catalog. */
 export function defineProviderMetadata<
   const Id extends string,
@@ -9,9 +17,16 @@ export function defineProviderMetadata<
   protocol: Protocol
   oauth: OAuth
   planBased?: boolean
+  credentials?: ProviderCredentials
   descriptor: ProviderDescriptor<Id>
 }) {
-  return metadata
+  const credentials: ProviderCredentials | undefined =
+    metadata.credentials
+    ?? (metadata.oauth ? { primaryKey: "accessToken" } : undefined)
+  return {
+    ...metadata,
+    credentials,
+  }
 }
 
 /** Reject ambiguous registration rather than silently replacing a contribution. */

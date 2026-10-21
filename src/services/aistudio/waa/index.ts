@@ -3,11 +3,7 @@ import vm from "node:vm"
 import { gunzipSync } from "node:zlib"
 
 import assets from "~/services/aistudio/waa/assets.json"
-import {
-  createProfile,
-  realmProfile,
-  type WAAProfile,
-} from "~/services/aistudio/waa/profile"
+import { createProfile, realmProfile } from "~/services/aistudio/waa/profile"
 import { orderKeys } from "~/services/aistudio/waa/order"
 import { fetchImage } from "~/services/aistudio/waa/image"
 
@@ -29,11 +25,10 @@ export interface WAARuntimeState {
   signal?: AbortSignal
 }
 
-export interface WAARuntime {
+interface WAARuntime {
   proof(binding: string): Promise<string>
   close(): void
 }
-export type { WAAProfile }
 
 type Callback = (...args: unknown[]) => unknown
 type Snapshot = (done: (value: unknown) => void, input: unknown[]) => void

@@ -3,6 +3,11 @@ import { defineProviderMetadata } from "~/lib/provider-descriptors/metadata"
 export const providerMetadata = defineProviderMetadata({
   protocol: "copilot-native",
   oauth: false,
+  credentials: {
+    primaryKey: "githubToken",
+    primarySource: "context",
+    exportKeys: ["githubToken"],
+  },
   descriptor: {
     id: "copilot",
     presentation: {

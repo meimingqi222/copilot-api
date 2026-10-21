@@ -17,6 +17,7 @@ import {
   PROVIDER_PROTOCOL_MAP,
   type ProviderId,
 } from "~/lib/provider-config"
+import { PROVIDER_METADATA } from "~/lib/provider-metadata"
 import type { QuotaSnapshot } from "~/lib/quota/types"
 
 import type { CredentialRefresherType } from "./credential-refresher"
@@ -115,22 +116,8 @@ function tokenValueOf(input: ManagedConnectionInput): string {
     // copilot 的 credential.value 是刷新得到的 JWT,不由创建输入提供。
     return input.runtimeState?.copilotToken ?? ""
   }
-  if (provider === "codebuff") return readString(credentials, "authToken") ?? ""
-  if (provider === "windsurf") return readString(credentials, "apiKey") ?? ""
-  if (provider === "aistudio") return readString(credentials, "cookie") ?? ""
-  if (provider === "mimo-aistudio") {
-    return readString(credentials, "serviceToken") ?? ""
-  }
-  if (provider === "codebuddy" || provider === "codebuddy-cn") {
-    return readString(credentials, "accessToken") ?? ""
-  }
-  if (provider === "lobsterai") {
-    return readString(credentials, "accessToken") ?? ""
-  }
-  if (isOAuthProviderId(provider)) {
-    return readString(credentials, "accessToken") ?? ""
-  }
-  return ""
+  const key = getPrimaryTokenKey(provider)
+  return key ? (readString(credentials, key) ?? "") : ""
 }
 
 /** credential.context:刷新所需的源材料。 */
@@ -421,26 +408,13 @@ export function connectionModelsToAccountModels(
  */
 function connectionCredentialRecord(
   conn: ProviderConnection,
-  provider: string,
+  provider: ProviderId,
 ): Record<string, unknown> {
   const cred = conn.credentials[0]
   if (!cred) return {}
   const credentials: Record<string, unknown> = {}
   const ctx = cred.context
-  if (provider === "aistudio") credentials.cookie = cred.value
-  if (cred.value) {
-    if (provider === "codebuff") credentials.authToken = cred.value
-    else if (provider === "windsurf") credentials.apiKey = cred.value
-    else if (provider === "mimo-aistudio") credentials.serviceToken = cred.value
-    else if (provider === "codebuddy" || provider === "codebuddy-cn") {
-      credentials.accessToken = cred.value
-    } else if (provider === "lobsterai") credentials.accessToken = cred.value
-    else if (isOAuthProviderId(provider)) credentials.accessToken = cred.value
-  }
   if (ctx) {
-    if (provider === "copilot" && typeof ctx.githubToken === "string") {
-      credentials.githubToken = ctx.githubToken
-    }
     if (provider === "codebuddy" || provider === "codebuddy-cn") {
       if (typeof ctx.refreshToken === "string") {
         credentials.refreshToken = ctx.refreshToken
@@ -491,6 +465,15 @@ function connectionCredentialRecord(
       if (ctx[key] !== undefined) credentials[key] = ctx[key]
     }
   }
+  const schema = PROVIDER_METADATA[provider].credentials
+  if (schema) {
+    const value =
+      schema.primarySource === "context" ? ctx?.[schema.primaryKey] : cred.value
+    // Old files may still mirror the original token in credentialExtras.
+    // Never let that stale copy override the live credential on export.
+    if (value || schema.exportKeys) credentials[schema.primaryKey] = value
+    else delete credentials[schema.primaryKey]
+  }
   return credentials
 }
 
@@ -518,49 +501,13 @@ export function serializeConnectionForExport(
   }
 
   const settings = getConnectionSettings(conn) ?? {}
-  if (provider === "copilot") {
+  const exportKeys = PROVIDER_METADATA[provider].credentials?.exportKeys
+  if (exportKeys) {
     return {
       ...base,
-      credentials: { githubToken: credentials.githubToken },
-      settings,
-    }
-  }
-  if (provider === "codebuff") {
-    return {
-      ...base,
-      credentials: { authToken: credentials.authToken },
-      settings,
-    }
-  }
-  if (provider === "windsurf") {
-    return { ...base, credentials: { apiKey: credentials.apiKey }, settings }
-  }
-  if (provider === "aistudio") {
-    return { ...base, credentials: { cookie: credentials.cookie }, settings }
-  }
-  if (provider === "codebuddy" || provider === "codebuddy-cn") {
-    return {
-      ...base,
-      credentials: {
-        accessToken: credentials.accessToken,
-        refreshToken: credentials.refreshToken,
-        expiresAt: credentials.expiresAt,
-      },
-      settings,
-    }
-  }
-  if (provider === "lobsterai") {
-    return {
-      ...base,
-      credentials: {
-        accessToken: credentials.accessToken,
-        refreshToken: credentials.refreshToken,
-        expiresAt: credentials.expiresAt,
-        uuid: credentials.uuid,
-        userId: credentials.userId,
-        firstKeyfrom: credentials.firstKeyfrom,
-        latestKeyfrom: credentials.latestKeyfrom,
-      },
+      credentials: Object.fromEntries(
+        exportKeys.map((key) => [key, credentials[key]]),
+      ),
       settings,
     }
   }
@@ -573,13 +520,5 @@ export function serializeConnectionForExport(
       ...(cpaMetadata ? { cpaMetadata } : {}),
     }
   }
-  return {
-    ...base,
-    credentials: {
-      serviceToken: credentials.serviceToken,
-      xiaomichatbotPh: credentials.xiaomichatbotPh,
-      mimoWsToken: credentials.mimoWsToken,
-    },
-    settings,
-  }
+  return { ...base, credentials, settings }
 }

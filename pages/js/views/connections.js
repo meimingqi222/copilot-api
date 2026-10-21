@@ -1001,38 +1001,18 @@ function connectionsView() {
     },
 
     async addModelAlias(m) {
-      const conn = this.modelManagerConn
-      if (!conn) return
-      const value = (this.modelManagerAliasInput || "").trim()
-      if (!value) return
-      const current = m.aliases || []
-      if (current.some((a) => a.toLowerCase() === value.toLowerCase())) {
-        this.modelManagerAliasInput = ""
-        return
-      }
-      try {
-        await API.providerConnections.updateModel(conn.id, m.publicId, {
-          aliases: [...current, value],
-        })
-        m.aliases = [...current, value]
-        this.modelManagerAliasInput = ""
-      } catch (e) {
-        this.showToast(e.message || "Save failed", "error")
-      }
+      await this.addModelAliasFor(m, {
+        connection: this.modelManagerConn,
+        inputKey: "modelManagerAliasInput",
+        updateModel: (...args) => API.providerConnections.updateModel(...args),
+      })
     },
 
     async removeModelAlias(m, alias) {
-      const conn = this.modelManagerConn
-      if (!conn) return
-      const next = (m.aliases || []).filter((a) => a !== alias)
-      try {
-        await API.providerConnections.updateModel(conn.id, m.publicId, {
-          aliases: next,
-        })
-        m.aliases = next
-      } catch (e) {
-        this.showToast(e.message || "Save failed", "error")
-      }
+      await this.removeModelAliasFor(m, alias, {
+        connection: this.modelManagerConn,
+        updateModel: (...args) => API.providerConnections.updateModel(...args),
+      })
     },
 
     // 添加模型弹窗只负责新增;改名统一走管理抽屉行内改名

@@ -4,6 +4,7 @@ import { OAUTH_ACCOUNT_FIELDS } from "~/lib/provider-descriptors/shared"
 export const providerMetadata = defineProviderMetadata({
   protocol: "aistudio-native",
   oauth: false,
+  credentials: { primaryKey: "cookie", exportKeys: ["cookie"] },
   descriptor: {
     id: "aistudio",
     name: "Google AI Studio (Experimental)",

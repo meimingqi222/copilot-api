@@ -24,6 +24,7 @@
   "scripts": {
     "build": "bun run build:css && tsdown",
     "build:css": "tailwindcss -i pages/css/tailwind-input.css -o pages/css/tailwind.min.css --minify",
+    "check": "bun run lint:all && bun run format:check && bun run typecheck && bun run knip",
     "dev": "bun run build:css && bun run --watch ./src/main.ts start",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

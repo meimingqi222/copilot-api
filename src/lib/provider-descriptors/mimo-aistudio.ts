@@ -3,6 +3,11 @@ import { defineProviderMetadata } from "~/lib/provider-descriptors/metadata"
 export const providerMetadata = defineProviderMetadata({
   protocol: "mimo-native",
   oauth: false,
+  credentials: {
+    primaryKey: "serviceToken",
+    requiredExtras: ["xiaomichatbotPh"],
+    exportKeys: ["serviceToken", "xiaomichatbotPh", "mimoWsToken"],
+  },
   descriptor: {
     id: "mimo-aistudio",
     presentation: {

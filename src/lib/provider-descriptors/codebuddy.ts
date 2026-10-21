@@ -6,9 +6,15 @@ import { OAUTH_ACCOUNT_FIELDS } from "~/lib/provider-descriptors/shared"
 // JSON/accessToken 作为兜底(见添加弹窗)。刻意不进 `OAUTH_PROVIDER_IDS`,
 // 以免影响旧的直连 token 分类。
 
+const credentials = {
+  primaryKey: "accessToken",
+  exportKeys: ["accessToken", "refreshToken", "expiresAt"],
+}
+
 export const codebuddyMetadata = defineProviderMetadata({
   protocol: "codebuddy-native",
   oauth: false,
+  credentials,
   descriptor: {
     id: "codebuddy",
     presentation: {
@@ -29,6 +35,7 @@ export const codebuddyMetadata = defineProviderMetadata({
 export const codebuddyCnMetadata = defineProviderMetadata({
   protocol: "codebuddy-native",
   oauth: false,
+  credentials,
   descriptor: {
     id: "codebuddy-cn",
     presentation: {

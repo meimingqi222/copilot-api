@@ -57,8 +57,16 @@ cannot perform Chrome OAuth login recovery. An optional per-account proxy applie
 to all upstream requests, including verification images.
 
 The implementation is pure Bun: no Go executable, installed browser, or helper
-service is needed. It discovers non-paid Playground text-generation models and
-speaks native Gemini; the shared translation layer also serves Chat Completions,
+service is needed. It discovers the account's full Playground model catalog,
+including paid models, upstream aliases, capabilities and access requirements.
+GenerateContent text models are enabled according to the account's Free / Pro /
+Ultra / Plus entitlement; paid status alone does not hide a model. Other routes
+and models requiring unavailable entitlements remain in the account model list,
+disabled and without callable endpoints. Refresh the account's models to update
+the catalog; existing manual disables are preserved, so re-enable a newly eligible
+model if necessary. No model IDs (including future Gemini versions) are injected
+into the catalog. Generation rechecks entitlement and sends the upstream tier
+header. The provider speaks native Gemini; the shared translation layer also serves Chat Completions,
 Messages, and Responses, both streaming and non-streaming. Text, inline/file
 media, function calls/results, search, and signed thinking have wire codecs.
 Live, generated images/audio/video, Interactions, uploads, strict tool choice,
@@ -520,6 +528,11 @@ Dashboard utilities are generated into `pages/css/tailwind.min.css` by
 `bun run build:css`. Both `dev` and `build` run this step. After adding utility
 classes while the dev server is running, regenerate the stylesheet with
 `bun run build:css`; keep class names as complete literals in dashboard HTML/JS.
+
+Before submitting changes, run `bun run check` for the CI lint, formatting,
+typecheck, and unused-code gates. This does not run tests or build; use
+`bun run test:affected` for incremental verification and `bun test` for a full
+regression run.
 
 ### Production Mode
 

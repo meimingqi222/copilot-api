@@ -15,6 +15,7 @@ import {
 import { resetProtectedRouteGuardForTest } from "~/lib/protected-route-guard"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { AIStudioClient } from "~/services/aistudio/client"
+import { decodeAIStudioModels } from "~/services/aistudio/models"
 import { getAIStudioModule } from "~/services/providers/modules/aistudio"
 import { server } from "~/server"
 import {
@@ -92,6 +93,7 @@ test("AI Studio account creation requires complete cookies and preserves Gemini 
   globalThis.fetch = (async (url) =>
     String(url).startsWith("https://aistudio.google.com/") ?
       new Response('"WIu0Nc":"public-fixture-key"')
+    : String(url).endsWith("GetAiStudioBenefitTier") ? Response.json([0])
     : Response.json([[]])) as typeof fetch
   setupAdminAuth()
   const response = await server.fetch(
@@ -108,7 +110,7 @@ test("AI Studio account creation requires complete cookies and preserves Gemini 
   expect(getConnectionProxyUrl(restored)).toBe("http://proxy.test:8080")
 })
 
-test("discovery filters paid and unsupported routes and sends authentication through the connection proxy", async () => {
+test("discovery retains paid and unsupported models with access metadata through the connection proxy", async () => {
   const connection = managedConnectionFromInput({
     id: "test",
     name: "test",
@@ -122,6 +124,7 @@ test("discovery filters paid and unsupported routes and sends authentication thr
   row[5] = 12345
   row[6] = 4096
   row[7] = ["generateContent"]
+  row[56] = [["models/test-alias"], ["models/second-alias"]]
   row[64] = [1, 25]
   row[71] = [512, null, null, null, null, 1, [1, 3]]
   const rows = [
@@ -130,6 +133,9 @@ test("discovery filters paid and unsupported routes and sends authentication thr
     Object.assign([...row], { 0: "models/live", 7: ["bidiGenerateContent"] }),
     Object.assign([...row], { 0: "models/interaction", 78: [] }),
     Object.assign([...row], { 0: "models/image", 64: [1, 21] }),
+    Object.assign([...row], { 0: "models/gemini-4-argon", 77: 2, 82: [3] }),
+    Object.assign([...row], { 0: "models/ultra", 82: [4] }),
+    Object.assign([...row], { 0: "models/api-key", 82: [1] }),
   ]
   globalThis.fetch = (async (url, init) => {
     expect((init as RequestInit & { proxy?: string }).proxy).toBe(
@@ -142,22 +148,107 @@ test("discovery filters paid and unsupported routes and sends authentication thr
     expect(headers.get("authorization")).toMatch(
       /^SAPISIDHASH \d+_[a-f0-9]{40} SAPISID1PHASH /,
     )
+    if (String(url).endsWith("GetAiStudioBenefitTier"))
+      return Response.json([1])
     return Response.json([rows])
   }) as typeof fetch
   const models =
     await getAIStudioModule().createRuntime().refreshModels!(connection)
-  expect(models).toEqual([
-    expect.objectContaining({
-      upstreamId: "gemini-test",
-      endpoints: ["gemini"],
-      metadata: {
-        inputTokenLimit: 12345,
-        outputTokenLimit: 4096,
-        thinkingConfig: row[71],
-        isFree: true,
+  expect(models).toHaveLength(rows.length)
+  expect(models[0]).toMatchObject({
+    upstreamId: "gemini-test",
+    endpoints: ["gemini"],
+    aliases: ["test-alias", "second-alias"],
+    metadata: {
+      inputTokenLimit: 12345,
+      outputTokenLimit: 4096,
+      thinkingConfig: row[71],
+      isFree: true,
+      benefitTier: 1,
+    },
+  })
+  expect(models[1]).toMatchObject({
+    enabled: true,
+    metadata: { paid: true, isFree: false },
+  })
+  for (const model of models.slice(2, 5))
+    expect(model).toMatchObject({
+      enabled: false,
+      endpoints: [],
+      metadata: { supported: false },
+    })
+  expect(models[5]).toMatchObject({
+    upstreamId: "gemini-4-argon",
+    enabled: true,
+    metadata: { accessModes: [3], accountAllowed: true },
+  })
+  for (const model of models.slice(6))
+    expect(model).toMatchObject({
+      enabled: false,
+      endpoints: [],
+      metadata: { supported: true, accountAllowed: false },
+    })
+  for (const [tier, pro, ultra] of [
+    [0, false, false],
+    [1, true, false],
+    [2, true, true],
+    [3, false, false],
+  ] as const) {
+    const catalog = decodeAIStudioModels([rows], tier)
+    expect(catalog[5].enabled).toBe(pro)
+    expect(catalog[6].enabled).toBe(ultra)
+    expect(catalog[7].enabled).toBe(false)
+  }
+  expect(() => decodeAIStudioModels([[row, row]], 0)).toThrow("duplicate")
+  expect(() => decodeAIStudioModels([[null]], 0)).toThrow("model row")
+  expect(() =>
+    decodeAIStudioModels([[Object.assign([...row], { 82: "unknown" })]], 0),
+  ).toThrow("field 82")
+})
+
+test("unsupported routes and lost entitlements cannot reach GenerateContent or cool the account", async () => {
+  for (const supported of [false, true]) {
+    const connection = managedConnectionFromInput({
+      id: "restricted",
+      name: "restricted",
+      provider: "aistudio",
+      credentials: { cookie },
+    })
+    // Simulate a stale catalog or a manually enabled unsupported model.
+    connection.models = [
+      {
+        publicId: "restricted-model",
+        upstreamId: "restricted-model",
+        endpoints: ["gemini"],
+        enabled: true,
+        metadata: { supported, accessModes: [3], benefitTier: 1 },
       },
-    }),
-  ])
+    ]
+    upsertProviderConnection(connection)
+    globalThis.fetch = (async (url) => {
+      if (String(url).startsWith("https://aistudio.google.com/"))
+        return new Response('"WIu0Nc":"public-fixture-key"')
+      if (String(url).endsWith("GetAiStudioBenefitTier"))
+        return Response.json([0])
+      throw new Error("Restricted model must not reach WAA or generation")
+    }) as typeof fetch
+    const response = await server.fetch(
+      new Request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "restricted-model",
+          messages: [{ role: "user", content: "hello" }],
+        }),
+      }),
+    )
+    expect(response.status).toBe(422)
+    expect(await response.text()).toContain(
+      supported ? "required subscription" : "unsupported upstream route",
+    )
+    expect(connection.credentials[0].status).toBe("ready")
+    expect(connection.credentials[0].cooldownUntil).toBeUndefined()
+  }
 })
 
 test("expired login and modified interpreter are rejected before generation without disclosing cookies", async () => {
@@ -234,6 +325,8 @@ test("model probes retain rotated cookies across requests, including error respo
     expect(sent).not.toMatch(
       /obsolete=|expiring=|foreign=|hostonly=|scoped=|implicitpath=|partitioned=/,
     )
+    if (String(url).endsWith("GetAiStudioBenefitTier"))
+      return Response.json([0])
     return String(url).endsWith("ListModels") ?
         Response.json([[]])
       : new Response('"WIu0Nc":"public-fixture-key"')
@@ -270,6 +363,7 @@ test("out-of-order probes merge disjoint cookie rotations without restoring repl
   globalThis.fetch = (async (url) =>
     String(url).startsWith("https://aistudio.google.com/") ?
       pages[index++].promise
+    : String(url).endsWith("GetAiStudioBenefitTier") ? Response.json([0])
     : Response.json([[]])) as typeof fetch
   const runtime = getAIStudioModule().createRuntime()
   const pending = pages.map(() => runtime.refreshModels(connection))
@@ -307,8 +401,8 @@ test("in-flight cookie updates cannot overwrite replacement logins or recreate d
     upsertProviderConnection(connection)
     const page = Promise.withResolvers<Response>()
     globalThis.fetch = (async (url) =>
-      String(url).startsWith("https://aistudio.google.com/") ?
-        page.promise
+      String(url).startsWith("https://aistudio.google.com/") ? page.promise
+      : String(url).endsWith("GetAiStudioBenefitTier") ? Response.json([0])
       : Response.json([[]])) as typeof fetch
     const pending = getAIStudioModule()
       .createRuntime()
@@ -367,6 +461,8 @@ for (const wire of ["chat", "messages", "responses", "gemini"] as const) {
         const address = String(url)
         if (address.startsWith("https://aistudio.google.com/"))
           return new Response('"WIu0Nc":"public-fixture-key"')
+        if (address.endsWith("GetAiStudioBenefitTier"))
+          return Response.json([2])
         if (address.endsWith("GetLoggingContext"))
           return Response.json(["log", 123])
         if (address.endsWith("Waa/Create"))
@@ -382,6 +478,9 @@ for (const wire of ["chat", "messages", "responses", "gemini"] as const) {
           ])
         if (!address.endsWith("GenerateContent"))
           throw new Error("Unexpected upstream")
+        expect(new Headers(init?.headers).get("X-AIStudio-G1-Tier")).toBe(
+          "TIER2",
+        )
         const body = JSON.parse(String(init?.body)) as unknown[]
         expect(body[0]).toBe("models/gemini-fixture")
         expect(body[4]).toBe(
