@@ -7,6 +7,7 @@ function quotasView() {
     refreshingAccountId: null,
     resettingAccountId: null,
     accounts: [],
+    showCreditDetails: {},
 
     init() {
       this.initAutoRefresh()
@@ -50,6 +51,45 @@ function quotasView() {
     quotaUpdatedTime(account) {
       const at = account.quotaInfo?.fetchedAt
       return at ? new Date(at).toLocaleString() : "—"
+    },
+
+    quotaRelativeTime(account) {
+      const at = account.quotaInfo?.fetchedAt
+      if (!at) return "—"
+      const deltaSec = Math.max(0, Math.floor((Date.now() - at) / 1000))
+      if (deltaSec < 60) return this.t("quota.updatedJustNow") || "刚刚更新"
+      const deltaMin = Math.floor(deltaSec / 60)
+      if (deltaMin < 60) {
+        return `${deltaMin} ${this.t("quota.minutesAgo") || "分钟前更新"}`
+      }
+      const deltaHour = Math.floor(deltaMin / 60)
+      if (deltaHour < 24) {
+        return `${deltaHour} ${this.t("quota.hoursAgo") || "小时前更新"}`
+      }
+      return new Date(at).toLocaleDateString()
+    },
+
+    getCodexPlanSummary(account) {
+      return QuotaDisplay.getCodexPlanSummary(account, (key, params) =>
+        this.t(key, params),
+      )
+    },
+
+    getCodexResetCreditsInfo(account) {
+      return QuotaDisplay.getCodexResetCreditsInfo(account, (key, params) =>
+        this.t(key, params),
+      )
+    },
+
+    isCriticalQuota(row) {
+      return QuotaDisplay.isCriticalQuota(row)
+    },
+
+    toggleCreditDetails(accountId) {
+      this.showCreditDetails = {
+        ...this.showCreditDetails,
+        [accountId]: !this.showCreditDetails[accountId],
+      }
     },
 
     async refresh() {

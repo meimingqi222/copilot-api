@@ -198,6 +198,80 @@ const QuotaDisplay = {
     return (meta?.rateLimitResetCreditsAvailableCount ?? 0) > 0
   },
 
+  getCodexPlanSummary(account, t) {
+    const meta = this.getCodexMeta(account?.quotaInfo?.details)
+    if (!meta) return null
+    const planLabel = this.formatCodexPlanType(meta.planType, t)
+    let expiryText = ""
+    if (meta.subscriptionActiveUntil) {
+      const date = new Date(meta.subscriptionActiveUntil)
+      if (!Number.isNaN(date.getTime())) {
+        const mm = String(date.getMonth() + 1).padStart(2, "0")
+        const dd = String(date.getDate()).padStart(2, "0")
+        const renewWord = t("quota.oauth.codex.renewSuffix") || "续期"
+        expiryText = `${mm}/${dd} ${renewWord}`
+      }
+    }
+    if (planLabel && expiryText) {
+      return `${planLabel} · ${expiryText}`
+    }
+    return planLabel || expiryText || null
+  },
+
+  getCodexResetCreditsInfo(account, t) {
+    const meta = this.getCodexMeta(account?.quotaInfo?.details)
+    if (!meta) return null
+    const count = meta.rateLimitResetCreditsAvailableCount
+    if (count === null || count === undefined || count <= 0) return null
+    const credits =
+      Array.isArray(meta.rateLimitResetCredits) ?
+        meta.rateLimitResetCredits
+      : []
+    let earliestExpiresAt = null
+    const formattedCredits = []
+    for (const [index, credit] of credits.entries()) {
+      if (!credit || typeof credit !== "object") continue
+      const exp = credit.expiresAt || credit.expires_at
+      if (!exp) continue
+      const date = new Date(exp)
+      if (!Number.isNaN(date.getTime())) {
+        if (
+          !earliestExpiresAt
+          || date.getTime() < earliestExpiresAt.getTime()
+        ) {
+          earliestExpiresAt = date
+        }
+      }
+      formattedCredits.push({
+        id: credit.id || index,
+        index: index + 1,
+        expiresText: this.formatDateTimeValue(exp),
+      })
+    }
+    let earliestExpiryText = ""
+    if (earliestExpiresAt) {
+      const mm = String(earliestExpiresAt.getMonth() + 1).padStart(2, "0")
+      const dd = String(earliestExpiresAt.getDate()).padStart(2, "0")
+      const hh = String(earliestExpiresAt.getHours()).padStart(2, "0")
+      const min = String(earliestExpiresAt.getMinutes()).padStart(2, "0")
+      earliestExpiryText = `${mm}/${dd} ${hh}:${min}`
+    }
+    return {
+      availableCount: count,
+      availableCountText:
+        t("quota.oauth.codex.resetsAvailable", { count }) || `${count} 次可用`,
+      earliestExpiryText,
+      credits: formattedCredits,
+      error: meta.rateLimitResetCreditsError,
+    }
+  },
+
+  isCriticalQuota(row) {
+    if (!row || row.hideBar) return false
+    const p = row.remainingPercent
+    return p !== undefined && p !== null && p >= 0 && p <= 10
+  },
+
   getCodexPlanRows(account, t) {
     const meta = this.getCodexMeta(account?.quotaInfo?.details)
     if (!meta) return []
@@ -300,10 +374,7 @@ const QuotaDisplay = {
         break
       }
       case "codex": {
-        rows = [
-          ...this.getCodexPlanRows(account, t),
-          ...this.buildCodexRows(info.details, t),
-        ]
+        rows = this.buildCodexRows(info.details, t)
 
         break
       }
