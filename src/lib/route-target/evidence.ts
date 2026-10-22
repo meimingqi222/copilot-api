@@ -31,6 +31,7 @@ import {
   type RouteTarget,
 } from "~/lib/provider-connections"
 import type { QuotaSnapshot } from "~/lib/quota/types"
+import { isCodebuddyModelFree } from "~/lib/codebuddy-model-pricing"
 import { state } from "~/lib/state"
 import { routeTargetLoad, routeTargetLoadKey } from "~/lib/route-target/load"
 
@@ -270,14 +271,26 @@ function evidenceFrom(
     (snapshotStale ? planQuotaEvidenceFor(connection, model, now) : undefined)
     ?? fromSnapshot
 
-  // One resting read: the registry's richer rest (by / failures / link) wins
-  // over the coarse credential status when both know of a rest. Account scope
-  // only — the trace view has always shown the credential-level rest, not a
-  // model's.
-  const rest =
+  // Use the same balance exemption as admission, retaining actual model rests.
+  const accountRest =
     credential ?
-      restingReasonFor({ credentialId: credential.id, credential })
+      restingReasonFor({
+        credentialId: credential.id,
+        credential,
+        credentialCreatedAt: credential.createdAt,
+        ignoreCreditExhaustion:
+          connection !== undefined && isCodebuddyModelFree(connection, model),
+      })
     : undefined
+  const modelRest =
+    credential && model ?
+      restingReasonFor({
+        credentialId: credential.id,
+        credentialCreatedAt: credential.createdAt,
+        model,
+      })
+    : undefined
+  const rest = modelRest?.untilMs ? modelRest : (accountRest ?? modelRest)
 
   return {
     quota,
@@ -334,12 +347,18 @@ function weighRowOf(target: RouteTarget): WeighRow {
     credential,
     target.publicModelId || target.upstreamModelId,
   )
+  // Balance pressure is irrelevant to a zero-credit upstream model. Keep the
+  // actual balance in trace evidence, but never demote this route because of it.
+  const free =
+    connection !== undefined
+    && isCodebuddyModelFree(connection, target.upstreamModelId)
   return {
-    used: evidence.quota?.usedFraction,
-    renews: evidence.quota?.renewsAtMs ?? [],
+    used: free ? 0 : evidence.quota?.usedFraction,
+    renews: free ? [] : (evidence.quota?.renewsAtMs ?? []),
     served: evidence.servedTokens,
     learning:
-      evidence.quota?.usedFraction === undefined
+      !free
+      && evidence.quota?.usedFraction === undefined
       && Boolean(connection && isAccountManagedConnection(connection)),
   }
 }

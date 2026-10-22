@@ -96,7 +96,19 @@ function readResting(query: RestingQuery, now: number): RestingReads {
       modelCooldown: modelCooldownRest(query.credentialId, query.model, now),
     }
   }
-  return { registry, credentialStatus: restInfoForCredential(query.credential) }
+  return {
+    registry:
+      query.ignoreCreditExhaustion && registry?.reason === "credit" ?
+        undefined
+      : registry,
+    credentialStatus:
+      (
+        query.ignoreCreditExhaustion
+        && query.credential?.status === "quota_exhausted"
+      ) ?
+        undefined
+      : restInfoForCredential(query.credential),
+  }
 }
 
 /** The richest rest for the query's scope, live or lapsed, when there is one. */
@@ -108,17 +120,8 @@ export function restingReasonFor(query: RestingQuery): RestInfo | undefined {
 /** Whether the query's scope is sitting out right now. */
 export function isResting(query: RestingQuery): boolean {
   const reads = readResting(query, Date.now())
-  if (
-    reads.registry?.untilMs !== undefined
-    && !(query.ignoreCreditExhaustion && reads.registry.reason === "credit")
-  )
-    return true
+  if (reads.registry?.untilMs !== undefined) return true
   if (reads.modelCooldown !== undefined) return true
-  if (
-    query.ignoreCreditExhaustion
-    && query.credential?.status === "quota_exhausted"
-  )
-    return false
   return reads.credentialStatus !== undefined
 }
 

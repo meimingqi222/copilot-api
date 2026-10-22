@@ -169,7 +169,10 @@ function analyzeCandidateReasons(candidates: Array<RouteTarget>): {
     // （替代原 getAccount + getAccountAvailability 路径）
     const conn = getProviderConnection(candidate.connectionId)
     if (conn && isAccountManagedConnection(conn)) {
-      const availability = getConnectionAvailability(conn)
+      const availability = getConnectionAvailability(
+        conn,
+        candidate.upstreamModelId,
+      )
       if (!availability.available) {
         const reason = mapAccountReason(availability.reason)
         reasons.add(reason)
@@ -240,7 +243,10 @@ export function describeCandidates(
     if (isChosen) {
       status = "chosen"
     } else if (connection && isAccountManagedConnection(connection)) {
-      const availability = getConnectionAvailability(connection)
+      const availability = getConnectionAvailability(
+        connection,
+        candidate.upstreamModelId,
+      )
       if (!availability.available) {
         status = mapAccountReason(availability.reason)
       } else {
@@ -268,8 +274,36 @@ export function describeCandidates(
 
     const evidence =
       candidate.credentialId ?
-        routeEvidenceFor(candidate.connectionId, candidate.credentialId)
+        routeEvidenceFor(
+          candidate.connectionId,
+          candidate.credentialId,
+          candidate.upstreamModelId,
+        )
       : undefined
+
+    // A model-specific refusal still applies even when balance is exempt.
+    if (
+      !isChosen
+      && evidence?.rest?.untilMs
+      && evidence.rest.untilMs > Date.now()
+      && ["available", "translated", "wildcard"].includes(status)
+    ) {
+      switch (evidence.rest.reason) {
+        case "credit":
+        case "quota":
+          status = "quota"
+          break
+        case "verify":
+          status = "auth"
+          break
+        case "disabled":
+          status = "disabled"
+          break
+        default:
+          status = "cooldown"
+      }
+      retryAfterMs = evidence.rest.untilMs - Date.now()
+    }
 
     rows.push({
       connectionId: candidate.connectionId,
@@ -368,7 +402,10 @@ function getCredentialFailureDiagnostic(
  * 仅用于 account-managed connection 的失败诊断。调度语义委托统一定义
  * getConnectionRoutability,此处仅做原因词汇映射(对外保持原 reason 集合)。
  */
-function getConnectionAvailability(conn: ProviderConnection): {
+function getConnectionAvailability(
+  conn: ProviderConnection,
+  modelId?: string,
+): {
   available: boolean
   reason: "available" | "disabled" | "cooldown" | "quota" | "error"
   retryAfterSeconds: number
@@ -376,7 +413,7 @@ function getConnectionAvailability(conn: ProviderConnection): {
   // 先刷新过期的 cooldown / quota_exhausted 状态（等价于 refreshAccountRuntimeAvailability）
   refreshConnectionAvailability(conn)
 
-  const routability = getConnectionRoutability(conn)
+  const routability = getConnectionRoutability(conn, modelId)
   if (routability.routable) {
     return { available: true, reason: "available", retryAfterSeconds: 0 }
   }

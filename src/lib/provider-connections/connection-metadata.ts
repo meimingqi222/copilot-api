@@ -433,8 +433,14 @@ export function setConnectionQuotaState(
   quotaState: ConnectionQuotaState,
 ): void {
   const meta = ensureConnectionMetadata(conn)
+  // Polling the same exhausted balance must not restart its recovery window.
+  const previousExhaustedAt =
+    meta.quotaState === "exhausted" ?
+      getConnectionQuotaExhaustedAt(conn)
+    : undefined
+  const exhaustedAt =
+    quotaState === "exhausted" ? (previousExhaustedAt ?? Date.now()) : undefined
   meta.quotaState = quotaState
-  const exhaustedAt = quotaState === "exhausted" ? Date.now() : undefined
   meta.quotaExhaustedAt = exhaustedAt
   // T5.2.5:同时写入 credential.exhaustedAt(类型化字段)
   const cred = conn.credentials[0]
@@ -454,7 +460,7 @@ export function setConnectionQuotaState(
       // 期间刷新报告配额已恢复时由下面的恢复分支清掉。
       setConnectionCooldownUntil(
         conn,
-        Date.now() + DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
+        (exhaustedAt ?? Date.now()) + DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
       )
     }
     return
