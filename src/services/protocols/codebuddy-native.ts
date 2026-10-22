@@ -44,11 +44,13 @@ import {
 } from "~/services/codebuddy/token-refresh"
 import {
   isCodebuddyModelRateLimit,
+  isCodebuddyModelUnavailable,
   recordCodebuddyModelCooldown,
   resolveCodebuddyModelCooldownMs,
 } from "~/services/codebuddy/model-cooldown"
 import { isCodebuddyModelFree } from "~/lib/codebuddy-model-pricing"
-import { HTTPError } from "~/lib/error"
+import { HTTPError, UpstreamModelUnavailableError } from "~/lib/error"
+import { recordModelCooldown } from "~/lib/model-cooldown"
 import {
   connectionFetch,
   connectionFetchInit,
@@ -736,6 +738,28 @@ function parseCodebuddyModels(
   })
 }
 
+function throwCodebuddyModelUnavailable(
+  connection: ProviderConnection,
+  credential: ApiCredential,
+  model: string,
+  response: Response,
+  body: string,
+): never {
+  // A stale upstream model directory must not disable other models on this account.
+  recordModelCooldown({
+    connectionId: connection.id,
+    credentialId: credential.id,
+    model,
+    untilMs: Date.now() + 60_000,
+    reason: "codebuddy 11102 model service unavailable",
+  })
+  throw new UpstreamModelUnavailableError(
+    "CodeBuddy model service unavailable",
+    response,
+    body,
+  )
+}
+
 export const codebuddyNativeAdapter: ProtocolAdapter = {
   protocol: "codebuddy-native",
 
@@ -925,6 +949,15 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
           }
           continue
         }
+        if (response.status === 400 && isCodebuddyModelUnavailable(rawBody)) {
+          throwCodebuddyModelUnavailable(
+            connection,
+            credential,
+            target.upstreamModelId,
+            response,
+            rawBody,
+          )
+        }
         // 6004 模型级限流：只冷却 (credential, model)，账号本身不标记，
         // 同账号其它模型立即可用。skipAccountPenalty 跳过账号级惩罚。
         const modelLimited = isCodebuddyModelRateLimit(response.status, rawBody)
@@ -936,8 +969,12 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
             body: rawBody,
           })
         }
+        const failureResponse =
+          modelLimited && response.status !== 429 ?
+            new Response(rawBody, { status: 429, headers: response.headers })
+          : response
         await handleUpstreamFailure(
-          response,
+          failureResponse,
           credential,
           "Failed to create CodeBuddy chat completions",
           "codebuddy-native",
@@ -960,6 +997,18 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
       try {
         stream = await safeSseStream(response, detectOpenAIStreamError)
       } catch (error: unknown) {
+        if (
+          error instanceof HTTPError
+          && isCodebuddyModelUnavailable(error.responseBody)
+        ) {
+          throwCodebuddyModelUnavailable(
+            connection,
+            credential,
+            target.upstreamModelId,
+            error.response,
+            error.responseBody,
+          )
+        }
         if (
           error instanceof HTTPError
           && isCodebuddyChannelCheck(error.responseBody ?? "")

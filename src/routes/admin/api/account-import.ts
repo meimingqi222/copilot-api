@@ -409,7 +409,11 @@ function buildOAuthAccountFromImportPayload(
 
 // Import accounts from exported JSON
 importAccountRoutes.post("/import", async (c) => {
-  let body: { accounts?: Array<ImportAccountPayload>; overwrite?: boolean }
+  let body: {
+    accounts?: Array<ImportAccountPayload>
+    overwrite?: boolean
+    restoreProxy?: boolean
+  }
   try {
     body = await readJsonBody(c.req.raw)
   } catch {
@@ -426,7 +430,14 @@ importAccountRoutes.post("/import", async (c) => {
   const failed: Array<{ label: string; reason: string }> = []
   initializeProviderRegistry()
 
-  for (const raw of body.accounts) {
+  for (const importedAccount of body.accounts) {
+    // Proxies belong to the importing server. Preserve legacy API behavior unless
+    // the caller explicitly chooses to use this server's current proxy settings.
+    const raw = {
+      ...importedAccount,
+      settings: { ...importedAccount.settings },
+    }
+    if (body.restoreProxy === false) delete raw.settings.proxyUrl
     const label = raw.label ?? `imported-${imported.length + 1}`
     const providerStr = raw.provider ?? "copilot"
     const provider: ProviderId =

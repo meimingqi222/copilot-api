@@ -53,7 +53,7 @@ import { setTestAccounts } from "./helpers/set-accounts"
 const originalAccounts = listAccounts()
 const originalFetch = globalThis.fetch
 const isolationRoot = PATHS.APP_DIR
-const testRoot = path.join(process.cwd(), ".tmp-admin-account-import")
+const testRoot = path.join(process.cwd(), "temp", "admin-account-import")
 let testDir = testRoot
 let testCounter = 0
 
@@ -420,4 +420,70 @@ describe("import builder account shape", () => {
     expect(account?.quotaState).toBe("unknown")
     expect(account?.settings?.baseUrl).toBe("https://example.test")
   })
+})
+
+test("account import can discard a source-machine proxy without losing other settings", async () => {
+  const response = await adminJson(
+    "http://localhost/admin/api/accounts/import",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        restoreProxy: false,
+        accounts: [
+          {
+            label: "portable-codebuddy",
+            provider: "codebuddy-cn",
+            credentials: { accessToken: "cb-access" },
+            settings: {
+              proxyUrl: "http://127.0.0.1:19090",
+              modelPrefix: "test",
+            },
+          },
+        ],
+      }),
+    },
+  )
+  expect(response.status).toBe(200)
+  const connection = listAccountManagedConnections().find(
+    (c) => c.name === "portable-codebuddy",
+  )!
+  const exported = serializeConnectionForExport(connection)
+  expect(
+    (exported.settings as Record<string, unknown>).proxyUrl,
+  ).toBeUndefined()
+  expect((exported.settings as Record<string, unknown>).modelPrefix).toBe(
+    "test",
+  )
+})
+
+test("account import keeps the source proxy when explicitly requested", async () => {
+  const response = await adminJson(
+    "http://localhost/admin/api/accounts/import",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        restoreProxy: true,
+        accounts: [
+          {
+            label: "restored-codebuddy",
+            provider: "codebuddy-cn",
+            credentials: { accessToken: "cb-access" },
+            settings: { proxyUrl: "http://proxy.example.invalid:8080" },
+          },
+        ],
+      }),
+    },
+  )
+  expect(response.status).toBe(200)
+  const connection = listAccountManagedConnections().find(
+    (c) => c.name === "restored-codebuddy",
+  )!
+  expect(
+    (
+      serializeConnectionForExport(connection).settings as Record<
+        string,
+        unknown
+      >
+    ).proxyUrl,
+  ).toBe("http://proxy.example.invalid:8080")
 })

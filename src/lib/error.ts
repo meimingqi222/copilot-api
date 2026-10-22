@@ -18,6 +18,9 @@ export class HTTPError extends Error {
   }
 }
 
+/** The upstream cannot serve this model; preserve its error and try another target. */
+export class UpstreamModelUnavailableError extends HTTPError {}
+
 /**
  * Marker for a *local* pre-send rejection: a proxy-side gate (per-credential
  * in-flight cap, per-account concurrency) refused the turn because it is

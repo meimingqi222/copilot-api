@@ -292,3 +292,27 @@ describe("codebuddy provider runtime quota wiring", () => {
     expect(typeof runtime.refreshQuota).toBe("function")
   })
 })
+
+test("quota transport failure identifies the configured proxy without leaking its credentials", async () => {
+  const connection = await createConnection({
+    name: "quota-proxy",
+    protocol: "codebuddy-native",
+    baseUrl: "https://copilot.tencent.com/v2",
+    proxyUrl: "http://private-user:private-password@proxy.example.invalid:8080",
+    credentials: [{ value: "access-token", authMode: "bearer" }],
+    models: [],
+  })
+  ensureConnectionMetadata(connection).provider = "codebuddy-cn"
+  globalThis.fetch = (() =>
+    Promise.reject(
+      Object.assign(new Error("Unable to connect"), { code: "ECONNREFUSED" }),
+    )) as unknown as typeof fetch
+  const error = await fetchCodebuddyQuota(connection).catch((e: unknown) => e)
+  expect(error).toBeInstanceOf(Error)
+  const message = (error as Error).message
+  expect(message).toContain("configured proxy")
+  expect(message).toContain("ECONNREFUSED")
+  expect(message).not.toContain("private-user")
+  expect(message).not.toContain("private-password")
+  expect(connection.credentials[0].status).toBe("ready")
+})

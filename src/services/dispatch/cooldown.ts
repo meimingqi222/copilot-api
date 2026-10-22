@@ -8,6 +8,7 @@ import {
   LocalConcurrencyLimitError,
   LocalPayloadUnsupportedError,
   LocalUnavailableError,
+  UpstreamModelUnavailableError,
 } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import {
@@ -57,6 +58,13 @@ interface AttemptFailureClassification {
 export function classifyAttemptFailure(
   error: unknown,
 ): AttemptFailureClassification {
+  if (error instanceof UpstreamModelUnavailableError) {
+    return {
+      status: error.response.status,
+      errorCode: "model_unavailable",
+      errorSnippet: error.responseBody,
+    }
+  }
   if (error instanceof HTTPError) {
     if (error instanceof LocalConcurrencyLimitError) {
       return {
@@ -441,6 +449,8 @@ export async function markCooldown(
   logPrefix: string,
   rest?: RestDecision,
 ): Promise<void> {
+  // The adapter already recorded a model-only cooldown. The credential is healthy.
+  if (error instanceof UpstreamModelUnavailableError) return
   const adapter = getProtocolAdapter(admission.connection.protocol)
   if (
     error instanceof HTTPError

@@ -4,7 +4,7 @@ import { getConnInfo } from "hono/bun"
 
 import type { ChatCompletionResponse } from "~/services/protocols/chat/types"
 
-import { HTTPError } from "~/lib/error"
+import { HTTPError, UpstreamModelUnavailableError } from "~/lib/error"
 import { logger } from "~/lib/logger"
 import {
   accountManagedProvider,
@@ -340,6 +340,7 @@ export function isChatCompletionResponse(
 
 export function shouldFailover(error: unknown): boolean {
   if (!(error instanceof HTTPError)) return false
+  if (error instanceof UpstreamModelUnavailableError) return true
   const classified = classifyUpstreamError({
     status: error.response.status,
     headers: error.response.headers,

@@ -33,3 +33,10 @@ temp_*
 .eslintcache
 .playwright-cli/
 .amp/portals/*
+
+# macOS metadata
+.DS_Store
+
+# account exports contain credentials
+copilot-api-account-*.json
+copilot-api-accounts*.json

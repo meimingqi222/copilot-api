@@ -584,6 +584,9 @@ const i18n = {
       "accounts.importFilesStandardHint":
         '可多选；每个文件应为账户数组或 { "accounts": [...] }。',
       "accounts.importFilesSelected": "已选择 {count} 个文件",
+      "accounts.importRestoreProxy": "恢复文件中的账号代理设置",
+      "accounts.importRestoreProxyHint":
+        "默认使用当前服务的默认代理。跨设备导入时，原机器的本地代理地址可能不可用。",
       "accounts.importOverwrite": "跳过已存在的同名账户",
       "accounts.importOverwriteHint":
         "若关闭此选项，将覆盖同名账户（标签+供应商相同）",
@@ -2257,6 +2260,10 @@ const i18n = {
       "accounts.importFilesStandardHint":
         'Multi-select is supported; each file should be an account array or { "accounts": [...] }.',
       "accounts.importFilesSelected": "{count} file(s) selected",
+      "accounts.importRestoreProxy":
+        "Restore account proxy settings from the file",
+      "accounts.importRestoreProxyHint":
+        "Uses this server's default proxy unless selected. A local proxy from another machine may be unreachable.",
       "accounts.importOverwrite": "Skip accounts with duplicate label+provider",
       "accounts.importOverwriteHint":
         "When disabled, accounts with the same label and provider will be overwritten.",

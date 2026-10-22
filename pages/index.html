@@ -2635,6 +2635,28 @@
                       ></p>
                     </div>
                   </div>
+                  <div
+                    class="flex items-start gap-3"
+                    x-show="importMode === 'standard'"
+                  >
+                    <input
+                      type="checkbox"
+                      id="importRestoreProxy"
+                      x-model="importRestoreProxy"
+                      class="w-4 h-4 mt-0.5 accent-[var(--apple-blue)]"
+                    />
+                    <div>
+                      <label
+                        for="importRestoreProxy"
+                        class="text-sm cursor-pointer"
+                        x-text="t('accounts.importRestoreProxy')"
+                      ></label>
+                      <p
+                        class="text-xs text-[var(--apple-text-tertiary)] mt-0.5"
+                        x-text="t('accounts.importRestoreProxyHint')"
+                      ></p>
+                    </div>
+                  </div>
                 </div>
                 <div class="modal-footer">
                   <button

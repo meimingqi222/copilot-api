@@ -20,6 +20,7 @@ import {
 import { buildRouteTargets } from "~/lib/route-target"
 import {
   isCodebuddyModelRateLimit,
+  isCodebuddyModelUnavailable,
   recordCodebuddyModelCooldown,
   resolveCodebuddyModelCooldownMs,
 } from "~/services/codebuddy/model-cooldown"
@@ -323,19 +324,20 @@ describe("codebuddy adapter 6004 handling", () => {
     }
   }
 
-  test("6004 cools the model without touching the credential", async () => {
-    const connection = adapterConnection()
-    const createChat = codebuddyNativeAdapter.createChatCompletions
-    if (!createChat) throw new Error("adapter missing createChatCompletions")
-    globalThis.fetch = (() =>
-      Promise.resolve(
-        new Response(modelLimitedBody(new Date(Date.now() + 3_600_000)), {
-          status: 429,
-        }),
-      )) as unknown as typeof fetch
+  test.each([400, 429])(
+    "6004 cools only the model and returns HTTP 429 (upstream: %s)",
+    async (status) => {
+      const connection = adapterConnection()
+      const createChat = codebuddyNativeAdapter.createChatCompletions
+      if (!createChat) throw new Error("adapter missing createChatCompletions")
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response(modelLimitedBody(new Date(Date.now() + 3_600_000)), {
+            status,
+          }),
+        )) as unknown as typeof fetch
 
-    await expect(
-      createChat({
+      const error = await createChat({
         target: target("deepseek-x"),
         connection,
         credential: connection.credentials[0],
@@ -345,14 +347,19 @@ describe("codebuddy adapter 6004 handling", () => {
           stream: false,
         },
         signal: undefined,
-      }),
-    ).rejects.toThrow()
+      }).catch((error: unknown) => error)
+      expect(error).toBeInstanceOf(HTTPError)
+      expect((error as HTTPError).response.status).toBe(429)
+      expect(
+        Number((error as HTTPError).response.headers.get("retry-after")),
+      ).toBeGreaterThan(3500)
 
-    expect(connection.credentials[0].status).toBe("ready")
-    expect(connection.credentials[0].cooldownUntil).toBeUndefined()
-    expect(isModelCoolingDown("__cb-cred", "deepseek-x")).toBe(true)
-    expect(isModelCoolingDown("__cb-cred", "other-model")).toBe(false)
-  })
+      expect(connection.credentials[0].status).toBe("ready")
+      expect(connection.credentials[0].cooldownUntil).toBeUndefined()
+      expect(isModelCoolingDown("__cb-cred", "deepseek-x")).toBe(true)
+      expect(isModelCoolingDown("__cb-cred", "other-model")).toBe(false)
+    },
+  )
 
   test("plain 429 still cools the credential", async () => {
     const connection = adapterConnection()
@@ -497,4 +504,95 @@ describe("failover skips account penalty on 6004", () => {
       ),
     ).toBe(false)
   })
+})
+
+describe("CodeBuddy model availability regressions", () => {
+  test("parses client reset wording as UTC+8", () => {
+    const reset = new Date(Date.now() + 3_600_000)
+    const body = JSON.stringify({
+      code: 6004,
+      msg: `当前您在Deepseek-V4.1-Flash模型的使用量已超出频率限制，可在${wallClockPlus8(reset)}重置后使用。您可先切换至其他模型。`,
+    })
+    expect(resolveCodebuddyModelCooldownMs(body)).toBeGreaterThan(3_590_000)
+    expect(resolveCodebuddyModelCooldownMs(body)).toBeLessThanOrEqual(3_600_000)
+    expect(isCodebuddyModelRateLimit(400, body)).toBe(true)
+  })
+
+  test.each([
+    [false, false],
+    [true, false],
+    [true, true],
+    [false, true],
+  ])(
+    "11102 rotates to another source without penalizing the account (stream: %s, SSE error: %s)",
+    async (stream, sseError) => {
+      const first = createCodebuddyConnection("__missing", 0, [
+        "model-a",
+        "model-b",
+      ])
+      const second = createCodebuddyConnection("__backup", 5, ["model-a"])
+      second.protocol = "openai-compatible"
+      setTestConnections([first, second])
+      const { selectRouteTarget, resolveConnectionFromTarget } = await import(
+        "~/lib/route-target"
+      )
+      const target = selectRouteTarget(
+        buildRouteTargets({ publicModelId: "model-a", endpoint: "chat" }),
+      )!
+      const resolved = resolveConnectionFromTarget(target)!
+      const tried: string[] = []
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          sseError ?
+            new Response(
+              'data: {"error":{"code":11102,"message":"model [model-a] service info not found"}}\n\n',
+              { headers: { "content-type": "text/event-stream" } },
+            )
+          : Response.json(
+              { code: 11102, msg: "model [model-a] service info not found" },
+              { status: 400 },
+            ),
+        )) as unknown as typeof fetch
+      const result = await executeWithFailover({
+        payload: { model: "model-a" },
+        routeKind: "chat",
+        admission: { target, ...resolved, initiator: "user" },
+        execute: async (adapter, current, admission) => {
+          tried.push(current.connectionId)
+          if (current.connectionId === "__backup") return "recovered"
+          await adapter!.createChatCompletions!({
+            target: current,
+            connection: admission.connection,
+            credential: admission.credential,
+            payload: {
+              model: "model-a",
+              messages: [{ role: "user", content: "hi" }],
+              stream,
+            },
+          })
+          return "unexpected"
+        },
+      })
+      expect(result).toBe("recovered")
+      expect(tried).toEqual(["__missing", "__backup"])
+      expect(resolved.credential.status).toBe("ready")
+      expect(resolved.credential.cooldownUntil).toBeUndefined()
+      expect(isModelCoolingDown(resolved.credential.id, "model-a")).toBe(true)
+      expect(isModelCoolingDown(resolved.credential.id, "model-b")).toBe(false)
+    },
+  )
+})
+
+test("model-service classification requires both code and service wording", () => {
+  expect(
+    isCodebuddyModelUnavailable(
+      JSON.stringify({ code: 11102, msg: "invalid parameter" }),
+    ),
+  ).toBe(false)
+  expect(
+    isCodebuddyModelUnavailable(
+      JSON.stringify({ code: 11128, msg: "model [m] service info not found" }),
+    ),
+  ).toBe(false)
+  expect(isCodebuddyModelUnavailable("invalid json")).toBe(false)
 })

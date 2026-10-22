@@ -15,6 +15,7 @@ import type { QuotaSnapshot } from "~/lib/quota/types"
 import { HTTPError } from "~/lib/error"
 import {
   getConnectionProvider,
+  getConnectionProxyUrl,
   setConnectionQuotaInfo,
   setConnectionQuotaState,
 } from "~/lib/provider-connections"
@@ -276,7 +277,26 @@ export async function fetchCodebuddyQuota(
         body,
         signal,
       }),
-    )
+    ).catch((error: unknown) => {
+      signal?.throwIfAborted()
+      if (error instanceof Error && error.name === "AbortError") throw error
+      const code =
+        (
+          error
+          && typeof error === "object"
+          && "code" in error
+          && typeof error.code === "string"
+        ) ?
+          error.code
+        : "transport_error"
+      const route =
+        getConnectionProxyUrl(connection) ?
+          "via configured proxy; check the account proxy or server default proxy"
+        : "directly; check network connectivity"
+      throw new Error(
+        `Failed to connect to CodeBuddy quota endpoint ${base} (${code}) ${route}`,
+      )
+    })
     // 国际版路径候选：404 则换下一候选（workbuddy 域同款回退语义）。
     if (response.status === 404 && index < paths.length - 1) {
       continue

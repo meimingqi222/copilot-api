@@ -16,6 +16,7 @@ function accountsView() {
     /** @type {Array<File>} selected import files (CPA supports multi-select) */
     importFiles: [],
     importSkipDuplicates: true,
+    importRestoreProxy: false,
     importMode: "standard",
     defaultNewAccount() {
       return {
@@ -1051,6 +1052,7 @@ function accountsView() {
     openImportModal() {
       this.importFiles = []
       this.importSkipDuplicates = true
+      this.importRestoreProxy = false
       this.importMode = "standard"
       this.showImportModal = true
       this.$nextTick(() => {
@@ -1159,6 +1161,7 @@ function accountsView() {
           result = await API.accounts.import({
             accounts,
             overwrite: !this.importSkipDuplicates,
+            restoreProxy: this.importRestoreProxy,
           })
           if (parseErrors.length > 0) {
             result = {
