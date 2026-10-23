@@ -7,6 +7,7 @@ import {
   setConnectionCredentialExtra,
   setConnectionSetting,
   setCredentialContextField,
+  setCredentialEnabled,
   setCredentialValue,
 } from "~/lib/provider-connections"
 
@@ -166,8 +167,11 @@ export function applyConnectionPatchToConnection(
   }
   if (patch.enabled !== undefined) {
     conn.enabled = patch.enabled
-    const cred = conn.credentials[0]
-    if (cred) cred.enabled = patch.enabled
+    // 只改 enabled 而不复位 status 会留下 enabled=true + status="disabled"
+    // 的死状态（导入时被标 disabled 的账号重新启用后仍然不可路由）。
+    for (const cred of conn.credentials) {
+      setCredentialEnabled(cred, patch.enabled)
+    }
   }
   if (patch.priority !== undefined) {
     conn.priority = Math.max(0, Math.min(100, patch.priority))
