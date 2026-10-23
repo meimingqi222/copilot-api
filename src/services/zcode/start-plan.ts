@@ -83,7 +83,7 @@ let cachedDeviceMid: string | undefined
  * billing/balance 没它会 400（code 3001）。服务端只校验存在，
  * 所以我们自己在数据目录里持久化一个 UUID。
  */
-function zcodeDeviceMid(): string {
+export function zcodeDeviceMid(): string {
   if (cachedDeviceMid) return cachedDeviceMid
   const file = path.join(PATHS.APP_DIR, DEVICE_MID_FILE)
   try {
@@ -627,8 +627,35 @@ export function zcodeSourceHeaders(): Record<string, string> {
   }
 }
 
-// ── 请求体重塑 ──────────────────────────────────────────────────
+/**
+ * billing 族（preview / claim / balance / configs）的请求头：故意与对话
+ * 请求（zcodeSourceHeaders，CLI 形态）分开——zcode2api / zcode-switch 实测
+ * 官方桌面端走 billing 时是 electron 形态（X-Title "Z Code@electron"、
+ * release channel stable），而 X-Device-Mid 缺了会 3001。
+ */
+export function zcodeBillingHeaders(): Record<string, string> {
+  const category =
+    process.platform === "darwin" ? "macos"
+    : process.platform === "win32" ? "windows"
+    : "linux"
+  return {
+    "content-type": "application/json",
+    "User-Agent": `ZCode/${ZCODE_APP_VERSION}`,
+    "HTTP-Referer": ZCODE_API,
+    "X-Title": "Z Code@electron",
+    "X-ZCode-App-Version": ZCODE_APP_VERSION,
+    "X-Platform": `${zcodePlatform()}-${zcodeArch()}`,
+    "X-Release-Channel": "stable",
+    "X-Client-Language": zcodeLanguage(),
+    "X-Client-Timezone": zcodeTimezone(),
+    "X-Os-Category": category,
+    "X-Os-Version": zcodeOSVersion(),
+    "X-Device-Mid": zcodeDeviceMid(),
+    "x-request-id": crypto.randomUUID(),
+  }
+}
 
+// ── 请求体重塑 ──────────────────────────────────────────────────
 interface JsonObject {
   [key: string]: unknown
 }
@@ -686,17 +713,26 @@ function cachedBlock(text: string): JsonObject {
   return { type: "text", text, cache_control: { type: "ephemeral" } }
 }
 
-/** ZCode 的三块 system（全部带 cache_control: ephemeral）。 */
+/**
+ * ZCode 的三块 system（全部带 cache_control: ephemeral）。
+ *
+ * 只能三块：调用方自己的 system 文本按 ZCode 的 ContextBuilder 语义接在
+ * 第三块末尾（`\n\n` 分隔），绝不能变成第四块——zcode.z.ai 会把第四块
+ * 直接判 405 / code 3012「unusual activity」（magpie zcode 插件 #343 的
+ * 实测结论，也是这条通道此前被风控挡下的真正原因）。
+ */
 function zcodeSystem(
   provider: string,
   model: string,
   cwd: string,
+  own: Array<string>,
 ): Array<JsonObject> {
   const stable = `${ZCODE_PROMPT.stable}\n\n${ZCODE_PROMPT.desktop}`
   const dynamic = [
     ZCODE_PROMPT.beforeEnvironment,
     zcodeEnvironment(provider, model, cwd),
     ZCODE_PROMPT.afterEnvironment,
+    ...own,
   ].join("\n\n")
   return [
     cachedBlock(ZCODE_PROMPT.prefix),
@@ -733,7 +769,7 @@ function zcodeUserID(): string {
 
 /**
  * 把一条 Anthropic messages payload 改造成 Start Plan 要的样子：
- *   - system 换成 ZCode 的三块缓存 system，agent 自己的 system 文本接在后面（不缓存）；
+ *   - system 换成 ZCode 的三块缓存 system，agent 自己的 system 文本并入第三块；
  *   - 第一条消息前插日期提醒 user turn；
  *   - 清掉 messages/tools 里所有 cache_control，只给最后一条非 system
  *     消息的最后一个内容块补 ephemeral；
@@ -748,12 +784,12 @@ export function shapeZcodeStartBody(
   if (!Array.isArray(payload.messages)) return payload
   const model = typeof payload.model === "string" ? payload.model : ""
 
-  const own: Array<JsonObject> = []
+  const own: Array<string> = []
   const texts: Array<string> = []
   const rawSystem = payload.system
   if (typeof rawSystem === "string") {
     if (rawSystem.trim()) {
-      own.push({ type: "text", text: rawSystem })
+      own.push(rawSystem)
       texts.push(rawSystem)
     }
   } else if (Array.isArray(rawSystem)) {
@@ -762,7 +798,7 @@ export function shapeZcodeStartBody(
       const text = asStr(block?.text)
       if (block?.type !== "text" || !text) continue
       if (text === ZCODE_PROMPT.prefix && own.length === 0) return payload
-      own.push({ type: "text", text })
+      own.push(text)
       texts.push(text)
     }
   } else if (rawSystem !== undefined && rawSystem !== null) {
@@ -795,7 +831,7 @@ export function shapeZcodeStartBody(
     }
   }
 
-  const system = [...zcodeSystem(provider, model, zcodeCwd(texts)), ...own]
+  const system = zcodeSystem(provider, model, zcodeCwd(texts), own)
 
   const outMsgs: Array<JsonObject> = [zcodeDateReminder(now), ...clonedMsgs]
   let lastAt = -1

@@ -23,6 +23,9 @@ function systemConfigView() {
     warmupTimeZoneSearch: "",
     warmupTimeZoneActive: 0,
     warmupTimeZones: [],
+    zcodeBrowser: null,
+    zcodeBrowserLoading: false,
+    zcodeBrowserTimer: null,
 
     prepareWarmupTimeZones(full = false) {
       const common = [
@@ -212,8 +215,66 @@ function systemConfigView() {
       return this.codexModels.find((model) => model.id === id)?.name || id
     },
 
+    async loadZcodeBrowser() {
+      try {
+        const data = await API.request("/zcode/captcha")
+        this.zcodeBrowser = data.browser
+        if (data.browser?.state === "installing") this.pollZcodeBrowser()
+      } catch (error) {
+        this.zcodeBrowser = { state: "error", message: error.message }
+      }
+    },
+
+    pollZcodeBrowser() {
+      if (this.zcodeBrowserTimer) return
+      this.zcodeBrowserTimer = setInterval(async () => {
+        const data = await API.request("/zcode/captcha").catch(() => null)
+        if (!data) return
+        this.zcodeBrowser = data.browser
+        if (data.browser?.state !== "installing") {
+          clearInterval(this.zcodeBrowserTimer)
+          this.zcodeBrowserTimer = null
+        }
+      }, 2000)
+    },
+
+    async installZcodeBrowser() {
+      this.zcodeBrowserLoading = true
+      try {
+        const data = await API.zcode.installBrowser()
+        this.zcodeBrowser = data.browser
+        if (data.browser?.state === "installing") {
+          this.pollZcodeBrowser()
+        } else if (data.browser?.state === "error") {
+          this.error = data.browser.message
+        }
+      } catch (error) {
+        this.error = error.message
+      } finally {
+        this.zcodeBrowserLoading = false
+      }
+    },
+
+    zcodeBrowserDownloadText() {
+      const download = this.zcodeBrowser?.download
+      if (!download?.total) return ""
+      const mb = (value) => `${Math.round(value / (1024 * 1024))} MB`
+      return I18n.t("system.zcodeBrowserDownload", {
+        done: mb(download.downloaded),
+        total: mb(download.total),
+      })
+    },
+
+    destroy() {
+      if (this.zcodeBrowserTimer) {
+        clearInterval(this.zcodeBrowserTimer)
+        this.zcodeBrowserTimer = null
+      }
+    },
+
     accept(data) {
       this.settings = data.settings
+      this.settings.zcodeAutoClaim ??= false
       this.settings.codexModelIds ??= null
       this.settings.concurrencyQueueLimit ??= 100
       this.settings.concurrencyQueueWaitSeconds ??= 30
@@ -252,6 +313,7 @@ function systemConfigView() {
       this.saved = false
       void this.loadCodexModels()
       void this.loadWarmupModels()
+      void this.loadZcodeBrowser()
       try {
         const config = await API.request("/system-config")
         this.accept(config)
@@ -283,6 +345,7 @@ function systemConfigView() {
         concurrencyQueueLimit: 100,
         concurrencyQueueWaitSeconds: 30,
         codexAutoReset: false,
+        zcodeAutoClaim: false,
         accountWarmup: { ...this.settings.accountWarmup, enabled: false },
         codexModelIds: this.settings?.codexModelIds ?? null,
         quotaDisplayMode: "remaining",

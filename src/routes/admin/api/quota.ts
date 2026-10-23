@@ -20,6 +20,7 @@ import { enrichQuotaInfoForResponse } from "~/lib/quota/cycles"
 import { resetCodexQuotaForConnection } from "~/lib/quota/codex-reset"
 import { upgradeOAuthConnectionLabels } from "~/services/oauth/account-label"
 import { initializeProviderRegistry } from "~/services/providers"
+import { readZcodeClaimState } from "~/services/zcode/claim"
 import { getProviderRuntime } from "~/services/providers/registry"
 
 import {
@@ -76,6 +77,8 @@ quotaApiRoutes.get("/", async (c) => {
       // 模型级冷却台账（CodeBuddy 6004）：仍在生效的 (model, 恢复秒数) 列表。
       rateLimitedModels: listModelCooldownsForConnection(conn.id),
       supportsQuota: getProviderRuntime(provider).supports(conn, "quota"),
+      // ZCode 限时套餐领取状态（可领列表 / 名额等待 / 上次失败原因）。
+      zcodeClaim: provider === "zcode" ? readZcodeClaimState(conn) : null,
     }
   })
 

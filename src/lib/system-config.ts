@@ -36,6 +36,8 @@ const settingsSchema = z
     concurrencyQueueLimit: z.number().int().min(0).max(10000).default(100),
     concurrencyQueueWaitSeconds: z.number().int().min(1).max(600).default(30),
     codexAutoReset: z.boolean().default(false),
+    /** ZCode 限时套餐自动领取（活动赠送额度，原生 JWT 账号）。 */
+    zcodeAutoClaim: z.boolean().default(false),
     accountWarmup: z
       .object({
         enabled: z.boolean(),
@@ -179,6 +181,7 @@ const safeDefaults: SystemSettings = {
   concurrencyQueueLimit: 100,
   concurrencyQueueWaitSeconds: 30,
   codexAutoReset: false,
+  zcodeAutoClaim: false,
   accountWarmup: settingsSchema.shape.accountWarmup.parse(undefined),
   codexModelIds: null,
   quotaDisplayMode: "remaining",

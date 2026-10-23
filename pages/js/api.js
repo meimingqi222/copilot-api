@@ -350,6 +350,17 @@ const API = {
     resetOne: (id) => API.request(`/quota/${id}/reset`, { method: "POST" }),
   },
 
+  // ZCode limited-time plan claiming
+  zcode: {
+    captcha: () => API.request("/zcode/captcha"),
+    installBrowser: () =>
+      API.request("/zcode/captcha/install", { method: "POST" }),
+    preview: (id) =>
+      API.request(`/zcode/claims/${id}/preview`, { method: "POST" }),
+    claim: (id, body = {}) =>
+      API.request(`/zcode/claims/${id}/claim`, { method: "POST", body }),
+  },
+
   oauth: {
     start: (provider, data = {}) =>
       API.request(`/oauth/${provider}/start`, { method: "POST", body: data }),

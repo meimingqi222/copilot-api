@@ -27,7 +27,14 @@ import { applyOAuthBundleToCredential } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 
 export const ZCODE_API = "https://zcode.z.ai"
-export const ZCODE_APP_VERSION = "3.14.3"
+/**
+ * ZCode 桌面端版本（对话与 billing 头都用它）。
+ *
+ * 活动套餐投放按最低客户端版本投：钉旧版时 billing/preview 会恒空
+ * （「不符合条件」），所以官方升版后要跟进。3.14.4 = zcode2api 2026-10-02
+ * 实测的官方现行版；发现 preview 一直为空时先核这里是否落后。
+ */
+export const ZCODE_APP_VERSION = "3.14.4"
 
 export const ZCODE_ZAI_ANTHROPIC_BASE = "https://api.z.ai/api/anthropic"
 export const ZCODE_BIGMODEL_ANTHROPIC_BASE =

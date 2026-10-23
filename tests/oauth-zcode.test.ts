@@ -501,10 +501,12 @@ describe("zcode Start Plan request shaping", () => {
       new Date("2026-10-03T12:00:00+08:00"),
     )
     const system = body.system as Array<Record<string, unknown>>
-    expect(system).toHaveLength(4)
+    // 只能三块：调用方的 system 并入第三块。第四块会被上游判 3012。
+    expect(system).toHaveLength(3)
     expect(system[0]!.text).toBe("You are ZCode, an interactive coding agent")
     expect(system[0]!.cache_control).toEqual({ type: "ephemeral" })
-    expect(system[3]!).toEqual({ type: "text", text: "agent system" })
+    expect(system[2]!.cache_control).toEqual({ type: "ephemeral" })
+    expect(String(system[2]!.text)).toContain("agent system")
 
     const messages = body.messages as Array<Record<string, unknown>>
     expect(messages[0]!.role).toBe("user")
@@ -568,7 +570,7 @@ describe("zcode-native adapter — Start Plan", () => {
         const headers = init?.headers as Record<string, string>
         expect(headers.Authorization).toMatch(/^Bearer .+\..+\..+$/)
         expect(headers["x-api-key"]).toBeUndefined()
-        expect(headers["X-ZCode-App-Version"]).toBe("3.14.3")
+        expect(headers["X-ZCode-App-Version"]).toBe("3.14.4")
         expect(headers["X-Title"]).toBe("Z Code@cli")
         expect(headers["anthropic-beta"]).toBeUndefined()
         return new Response(JSON.stringify({ id: "m", content: [] }), {

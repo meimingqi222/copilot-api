@@ -6,6 +6,8 @@ function quotasView() {
     refreshing: false,
     refreshingAccountId: null,
     resettingAccountId: null,
+    claimingZcodeId: null,
+    checkingZcodeId: null,
     accounts: [],
     showCreditDetails: {},
 
@@ -132,6 +134,110 @@ function quotasView() {
         this.showToast(I18n.t("quota.oauth.codex.resetError"), "error")
       } finally {
         this.resettingAccountId = null
+        this.$nextTick(() => refreshAdminIcons(this.$el))
+      }
+    },
+
+    // ── ZCode 限时套餐（活动赠送额度）────────────────────────────
+    zcodePlans(account) {
+      const plans = account?.zcodeClaim?.plans
+      if (!Array.isArray(plans)) return []
+      const holds = account?.zcodeClaim?.holds || {}
+      const now = Date.now()
+      return plans.filter((plan) => !(holds[plan.planId] > now))
+    },
+
+    zcodeHoldText(account) {
+      const holds = account?.zcodeClaim?.holds || {}
+      const next = Object.values(holds)
+        .filter((at) => at > Date.now())
+        .sort((a, b) => a - b)[0]
+      if (!next) return ""
+      return this.t("quota.zcode.holdUntil", {
+        time: new Date(next).toLocaleString(),
+      })
+    },
+
+    formatZcodeUnits(units) {
+      const value = Number(units) || 0
+      if (value >= 1_000_000) {
+        const scaled = value / 1_000_000
+        return `${scaled % 1 === 0 ? scaled : scaled.toFixed(1)}M`
+      }
+      if (value >= 1_000) return `${Math.round(value / 1_000)}K`
+      return String(value)
+    },
+
+    zcodePlanSummary(account) {
+      const plan = this.zcodePlans(account)[0]
+      if (!plan) return ""
+      const grant = plan.grants?.[0]
+      if (!grant) return plan.name
+      return `${plan.name} · ${grant.name} ${this.formatZcodeUnits(grant.units)}`
+    },
+
+    async checkZcodePlans(account) {
+      if (!account?.id || this.checkingZcodeId) return
+      this.checkingZcodeId = account.id
+      try {
+        const result = await API.zcode.preview(account.id)
+        const idx = this.accounts.findIndex((item) => item.id === account.id)
+        if (idx !== -1) {
+          this.accounts[idx] = {
+            ...this.accounts[idx],
+            zcodeClaim: result.state ?? this.accounts[idx].zcodeClaim,
+          }
+        }
+        const count = Array.isArray(result.plans) ? result.plans.length : 0
+        this.showToast(
+          count > 0 ?
+            this.t("quota.zcode.checkFound", { count })
+          : this.t("quota.zcode.none"),
+          count > 0 ? "success" : "info",
+        )
+      } catch (error) {
+        this.showToast(
+          error.message || this.t("quota.zcode.checkError"),
+          "error",
+        )
+      } finally {
+        this.checkingZcodeId = null
+        this.$nextTick(() => refreshAdminIcons(this.$el))
+      }
+    },
+
+    async claimZcodePlan(account) {
+      if (!account?.id || this.claimingZcodeId) return
+      const plan = this.zcodePlans(account)[0]
+      this.claimingZcodeId = account.id
+      try {
+        const result = await API.zcode.claim(
+          account.id,
+          plan ? { planId: plan.planId } : {},
+        )
+        const idx = this.accounts.findIndex((item) => item.id === account.id)
+        if (idx !== -1) {
+          this.accounts[idx] = {
+            ...this.accounts[idx],
+            zcodeClaim: result.state ?? this.accounts[idx].zcodeClaim,
+          }
+        }
+        this.showToast(
+          this.t("quota.zcode.claimSuccess", {
+            name: result.claim?.planName || plan?.name || "",
+          }),
+          "success",
+        )
+        // 领到的额度立刻重读一次，卡片上的窗口跟着变。
+        await this.refreshAccountQuota(account)
+      } catch (error) {
+        this.showToast(
+          error.message || this.t("quota.zcode.claimError"),
+          "error",
+        )
+        await this.load()
+      } finally {
+        this.claimingZcodeId = null
         this.$nextTick(() => refreshAdminIcons(this.$el))
       }
     },

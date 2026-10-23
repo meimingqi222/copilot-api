@@ -49,6 +49,7 @@
     "*.{json,md,yml,yaml}": "prettier --write"
   },
   "dependencies": {
+    "@puppeteer/browsers": "^3.2.6",
     "citty": "^0.1.6",
     "clipboardy": "^5.0.0",
     "consola": "^3.4.2",

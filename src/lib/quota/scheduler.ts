@@ -25,6 +25,7 @@ import { refreshManagedQuota } from "~/lib/quota/refresh"
 import { autoResetExpiringCodexQuota } from "~/lib/quota/codex-reset"
 import { runAccountWarmups } from "~/lib/quota/warmup"
 import { initializeProviderRegistry } from "~/services/providers"
+import { runZcodeClaimRound } from "~/services/zcode/claim"
 import { fetchCopilotQuota } from "~/lib/quota/fetchers/copilot"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { emitStateChange } from "~/lib/state-events"
@@ -32,6 +33,11 @@ import { globalTimers } from "~/lib/timer-registry"
 
 const QUOTA_EXHAUSTION_THRESHOLD = 5
 const QUOTA_RECHECK_INTERVAL_MS = 60 * 1000
+/**
+ * ZCode 领取轮的节拍。轮内每个账号自己按 60 分钟去重（1005 名额等待期会
+ * 更早重试），这里只负责及时把到期账号捞起来，不用每 5 分钟打上游。
+ */
+const ZCODE_CLAIM_TICK_MS = 5 * 60 * 1000
 /** How long a vendor's wallet endpoint is given to answer. */
 const BALANCE_PROBE_TIMEOUT_MS = 15_000
 /**
@@ -93,6 +99,12 @@ export function scheduleQuotaRefresh(): void {
   globalTimers.interval(() => {
     void refreshAllQuotas()
   }, QUOTA_RECHECK_INTERVAL_MS)
+  globalTimers.timeout(() => {
+    void runZcodeClaimRound()
+  }, 60_000)
+  globalTimers.interval(() => {
+    void runZcodeClaimRound()
+  }, ZCODE_CLAIM_TICK_MS)
 }
 
 let refreshing = false

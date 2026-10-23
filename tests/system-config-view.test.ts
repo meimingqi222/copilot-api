@@ -384,6 +384,8 @@ test("system settings render translated labels and titles in English", () => {
             source: "webui",
             rule: "secrets",
             pool: "antigravityClaude",
+            zcodeBrowser: { state: "ready" },
+            zcodeBrowserDownloadText: () => "",
           })
         : ""
       return `>${String(value)}`

@@ -722,6 +722,114 @@
         </div>
       </section>
 
+      <!-- Section 2b: ZCode 集成 -->
+      <section
+        class="card p-0 overflow-hidden border border-[var(--apple-gray-5)] shadow-sm bg-white"
+      >
+        <div
+          class="px-5 py-3.5 border-b border-[var(--apple-gray-5)] bg-[var(--apple-gray-6)] flex items-center justify-between"
+        >
+          <div class="flex items-center gap-2">
+            <span
+              class="w-2.5 h-2.5 rounded-full bg-[var(--apple-blue)]"
+            ></span>
+            <h3
+              class="font-semibold text-sm text-[var(--apple-text)]"
+              x-text="t('system.section.zcode')"
+            ></h3>
+          </div>
+          <span
+            class="text-xs text-[var(--apple-text-secondary)]"
+            x-text="t('system.section.zcodeHint')"
+          ></span>
+        </div>
+
+        <div class="divide-y divide-[var(--apple-gray-5)]">
+          <!-- 自动领取 ZCode 限时套餐 -->
+          <div
+            class="p-4 sm:p-5 flex items-center justify-between gap-4 hover:bg-[var(--apple-bg-secondary)] transition"
+          >
+            <div class="space-y-1 max-w-xl">
+              <div
+                class="text-sm font-medium text-[var(--apple-text)] flex items-center gap-2 flex-wrap"
+              >
+                <span x-text="t('system.zcodeAutoClaim')"></span>
+                <span
+                  class="badge text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200"
+                  x-text="t('system.autoResetPolling')"
+                ></span>
+              </div>
+              <p
+                class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+                x-text="t('system.zcodeAutoClaimHint')"
+              ></p>
+            </div>
+            <label class="apple-switch">
+              <input
+                type="checkbox"
+                x-model="settings.zcodeAutoClaim"
+                :disabled="saving"
+              />
+              <span class="apple-switch-slider"></span>
+            </label>
+          </div>
+
+          <!-- ZCode 验证码浏览器状态 -->
+          <div
+            class="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-start justify-between gap-4 hover:bg-[var(--apple-bg-secondary)] transition"
+          >
+            <div class="space-y-1 max-w-xl min-w-0">
+              <div
+                class="text-sm font-medium text-[var(--apple-text)] flex items-center gap-2 flex-wrap"
+              >
+                <span x-text="t('system.zcodeBrowser')"></span>
+                <span
+                  class="badge text-[10px] px-1.5 py-0.5 rounded border"
+                  :class="zcodeBrowser?.state === 'ready'
+                    ? 'bg-[rgba(52,199,89,0.1)] text-[var(--apple-green)] border-[rgba(52,199,89,0.2)]'
+                    : zcodeBrowser?.state === 'error'
+                      ? 'bg-red-50 text-red-700 border-red-200'
+                      : 'bg-amber-50 text-amber-700 border-amber-200'"
+                  x-text="t('system.zcodeBrowserState.' + (zcodeBrowser?.state || 'missing'))"
+                ></span>
+              </div>
+              <p
+                class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+                x-text="t('system.zcodeBrowserHint')"
+              ></p>
+              <p
+                x-show="zcodeBrowser?.path"
+                class="text-[11px] font-mono break-all text-[var(--apple-text-secondary)]"
+              >
+                <span x-text="t('system.zcodeBrowserPath')"></span>:
+                <span x-text="zcodeBrowser?.path"></span>
+              </p>
+              <p
+                x-show="zcodeBrowser?.download"
+                class="text-xs text-[var(--apple-text-secondary)]"
+                x-text="zcodeBrowserDownloadText()"
+              ></p>
+              <p
+                x-show="zcodeBrowser?.message"
+                class="text-xs text-red-600 break-words"
+                x-text="zcodeBrowser?.message"
+              ></p>
+            </div>
+            <button
+              type="button"
+              class="btn btn-secondary btn-small shrink-0"
+              x-show="zcodeBrowser?.state !== 'ready'"
+              :disabled="zcodeBrowserLoading || zcodeBrowser?.state === 'installing'"
+              @click="installZcodeBrowser()"
+            >
+              <span
+                x-text="zcodeBrowser?.state === 'error' ? t('system.zcodeBrowserRetry') : t('system.zcodeBrowserInstall')"
+              ></span>
+            </button>
+          </div>
+        </div>
+      </section>
+
       <!-- Section 3: 日志级别与存储治理 -->
       <section
         class="card p-0 overflow-hidden border border-[var(--apple-gray-5)] shadow-sm bg-white"
