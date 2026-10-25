@@ -7,11 +7,12 @@
     <title>Copilot API Admin</title>
     <link rel="stylesheet" href="/admin/static/css/apple-theme.css?v=0.7.5" />
     <link rel="stylesheet" href="/admin/static/css/traces.css?v=0.7.6" />
+    <link rel="stylesheet" href="/admin/static/css/redaction.css?v=0.7.2" />
     <link
       rel="stylesheet"
       href="/admin/static/css/routing-groups.css?v=0.7.3"
     />
-    <link rel="stylesheet" href="/admin/static/css/tailwind.min.css?v=0.7.7" />
+    <link rel="stylesheet" href="/admin/static/css/tailwind.min.css?v=0.7.9" />
     <!-- CDN 版本已锁定:升级前先在离线/测试环境验证,避免上游 breaking change 直接白屏 -->
     <script
       defer
@@ -24,7 +25,7 @@
       import autoAnimate from "https://cdn.jsdelivr.net/npm/@formkit/auto-animate@0.8.2/index.min.mjs"
       globalThis.autoAnimate = autoAnimate
     </script>
-    <script src="/admin/static/js/i18n.js?v=0.7.21"></script>
+    <script src="/admin/static/js/i18n.js?v=0.7.25"></script>
     <script src="/admin/static/js/api.js?v=0.7.4"></script>
     <script src="/admin/static/js/admin-icons.js?v=0.7.0"></script>
     <script src="/admin/static/js/view-helpers.js?v=0.7.5"></script>
@@ -7761,15 +7762,24 @@
           <div
             x-show="currentView === 'system-config'"
             x-init="loadPartial($el)"
-            data-partial="partials/system-config.html?v=0.7.1"
+            data-partial="partials/system-config.html?v=0.7.2"
+            style="display: none"
+          ></div>
+        </template>
+        <template x-if="initialized && visitedViews['redaction']">
+          <div
+            x-show="currentView === 'redaction'"
+            x-init="loadPartial($el)"
+            data-partial="partials/redaction.html?v=0.7.2"
             style="display: none"
           ></div>
         </template>
       </main>
     </div>
 
-    <script src="/admin/static/js/views/app.js?v=0.7.5"></script>
-    <script src="/admin/static/js/views/system-config.js?v=0.7.2"></script>
+    <script src="/admin/static/js/views/app.js?v=0.7.6"></script>
+    <script src="/admin/static/js/views/system-config.js?v=0.7.3"></script>
+    <script src="/admin/static/js/views/redaction.js?v=0.7.3"></script>
     <script src="/admin/static/js/views/dashboard.js?v=0.7.3"></script>
     <script src="/admin/static/js/views/users.js?v=0.7.3"></script>
     <script src="/admin/static/js/views/accounts.js?v=0.7.4"></script>

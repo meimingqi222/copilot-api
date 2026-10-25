@@ -13,8 +13,6 @@ function systemConfigView() {
     codexModels: [],
     codexModelsError: "",
     codexModelSearch: "",
-    redactionWordsText: "",
-    redactionHomePrefixesText: "",
     warmupTimesText: "",
     warmupModels: {},
     warmupModelsError: "",
@@ -293,9 +291,6 @@ function systemConfigView() {
       this.warmupTimeZoneOpen = false
       this.prepareWarmupTimeZones()
       this.warmupTimesText = this.settings.accountWarmup.times.join(", ")
-      this.redactionWordsText = this.settings.redaction?.words.join("\n") ?? ""
-      this.redactionHomePrefixesText =
-        this.settings.redaction?.homePrefixes.join("\n") ?? ""
       this.maxLogMiB = Math.ceil(data.settings.logMaxTotalBytes / (1024 * 1024))
       globalThis.dispatchEvent(
         new CustomEvent("quota-display-mode", {
@@ -368,25 +363,17 @@ function systemConfigView() {
       this.error = ""
       this.saved = false
       try {
+        // Redaction has its own editor; never overwrite its newer saved rules.
+        const settings = { ...this.settings }
+        delete settings.redaction
         this.accept(
           await API.request("/system-config", {
             method: "PUT",
             body: {
-              ...this.settings,
+              ...settings,
               accountWarmup: {
                 ...this.settings.accountWarmup,
                 times: this.warmupTimesText.split(/[,，\s]+/).filter(Boolean),
-              },
-              redaction: {
-                ...this.settings.redaction,
-                words: this.redactionWordsText
-                  .split(/\r?\n/)
-                  .map((line) => line.trim())
-                  .filter(Boolean),
-                homePrefixes: this.redactionHomePrefixesText
-                  .split(/\r?\n/)
-                  .map((line) => line.trim())
-                  .filter(Boolean),
               },
               logMaxTotalBytes: Number(this.maxLogMiB) * 1024 * 1024,
               debugMinutes: Number(this.debugMinutes),

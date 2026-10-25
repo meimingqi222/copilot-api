@@ -1,0 +1,306 @@
+.redaction-flow {
+  padding: 20px;
+}
+.redaction-flow-head,
+.redaction-flow-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.redaction-flow-head h3 {
+  font-size: 14px;
+  font-weight: 500;
+}
+.redaction-flow-head p,
+.redaction-flow-foot {
+  color: var(--apple-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.redaction-route-map {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(100px, 1fr) minmax(0, 1fr);
+  align-items: center;
+  margin: 28px 0;
+}
+.redaction-endpoints-client {
+  grid-column: 1;
+  grid-row: 1;
+}
+.redaction-endpoints-upstream {
+  grid-column: 3;
+  grid-row: 1;
+}
+.redaction-endpoints h4,
+.redaction-endpoints p,
+.redaction-endpoints summary,
+.redaction-route-hub {
+  font-size: 12px;
+  color: var(--apple-text-secondary);
+}
+.redaction-endpoints h4 {
+  margin-bottom: 12px;
+  font-weight: 600;
+}
+.redaction-endpoints summary {
+  cursor: pointer;
+  padding: 8px 0;
+}
+.redaction-endpoint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  margin: 8px 0;
+  padding: 12px;
+  border: 1px solid var(--apple-gray-4);
+  border-radius: 10px;
+  text-align: left;
+  font-size: 12px;
+  background: var(--apple-bg);
+}
+.redaction-endpoint span {
+  overflow-wrap: anywhere;
+}
+.redaction-endpoint[aria-pressed="true"] {
+  border-color: var(--apple-blue);
+  color: var(--apple-blue);
+}
+.redaction-endpoint:focus-visible,
+.redaction-route-link:focus-visible {
+  outline: 2px solid var(--apple-blue);
+  outline-offset: 2px;
+}
+.redaction-route-hub {
+  grid-column: 2;
+  grid-row: 1;
+  text-align: center;
+}
+.redaction-route-hub strong,
+.redaction-route-hub span {
+  display: block;
+}
+.redaction-route-link {
+  color: var(--apple-blue);
+  text-align: left;
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+.redaction-body,
+.redaction-mapping {
+  padding: 12px;
+  border: 1px solid var(--apple-gray-5);
+  border-radius: 8px;
+  background: var(--apple-gray-6);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  max-height: 320px;
+  overflow: auto;
+}
+.redaction-mapping pre {
+  white-space: pre-wrap;
+}
+.redaction-fragment {
+  margin: 12px 0;
+  border: 1px solid var(--apple-gray-4);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.redaction-fragment header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--apple-gray-6);
+  overflow-wrap: anywhere;
+}
+.redaction-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+.redaction-columns > div {
+  min-width: 0;
+  padding: 12px;
+}
+.redaction-columns h5 {
+  margin-bottom: 8px;
+  color: var(--apple-text-secondary);
+}
+.redaction-excerpt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 360px;
+  overflow: auto;
+  line-height: 1.9;
+}
+.redaction-hit {
+  border-bottom: 2px solid var(--apple-blue);
+  border-radius: 3px;
+  background: rgb(0 122 255 / 12%);
+}
+.redaction-hit-SECRET {
+  border-color: var(--apple-red);
+  background: rgb(255 59 48 / 12%);
+}
+.redaction-hit-WORD {
+  border-color: #af52de;
+  background: rgb(175 82 222 / 12%);
+}
+.redaction-fragment > button {
+  margin: 0 12px 12px;
+}
+.redaction-unchanged {
+  margin: 8px 0;
+  padding: 8px 0;
+  color: var(--apple-text-secondary);
+}
+.redaction-unchanged summary {
+  cursor: pointer;
+}
+@media (min-width: 800px) {
+  .redaction-columns.is-comparing {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .redaction-columns.is-comparing > div + div {
+    border-left: 1px solid var(--apple-gray-4);
+  }
+}
+.redaction-flow svg {
+  display: block;
+  width: 100%;
+  margin: 24px 0 16px;
+  overflow: visible;
+}
+.redaction-flow svg text {
+  fill: var(--apple-text-secondary);
+  font-size: 18px;
+}
+.flow-in,
+.flow-out,
+.flow-boundary,
+.flow-shield {
+  fill: none;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+.flow-in {
+  stroke: var(--apple-gray);
+}
+.flow-out,
+.flow-shield {
+  stroke: var(--apple-blue);
+}
+.flow-boundary {
+  stroke: var(--apple-gray-4);
+  stroke-dasharray: 2 5;
+}
+.flow-hub {
+  fill: var(--apple-bg);
+  stroke: var(--apple-gray-4);
+}
+.flow-particles circle {
+  fill: var(--apple-text-secondary);
+}
+.flow-particles rect {
+  fill: var(--apple-blue);
+}
+.rule-off {
+  opacity: 0.25;
+}
+.is-off .flow-shield {
+  stroke: var(--apple-gray);
+}
+.redaction-segment {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--apple-gray-4);
+  border-radius: 8px;
+  background: var(--apple-gray-6);
+}
+.redaction-segment button {
+  padding: 4px 14px;
+  border-radius: 5px;
+  color: var(--apple-text-secondary);
+  font-size: 12px;
+}
+.redaction-segment button[aria-pressed="true"] {
+  background: var(--apple-bg);
+  color: var(--apple-text);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 8%);
+}
+.redaction-segment button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.redaction-segment button:focus-visible {
+  outline: 2px solid var(--apple-blue);
+  outline-offset: 2px;
+}
+.redaction-save {
+  background: var(--apple-bg);
+  border: 1px solid var(--apple-gray-5);
+  border-radius: 12px;
+}
+.redaction-meter {
+  display: grid;
+  grid-template-columns: 90px 1fr 40px;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.redaction-meter > span:last-child {
+  text-align: right;
+}
+.redaction-meter-track {
+  background: var(--apple-gray-6);
+  height: 5px;
+}
+.redaction-meter-track i {
+  display: block;
+  background: var(--apple-blue);
+  height: 100%;
+  transition: width 400ms ease-out;
+}
+.redaction-entry {
+  animation: redaction-arrive 400ms ease-out;
+}
+@keyframes redaction-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (max-width: 600px) {
+  .redaction-flow {
+    padding: 16px;
+  }
+  .redaction-flow-head,
+  .redaction-flow-foot {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .redaction-flow svg text {
+    font-size: 25px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flow-particles {
+    display: none;
+  }
+  .redaction-entry {
+    animation: none;
+  }
+  .redaction-meter-track i {
+    transition: none;
+  }
+}

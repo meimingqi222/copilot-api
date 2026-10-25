@@ -1,7 +1,11 @@
 import type { Context } from "hono"
 
 import { AsyncLocalStorage } from "node:async_hooks"
-import { maskUpstream } from "~/lib/redaction/context"
+import {
+  maskUpstream,
+  observeRedactionHttp,
+  prepareRedactionBody,
+} from "~/lib/redaction/context"
 
 import {
   addPerformanceTiming,
@@ -71,6 +75,7 @@ export function performanceFetch(
   input: string | URL | Request,
   init?: RequestInit,
 ): Promise<Response> {
+  observeRedactionHttp(init?.body)
   return measureUpstreamFetch(() => globalThis.fetch(input, init))
 }
 
@@ -118,7 +123,7 @@ export function* measureLocalIterable<T>(input: Iterable<T>): Generator<T> {
 
 export function serializeUpstreamBody(value: object): string {
   return measureLocalWork("adapterPreparationMs", () =>
-    JSON.stringify(maskUpstream(value)),
+    prepareRedactionBody(JSON.stringify(maskUpstream(value))),
   )
 }
 

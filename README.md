@@ -98,7 +98,15 @@ All options are optional: `enabled` defaults to `false`, `secrets`, `homePaths` 
 default to `true`, and `words`/`homePrefixes` default to empty lists. Extra entries
 are exact, case-sensitive strings, not user-supplied regular expressions. The
 same configuration is available as `settings.redaction` in the system-config
-admin API. The admin **System Settings → Upstream content redaction** switch
+admin API. Open **Access & Security → Content Redaction** (`/admin#redaction`)
+for the dedicated Rules (default), Preview and Diagnostics tabs. The flow's
+endpoints show inferred client applications and actual upstream connection/model
+metadata from retained requests, independently of unsaved rule drafts. Select
+either endpoint to filter requests, or expand additional endpoints. Moving dots
+illustrate the masking boundary; they are not per-request traffic pulses.
+The animation supports manual pause and reduced-motion preferences, stops when
+redaction is disabled and pauses when hidden. No local inference model is loaded.
+The Rules tab's master switch
 controls `enabled`, with independent Credentials (`secrets`), Home directories
 (`homePaths`, including extra prefixes) and Custom literal words (`wordsEnabled`)
 switches. Edit the words and extra directory prefixes in the multiline fields,
@@ -108,6 +116,40 @@ and regex symbols remain literal text. Each list allows up to 100 entries of
 a switch does not clear its configured lists. Save to apply
 to new requests. Persisted settings override environment defaults. Do not combine it
 with the legacy, irreversible `SENSITIVE_WORDS` filter.
+
+The Preview tab processes text or JSON with unsaved rules on explicit submission
+to the authenticated admin backend, without calling a provider, saving the input
+or changing settings. Preview input and results clear on navigation. Recent
+diagnostics retain only the latest 100 finished, redaction-enabled requests in
+memory: unique-value counts by category/source, cumulative text-masking time,
+restoration replacements, canonical client labels and attempted upstream names,
+protocols and models. Raw user agents, IPs and caller identifiers are not retained.
+Restart clears them. Metadata refreshes every 2.5 seconds while
+the redaction page is visible, without resetting unsaved rules. The totals cover
+only the retained window, not all-time usage. Preview calls do not enter these diagnostics. Rule-based
+protection is not a guarantee that every sensitive value will be recognized.
+Saving rules changes only redaction settings and does not reset diagnostic expiry
+or overwrite other system preferences; System Settings links to this page.
+
+Actual request inspection is a separate, administrator-only, **default-off**
+five-minute opt-in session. It keeps at most 100 captures in memory with an
+8 MiB total and 128 KiB per-record retained-text budget (UTF-16 bytes, excluding
+JavaScript object overhead); oversized content is explicitly marked truncated.
+No inspection content is persisted. Requests show masked outbound bodies and
+placeholder categories by default, focused on changed text with JSON locations
+and message roles. Unchanged text parts are folded; text longer than 600
+characters shows merged windows of 120 characters on each side of known
+placeholders. Expand any text or the complete retained payload on demand.
+A separate explicit Reveal request fetches
+the received input and original mapping values. The input is the received
+pretranslation payload, not a reconstruction of the outbound wire request.
+After Reveal, the side-by-side view reconstructs outbound excerpts using the
+retained mappings; it is explicitly NOT the pretranslation client request.
+Confirmed HTTP sends are distinguished from adapter-stage fallbacks (including
+CLI/binary transports); retries and failover attempts remain separate. Clear,
+disable and expiry also revoke captures still in flight. Leaving or hiding the
+page clears browser detail, not the server opt-in session. Unrecognized secrets
+may remain in captured bodies: enable only while troubleshooting and clear after use.
 
 Mappings are isolated by authenticated user (a shared legacy API key is one
 caller). Anonymous requests have request-local mappings only. Responses restore
@@ -137,6 +179,18 @@ CLI's internally generated system context/telemetry, redact upstream authenticat
 headers, OCR images, transcribe audio, or sanitize local logs. Built-in credential
 patterns are deliberately conservative and do not identify every possible secret;
 use explicit `words` for sensitive values they do not recognize.
+
+Masking uses deterministic rules, not a local inference model. Recognized formats
+include Google API keys, AWS temporary access key IDs, xAI, Hugging Face, Groq,
+npm, PyPI and Stripe live keys, in addition to the existing credential patterns.
+Unquoted code calls and colon-delimited type/field references are not treated as
+literal passwords; quoted credential literals and `.env` assignments remain covered.
+Protocol identifiers (including tool namespaces/MCP server names), tool selection
+and stream settings are preserved. In tool and structured-output definitions,
+only description text is masked: schema property names, enums, constants,
+defaults, examples and grammars stay unchanged. Do not put real secrets in those
+structural literals. Actual tool arguments and results are still content, even
+when their fields have protocol-like names such as `namespace` or `stream_options`.
 
 ## Demo
 

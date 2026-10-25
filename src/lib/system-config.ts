@@ -273,6 +273,21 @@ export function initializeSystemConfig(options: {
   applySettings()
 }
 
+export function updateRedactionConfig(
+  input: unknown,
+): ReturnType<typeof getSystemConfig> {
+  const redaction = redactionConfigSchema.parse(input)
+  const next: StoredConfig = {
+    settings: { ...effectiveSettings(), redaction },
+    expiresAt: stored?.expiresAt ?? null,
+  }
+  if (!persist) throw new Error("System configuration has not been initialized")
+  persist(JSON.stringify(next))
+  stored = next
+  applySettings()
+  return getSystemConfig()
+}
+
 export function updateSystemConfig(
   input: unknown,
 ): ReturnType<typeof getSystemConfig> {

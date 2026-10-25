@@ -6,6 +6,16 @@ import { LocalUnavailableError } from "~/lib/error"
 import { state } from "~/lib/state"
 import { getSystemSettings } from "~/lib/system-config"
 import {
+  beginRedactionInspection,
+  captureRedactionAttempt,
+  captureRedactionHttp,
+  emptyRedactionDiagnostics,
+  finishRedactionInspection,
+  redactionInspectionTokens,
+  recordRedactionDiagnostics,
+  type RedactionUpstream,
+} from "~/lib/redaction/diagnostics"
+import {
   findRedactions,
   type RedactionConfig,
   type RedactionMatch,
@@ -144,6 +154,8 @@ export class RedactionScope {
   private readonly allowed = new Map<string, Entry>()
   private readonly identity: string
   private readonly used = new Set<string>()
+  private readonly counted = new Map<string, RedactionMatch["source"]>()
+  private readonly metrics = emptyRedactionDiagnostics()
   private readonly words: Set<string>
   private readonly textCache = Array.from(
     { length: 4 },
@@ -160,6 +172,26 @@ export class RedactionScope {
     this.words = new Set(config.words)
     this.identity = identity ?? randomBytes(16).toString("hex")
     this.tenant = tenantFor(identity)
+  }
+
+  diagnostics() {
+    return structuredClone(this.metrics)
+  }
+
+  inspectionMappings(tokens: Array<string>) {
+    return tokens.flatMap((placeholder) => {
+      const entry = this.allowed.get(placeholder)
+      return entry ?
+          [
+            {
+              placeholder,
+              kind: entry.kind,
+              source: this.counted.get(placeholder) ?? "known",
+              value: entry.value,
+            },
+          ]
+        : []
+    })
   }
 
   acquire(): () => void {
@@ -259,22 +291,33 @@ export class RedactionScope {
     }
     this.touch(token)
     this.allowed.set(token, this.tenant.entries.get(token)!)
+    if (!this.counted.has(token)) {
+      this.counted.set(token, match.source)
+      this.metrics.total++
+      this.metrics.byKind[match.kind]++
+      this.metrics.bySource[match.source]++
+    }
     return token
   }
 
   maskText(text: string, json = false, secretField = false): string {
-    this.tenant.touched = Date.now()
-    const cache = this.textCache[Number(json) + 2 * Number(secretField)]
-    const cached = cache.get(text)
-    if (cached?.version === this.tenant.version) return cached.value
-    const value = this.maskUncachedText(text, json, secretField)
-    const bytes = 2 * (text.length + value.length)
-    const previousBytes = cached ? 2 * (text.length + cached.value.length) : 0
-    if (this.cachedBytes - previousBytes + bytes <= MAX_BLOCK_BYTES) {
-      this.cachedBytes += bytes - previousBytes
-      cache.set(text, { version: this.tenant.version, value })
+    const started = performance.now()
+    try {
+      this.tenant.touched = Date.now()
+      const cache = this.textCache[Number(json) + 2 * Number(secretField)]
+      const cached = cache.get(text)
+      if (cached?.version === this.tenant.version) return cached.value
+      const value = this.maskUncachedText(text, json, secretField)
+      const bytes = 2 * (text.length + value.length)
+      const previousBytes = cached ? 2 * (text.length + cached.value.length) : 0
+      if (this.cachedBytes - previousBytes + bytes <= MAX_BLOCK_BYTES) {
+        this.cachedBytes += bytes - previousBytes
+        cache.set(text, { version: this.tenant.version, value })
+      }
+      return value
+    } finally {
+      this.metrics.maskingMs += performance.now() - started
     }
-    return value
   }
 
   private maskUncachedText(
@@ -315,12 +358,15 @@ export class RedactionScope {
             end: span.start,
             value: text.slice(start, span.start),
             kind: "SECRET",
+            source: "field",
           })
         start = span.end
       }
     }
-    // A secret echoed without its original `password=` context still needs protection.
-    for (const entry of this.tenant.entries.values()) {
+    // Include values found in this text, not only earlier texts/requests: an
+    // assignment followed by its bare value must be safe on the first pass too.
+    const scanned = new Set<string>()
+    for (const entry of [...this.tenant.entries.values(), ...matches]) {
       if (entry.kind === "SECRET" && !this.config.secrets) continue
       if (entry.kind === "HOME" && !this.config.homePaths) continue
       // Plain custom words are already matched by the compiled rules. Partial
@@ -330,7 +376,15 @@ export class RedactionScope {
         && (!json || !this.config.wordsEnabled || !this.words.has(entry.value))
       )
         continue
-      const value = json ? entry.json : entry.value
+      const value =
+        json ?
+          "json" in entry ?
+            entry.json
+          : JSON.stringify(entry.value).slice(1, -1)
+        : entry.value
+      const key = `${entry.kind}:${value}`
+      if (scanned.has(key)) continue
+      scanned.add(key)
       let from = 0
       while (true) {
         const start = text.indexOf(value, from)
@@ -341,7 +395,13 @@ export class RedactionScope {
           || end === text.length
           || /[/\\\s"'<>]/.test(text[end])
         if (pathBoundary)
-          matches.push({ start, end, value: entry.value, kind: entry.kind })
+          matches.push({
+            start,
+            end,
+            value: entry.value,
+            kind: entry.kind,
+            source: "known",
+          })
         from = end
       }
     }
@@ -371,6 +431,7 @@ export class RedactionScope {
           "Cannot restore redacted tool input; resend the original unredacted context",
         )
       if (!entry) return token // Never disclose a different request's known secret.
+      this.metrics.restored++
       return json ? entry.json : entry.value
     })
   }
@@ -488,8 +549,69 @@ export class RedactionScope {
 interface ActiveRedaction {
   scope: RedactionScope
   issuer?: string
+  inspection?: number
+  upstreams?: Array<RedactionUpstream>
+  attempt?: { index?: number; prepared: Set<string> }
 }
 const active = new AsyncLocalStorage<ActiveRedaction>()
+
+export function withRedactionUpstream<T>(
+  upstream: RedactionUpstream,
+  payload: unknown,
+  run: () => T,
+): T {
+  const current = active.getStore()
+  if (!current) return run()
+  const safe = {
+    id: upstream.id.slice(0, 160),
+    name: upstream.name.slice(0, 160),
+    protocol: upstream.protocol.slice(0, 160),
+    model: upstream.model.slice(0, 160),
+  }
+  if (
+    current.upstreams
+    && current.upstreams.length < 8
+    && !current.upstreams.some(
+      (item) => item.id === safe.id && item.model === safe.model,
+    )
+  )
+    current.upstreams.push(safe)
+  const index = captureRedactionAttempt(current.inspection, safe, payload)
+  return active.run(
+    { ...current, attempt: { index, prepared: new Set() } },
+    run,
+  )
+}
+
+/** Only bodies prepared by our generation serializer qualify as HTTP evidence. */
+export function prepareRedactionBody(body: string): string {
+  const current = active.getStore()
+  if (
+    current?.inspection !== undefined
+    && current.attempt
+    && current.attempt.prepared.size < 16
+  )
+    current.attempt.prepared.add(
+      createHash("sha256").update(body).digest("hex"),
+    )
+  return body
+}
+
+export function observeRedactionHttp(body: unknown): void {
+  const current = active.getStore()
+  if (
+    typeof body !== "string"
+    || current?.inspection === undefined
+    || !current.attempt
+  )
+    return
+  if (
+    current.attempt.prepared.has(
+      createHash("sha256").update(body).digest("hex"),
+    )
+  )
+    captureRedactionHttp(current.inspection, current.attempt.index, body)
+}
 
 export function maskUpstream<T>(value: T): T {
   const current = active.getStore()
@@ -547,11 +669,39 @@ export async function runRedactedCall<P, R extends { response: unknown }>(
     : state.legacyApiKey ? "legacy"
     : undefined
   const scope = new RedactionScope(config, identity)
-  const release = scope.acquire()
+  const releaseLease = scope.acquire()
+  const inspection = beginRedactionInspection(payload)
+  const upstreams: Array<RedactionUpstream> = []
+  const ua = c?.req.header("user-agent") ?? ""
+  const client =
+    /claude[- ]?code/i.test(ua) ? "Claude Code"
+    : /codex/i.test(ua) ? "Codex"
+    : /cursor/i.test(ua) ? "Cursor"
+    : /kilo/i.test(ua) ? "Kilo Code"
+    : /roo[- ]?code/i.test(ua) ? "Roo Code"
+    : /cline/i.test(ua) ? "Cline"
+    : /openai/i.test(ua) ? "OpenAI SDK"
+    : /anthropic/i.test(ua) ? "Anthropic SDK"
+    : "Unknown client"
+  let released = false
+  const release = () => {
+    if (released) return
+    released = true
+    finishRedactionInspection(
+      inspection,
+      scope.inspectionMappings(redactionInspectionTokens(inspection)),
+    )
+    releaseLease()
+    recordRedactionDiagnostics(
+      scope.diagnostics(),
+      { client, upstreams },
+      inspection,
+    )
+  }
   try {
     const previousId = record(payload)?.previous_response_id
     if (typeof previousId === "string") scope.inheritResponse(previousId.trim())
-    const result = await active.run({ scope }, () =>
+    const result = await active.run({ scope, inspection, upstreams }, () =>
       execute(scope.mask(payload)),
     )
     const identityResult = result as R & {
@@ -567,12 +717,14 @@ export async function runRedactedCall<P, R extends { response: unknown }>(
       && Symbol.asyncIterator in response
     ) {
       const { restoreRedactionStream } = await import("~/lib/redaction/stream")
-      const restored = active.run({ scope, issuer }, () =>
-        restoreRedactionStream(
-          bindRedactionStream(response as AsyncIterable<unknown>),
-          scope,
-          issuer,
-        ),
+      const restored = active.run(
+        { scope, issuer, inspection, upstreams },
+        () =>
+          restoreRedactionStream(
+            bindRedactionStream(response as AsyncIterable<unknown>),
+            scope,
+            issuer,
+          ),
       )
       return {
         ...result,

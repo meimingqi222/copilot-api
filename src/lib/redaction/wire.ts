@@ -13,6 +13,10 @@ const RESERVED = new Set([
   "type",
   "role",
   "name",
+  "namespace",
+  "server_label",
+  "server_name",
+  "item_id",
   "tool_use_id",
   "call_id",
   "tool_call_id",
@@ -33,6 +37,31 @@ const RESERVED = new Set([
   "conversation_id",
   "user_id",
   "encoding",
+  "stream_options",
+  "client_metadata",
+  "tool_choice",
+  "toolConfig",
+  "tool_config",
+  "reasoning_effort",
+  "effort",
+  "stop_reason",
+  "finish_reason",
+  "status",
+  "object",
+  "event",
+  "include",
+])
+
+// These are vendor-validated definitions, not content. Only descriptions
+// inside them may change; schema literals and grammars must stay executable.
+const DEFINITIONS = new Set([
+  "tools",
+  "functions",
+  "response_format",
+  "output_format",
+  "output_config",
+  "generationConfig",
+  "generation_config",
   "format",
 ])
 
@@ -102,12 +131,14 @@ export function transformContent(
     toolInput?: boolean,
   ) => string,
   sealed?: (value: Record<string, unknown>, signed: SignedContent) => unknown,
-  toolData: boolean | "output" = false,
+  toolData: boolean | "output" | "definition" | "schema-map" = false,
   depth = 0,
 ): unknown {
   if (depth > 64) throw new Error("Redaction content nesting exceeds 64 levels")
   if (typeof value === "string")
-    return text(value, false, false, toolData === true)
+    return toolData === "definition" || toolData === "schema-map" ?
+        value
+      : text(value, false, false, toolData === true)
   if (Array.isArray(value)) {
     const result = value.map((item) =>
       transformContent(item, text, sealed, toolData, depth + 1),
@@ -124,6 +155,47 @@ export function transformContent(
   const signed = !toolData && signedContent(obj)
   if (signed && sealed) return sealed(obj, signed)
   const entries = Object.entries(obj).map(([key, nested]) => {
+    if (toolData === "definition" || toolData === "schema-map") {
+      if (
+        toolData === "definition"
+        && key === "description"
+        && typeof nested === "string"
+      )
+        return [key, text(nested, false)]
+      // Even an object-valued example/default can contain a `description` key.
+      if (
+        toolData === "definition"
+        && ["enum", "const", "default", "examples", "example"].includes(key)
+      )
+        return [key, nested]
+      return [
+        key,
+        transformContent(
+          nested,
+          text,
+          undefined,
+          // Property/definition names can themselves be `enum` or `default`.
+          (
+            toolData === "definition"
+              && [
+                "properties",
+                "patternProperties",
+                "$defs",
+                "definitions",
+                "dependentSchemas",
+              ].includes(key)
+          ) ?
+            "schema-map"
+          : "definition",
+          depth + 1,
+        ),
+      ]
+    }
+    if (!toolData && DEFINITIONS.has(key))
+      return [
+        key,
+        transformContent(nested, text, undefined, "definition", depth + 1),
+      ]
     if (
       !toolData
       && (RESERVED.has(key)

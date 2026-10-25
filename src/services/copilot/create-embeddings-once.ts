@@ -9,7 +9,10 @@ import type {
 
 import { copilotBaseUrl, copilotHeadersForToken } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
-import { serializeUpstreamBody } from "~/lib/upstream-performance"
+import {
+  performanceFetch as fetch,
+  serializeUpstreamBody,
+} from "~/lib/upstream-performance"
 import { parseModelReference } from "~/lib/route-target/model-reference"
 import { state } from "~/lib/state"
 import { copilotTokenFromCredential } from "~/services/copilot/token-refresh"

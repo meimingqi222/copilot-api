@@ -6,11 +6,22 @@ import {
   RedactionScope,
   runRedactedCall,
   maskUpstream,
+  withRedactionUpstream,
 } from "~/lib/redaction/context"
 import { redactionConfigSchema } from "~/lib/redaction/rules"
+import {
+  getRedactionDiagnostics,
+  getRedactionInspection,
+  setRedactionInspection,
+  clearRedactionInspection,
+  getRedactionInspectionState,
+} from "~/lib/redaction/diagnostics"
 import { restoreRedactionStream } from "~/lib/redaction/stream"
 import { initializeSystemConfig, updateSystemConfig } from "~/lib/system-config"
-import { serializeUpstreamBody } from "~/lib/upstream-performance"
+import {
+  serializeUpstreamBody,
+  performanceFetch,
+} from "~/lib/upstream-performance"
 
 const config = redactionConfigSchema.parse({ enabled: true })
 const createScope = () => new RedactionScope(config, randomUUID())
@@ -18,6 +29,7 @@ const sign = (text: string) =>
   createHmac("sha256", "test-issuer").update(text).digest("hex")
 
 afterEach(() => {
+  setRedactionInspection(false)
   delete process.env.UPSTREAM_REDACTION
   initializeSystemConfig({ save: () => {}, onChange: () => {} })
 })
@@ -53,6 +65,167 @@ test("protects credentials and home prefixes without changing IDs, media or tool
   expect(scope.restore(masked, "issuer")).toEqual(payload)
 })
 
+test("preserves protocol settings and schema literals while masking descriptions and tool data", () => {
+  const scope = new RedactionScope(
+    redactionConfigSchema.parse({
+      enabled: true,
+      words: ["private", "cutoff"],
+    }),
+    randomUUID(),
+  )
+  const schema = {
+    type: "object",
+    properties: {
+      private: {
+        type: "string",
+        description: "private input",
+        enum: ["private"],
+        const: "private",
+        default: "private",
+        examples: [{ description: "private" }],
+      },
+      enum: { type: "string", description: "private enum property" },
+    },
+    $defs: { default: { type: "string", description: "private definition" } },
+    required: ["private"],
+    additionalProperties: false,
+  }
+  const payload = {
+    tools: [
+      {
+        type: "function",
+        function: {
+          name: "private_tool",
+          description: "private tool",
+          parameters: schema,
+        },
+      },
+      { name: "private_tool", input_schema: schema },
+      { functionDeclarations: [{ name: "private_tool", parameters: schema }] },
+      {
+        type: "custom",
+        name: "private_patch",
+        format: {
+          type: "grammar",
+          syntax: "lark",
+          definition: 'start: "private"',
+        },
+      },
+    ],
+    functions: [{ name: "private_tool", parameters: schema }],
+    response_format: {
+      type: "json_schema",
+      json_schema: { name: "private", schema },
+    },
+    text: { format: { type: "json_schema", name: "private", schema } },
+    output_config: { format: { type: "json_schema", schema } },
+    generationConfig: {
+      responseSchema: schema,
+      responseMimeType: "application/json",
+    },
+    tool_choice: { type: "function", name: "private_tool" },
+    toolConfig: {
+      functionCallingConfig: { allowedFunctionNames: ["private_tool"] },
+    },
+    stream_options: { reasoning_summary_delivery: "sequential_cutoff" },
+    input: [
+      {
+        type: "function_call",
+        namespace: "private",
+        server_label: "private",
+        server_name: "private",
+        arguments: JSON.stringify({
+          namespace: "private",
+          stream_options: { mode: "cutoff" },
+          tools: [{ description: "private" }],
+        }),
+      },
+    ],
+  }
+  const masked = scope.mask(payload)
+  const maskedSchema = masked.tools[0].function!.parameters
+  expect(maskedSchema.properties.private.description).not.toBe("private input")
+  expect({
+    ...maskedSchema.properties.private,
+    description: "private input",
+  }).toEqual(schema.properties.private)
+  expect(maskedSchema.properties.enum.description).not.toContain("private")
+  expect(maskedSchema.$defs.default.description).not.toContain("private")
+  expect(maskedSchema.required).toEqual(["private"])
+  expect(masked.tools[0].function!.description).not.toBe("private tool")
+  expect(masked.tools[0].function!.name).toBe("private_tool")
+  expect(masked.tools[1].input_schema).toEqual(maskedSchema)
+  expect(masked.tools[2].functionDeclarations![0].parameters).toEqual(
+    maskedSchema,
+  )
+  expect(masked.tools[3]).toEqual(payload.tools[3])
+  expect(masked.functions[0].parameters).toEqual(maskedSchema)
+  expect(masked.response_format.json_schema.schema).toEqual(maskedSchema)
+  expect(masked.response_format.json_schema.name).toBe("private")
+  expect(masked.text.format.schema).toEqual(maskedSchema)
+  expect(masked.text.format.name).toBe("private")
+  expect(masked.output_config.format.schema).toEqual(maskedSchema)
+  expect(masked.generationConfig.responseSchema).toEqual(maskedSchema)
+  expect(masked.tool_choice).toEqual(payload.tool_choice)
+  expect(masked.toolConfig).toEqual(payload.toolConfig)
+  expect(masked.stream_options).toEqual(payload.stream_options)
+  expect({ ...masked.input[0], arguments: "" }).toEqual({
+    ...payload.input[0],
+    arguments: "",
+  })
+  expect(masked.input[0].arguments).not.toContain("private")
+  expect(masked.input[0].arguments).not.toContain("cutoff")
+  expect(scope.restore(masked, "issuer")).toEqual(payload)
+})
+
+test("masks additional vendor credential formats without consuming partial identifiers", () => {
+  const credentials = [
+    "AIza" + "Ab9_".repeat(8) + "xyz",
+    "ASIA" + "A1".repeat(8),
+    "xai-" + "Ab9".repeat(14),
+    "hf_" + "Ab9".repeat(10),
+    "gsk_" + "Ab9".repeat(14),
+    "npm_" + "Ab9".repeat(12),
+    "pypi-" + "Ab9_".repeat(13),
+    "rk_live_" + "Ab9".repeat(8),
+  ]
+  const scope = createScope()
+  const input = credentials.join("\n")
+  const masked = scope.maskText(input)
+  for (const credential of credentials) expect(masked).not.toContain(credential)
+  expect(scope.restoreText(masked)).toBe(input)
+  const clean = [
+    "AIzaShort",
+    "ASIA123",
+    "xai-short",
+    "npm_short",
+    "prefix" + credentials[0],
+    credentials[1] + "Z",
+  ]
+  expect(createScope().maskText(clean.join("\n"))).toBe(clean.join("\n"))
+})
+
+test("does not mistake secret-related code for literal credentials", () => {
+  const code = [
+    "type Keys = { secretKey: Uint8Array; apiKey: StringV2 | null }",
+    "f({ private_key: pair.secretV2, token: config.tokenV2 })",
+    "const secretKey = fromBase64Url(input)",
+    "privateKey: crypto.randomBytes(32),",
+  ].join("\n")
+  expect(createScope().maskText(code)).toBe(code)
+  for (const input of [
+    'secretKey: "Uint8Array9x",',
+    "TOKEN=abcd1234efgh",
+    "password: abcd1234efgh",
+    '{"secretKey": "abcd1234efgh"}',
+  ]) {
+    const scope = createScope()
+    const masked = scope.maskText(input)
+    expect(masked).not.toBe(input)
+    expect(scope.restoreText(masked)).toBe(input)
+  }
+})
+
 test("keeps stable placeholders per caller but only restores values used by the current request", () => {
   const caller = randomUUID()
   const first = new RedactionScope(config, caller)
@@ -66,6 +239,252 @@ test("keeps stable placeholders per caller but only restores values used by the 
   expect(other.restoreText(token)).toBe(token)
   expect(other.maskText(token)).toBe(token)
   expect(other.restoreText(token)).toBe(token)
+})
+
+test("recent diagnostics count unique values, finish streams once and retain only bounded metadata", async () => {
+  process.env.UPSTREAM_REDACTION = '{"enabled":true}'
+  initializeSystemConfig({ save: () => {}, onChange: () => {} })
+  const startId = getRedactionDiagnostics().entries[0]?.id ?? 0
+  const secret = "SyntheticStats" + "Pass123"
+  const text = `DB_PASSWORD=${secret} ${secret}`
+  const completed = await runRedactedCall(
+    { text },
+    undefined,
+    async (prepared) => ({ response: maskUpstream(prepared) }),
+  )
+  expect(completed.response.text).toBe(text)
+  const first = getRedactionDiagnostics().entries[0]
+  expect(first.id).toBe(startId + 1)
+  expect(first.total).toBe(1)
+  expect(first.byKind).toEqual({ SECRET: 1, HOME: 0, WORD: 0 })
+  expect(first.bySource).toEqual({
+    builtin: 1,
+    word: 0,
+    homePrefix: 0,
+    field: 0,
+    known: 0,
+  })
+  expect(first.restored).toBe(2)
+  expect(Number.isFinite(first.maskingMs)).toBe(true)
+  const streamed = await runRedactedCall(
+    { text },
+    undefined,
+    async (prepared) => ({
+      response: (async function* () {
+        yield { choices: [{ index: 0, delta: { content: prepared.text } }] }
+        yield { choices: [{ index: 0, delta: { content: "tail" } }] }
+      })(),
+    }),
+  )
+  expect(getRedactionDiagnostics().entries[0].id).toBe(first.id)
+  const iterator = streamed.response[Symbol.asyncIterator]()
+  await iterator.next()
+  expect(getRedactionDiagnostics().entries[0].id).toBe(first.id)
+  await iterator.return?.()
+  expect(getRedactionDiagnostics().entries[0].id).toBe(first.id + 1)
+  await iterator.return?.()
+  expect(getRedactionDiagnostics().entries[0].id).toBe(first.id + 1)
+  await expect(
+    runRedactedCall({ text }, undefined, async () => {
+      throw new Error("synthetic failure")
+    }),
+  ).rejects.toThrow("synthetic failure")
+  expect(getRedactionDiagnostics().entries[0].id).toBe(first.id + 2)
+  for (let i = 0; i < 101; i++)
+    await runRedactedCall({ text }, undefined, async () => ({
+      response: { text: "ok" },
+    }))
+  const history = getRedactionDiagnostics()
+  expect(history.limit).toBe(100)
+  expect(history.entries).toHaveLength(100)
+  expect(history.entries[0].id - history.entries[99].id).toBe(99)
+  expect(Object.keys(history.entries[0]).sort()).toEqual(
+    [
+      "id",
+      "timestamp",
+      "total",
+      "byKind",
+      "bySource",
+      "maskingMs",
+      "restored",
+      "client",
+      "upstreams",
+      "contentAvailable",
+    ].sort(),
+  )
+  const serialized = JSON.stringify(history)
+  expect(serialized).not.toContain(secret)
+  expect(serialized).not.toContain("{{SECRET_")
+  history.entries[0].byKind.SECRET = -1
+  expect(getRedactionDiagnostics().entries[0].byKind.SECRET).toBe(1)
+})
+
+test("opt-in inspection distinguishes final HTTP bodies, multiple attempts and explicit original reveal", async () => {
+  process.env.UPSTREAM_REDACTION = '{"enabled":true}'
+  const original = ["", "home", "inspection-fixture", "project"].join("/")
+  const upstream = {
+    id: "route-a",
+    name: "Provider A",
+    protocol: "openai-compatible",
+    model: "native-a",
+  }
+  const receiver = Bun.serve({
+    port: 0,
+    fetch: async (request) => Response.json(await request.json()),
+  })
+  try {
+    const payload = { model: "native-a", input: original }
+    const send = () =>
+      runRedactedCall(payload, undefined, (masked) =>
+        withRedactionUpstream(upstream, masked, async () => {
+          const body = serializeUpstreamBody({
+            ...masked,
+            injected: "after adapter preparation",
+          })
+          // This unrelated side request must not appear as a generation body.
+          await performanceFetch(receiver.url, {
+            method: "POST",
+            body: '{"refresh_token":"not-generation"}',
+          })
+          await performanceFetch(receiver.url, { method: "POST", body })
+          return withRedactionUpstream(
+            { ...upstream, id: "route-b", name: "Provider B" },
+            masked,
+            async () => ({
+              response: await (
+                await performanceFetch(receiver.url, {
+                  method: "POST",
+                  body: serializeUpstreamBody(masked),
+                })
+              ).json(),
+            }),
+          )
+        }),
+      )
+    await send()
+    expect(getRedactionDiagnostics().entries[0].contentAvailable).toBe(false)
+    expect(
+      getRedactionInspection(getRedactionDiagnostics().entries[0].id, true),
+    ).toBeUndefined()
+    setRedactionInspection(true)
+    const result = await send()
+    expect(result.response).toEqual(payload)
+    const entry = getRedactionDiagnostics().entries[0]
+    expect(entry.upstreams.map((item) => item.id)).toEqual([
+      "route-a",
+      "route-b",
+    ])
+    expect(entry.contentAvailable).toBe(true)
+    expect(JSON.stringify(getRedactionDiagnostics())).not.toContain(original)
+    const detail = getRedactionInspection(entry.id)!
+    expect(detail.input).toBeNull()
+    expect(detail.attempts.map((attempt) => attempt.stage)).toEqual([
+      "http",
+      "http",
+    ])
+    expect(detail.attempts[0].body).toContain("after adapter preparation")
+    expect(JSON.stringify(detail)).not.toContain(original)
+    expect(JSON.stringify(detail)).not.toContain("not-generation")
+    expect(detail.mappings).toHaveLength(1)
+    const revealed = getRedactionInspection(entry.id, true)!
+    expect(JSON.parse(revealed.input!).input).toBe(original)
+    expect(revealed.mappings[0]).toMatchObject({
+      value: original.split("/").slice(0, 3).join("/"),
+      source: "builtin",
+      kind: "HOME",
+    })
+  } finally {
+    receiver.stop(true)
+  }
+})
+
+test("clear, disable and expiry revoke in-flight inspection without breaking response restoration", async () => {
+  process.env.UPSTREAM_REDACTION = '{"enabled":true}'
+  const upstream = {
+    id: "route",
+    name: "Provider",
+    protocol: "claude-native",
+    model: "model",
+  }
+  const original = ["", "home", "pending-fixture", "project"].join("/")
+  for (const action of ["clear", "disable", "expire"]) {
+    setRedactionInspection(true)
+    let finish!: () => void
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const call = runRedactedCall({ input: original }, undefined, (masked) =>
+      withRedactionUpstream(upstream, masked, async () => {
+        await pending
+        return { response: masked }
+      }),
+    )
+    let clock: ReturnType<typeof spyOn> | undefined
+    try {
+      if (action === "clear") clearRedactionInspection()
+      else if (action === "disable") setRedactionInspection(false)
+      else {
+        const expiresAt = getRedactionInspectionState().expiresAt!
+        clock = spyOn(Date, "now").mockReturnValue(expiresAt + 1)
+        expect(getRedactionInspectionState().enabled).toBe(false)
+      }
+      finish()
+      expect((await call).response).toEqual({ input: original })
+      const entry = getRedactionDiagnostics().entries[0]
+      expect(entry.contentAvailable).toBe(false)
+      expect(getRedactionInspection(entry.id, true)).toBeUndefined()
+      expect(getRedactionInspectionState().bytes).toBe(0)
+    } finally {
+      clock?.mockRestore()
+      finish()
+    }
+  }
+})
+
+test("inspection retains bounded payloads and evicts old records under memory pressure", async () => {
+  process.env.UPSTREAM_REDACTION =
+    '{"enabled":true,"homePaths":false,"secrets":false}'
+  setRedactionInspection(true)
+  const upstream = {
+    id: "cli",
+    name: "CLI",
+    protocol: "claude-native",
+    model: "model",
+  }
+  let first = 0
+  for (let i = 0; i < 105; i++) {
+    await runRedactedCall({ input: "x".repeat(40_000) }, undefined, (masked) =>
+      withRedactionUpstream(upstream, masked, () =>
+        withRedactionUpstream({ ...upstream, id: "second" }, masked, () =>
+          withRedactionUpstream(
+            { ...upstream, id: "third" },
+            masked,
+            async () => ({ response: "ok" }),
+          ),
+        ),
+      ),
+    )
+    if (i === 0) first = getRedactionDiagnostics().entries[0].id
+    if (i === 89) {
+      expect(
+        getRedactionDiagnostics().entries.some((entry) => entry.id === first),
+      ).toBe(true)
+      expect(getRedactionInspection(first, true)).toBeUndefined()
+    }
+  }
+  const stats = getRedactionDiagnostics()
+  expect(stats.entries).toHaveLength(100)
+  expect(stats.inspection.bytes).toBeLessThanOrEqual(stats.inspection.maxBytes)
+  expect(
+    stats.entries.filter((entry) => entry.contentAvailable).length,
+  ).toBeLessThan(100)
+  expect(getRedactionInspection(first, true)).toBeUndefined()
+  const detail = getRedactionInspection(stats.entries[0].id, true)!
+  expect(detail.truncated).toBe(true)
+  expect(detail.attempts[0].stage).toBe("adapter")
+  expect(
+    detail.input!.length * 2 + detail.attempts[0].body.length * 2,
+  ).toBeLessThanOrEqual(stats.inspection.maxEntryBytes)
 })
 
 test("unresolved placeholders are rejected in tool inputs but preserved in ordinary text and tool outputs", async () => {

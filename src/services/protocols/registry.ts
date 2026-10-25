@@ -20,6 +20,7 @@ import {
   bindRedactionStream,
   maskUpstream,
   withRedactionIssuer,
+  withRedactionUpstream,
 } from "~/lib/redaction/context"
 
 import type { ProtocolAdapter } from "./types"
@@ -49,27 +50,54 @@ export function registerProtocolAdapter(adapter: ProtocolAdapter): void {
 }
 
 function protect<
-  P extends { payload: unknown; connection: { id: string } },
+  P extends {
+    payload: unknown
+    connection: { id: string; name: string; protocol: string }
+    target: { upstreamModelId: string }
+  },
   R extends { response: unknown },
 >(call: (params: P) => Promise<R>): (params: P) => Promise<R> {
-  return (params) =>
-    withRedactionIssuer(params.connection.id, async () => {
-      const result = await call({
-        ...params,
-        payload: maskUpstream(params.payload),
-      })
-      const response = result.response
-      return (
-          response
-            && typeof response === "object"
-            && Symbol.asyncIterator in response
-        ) ?
-          {
-            ...result,
-            response: bindRedactionStream(response as AsyncIterable<unknown>),
-          }
-        : result
+  return (params) => {
+    const model =
+      (
+        params.payload
+        && typeof params.payload === "object"
+        && "model" in params.payload
+      ) ?
+        params.payload.model
+      : params.target.upstreamModelId
+    return withRedactionIssuer(params.connection.id, () => {
+      const payload = maskUpstream(params.payload)
+      return withRedactionUpstream(
+        {
+          id: params.connection.id,
+          name: params.connection.name,
+          protocol: params.connection.protocol,
+          model: typeof model === "string" ? model : "",
+        },
+        payload,
+        async () => {
+          const result = await call({
+            ...params,
+            payload,
+          })
+          const response = result.response
+          return (
+              response
+                && typeof response === "object"
+                && Symbol.asyncIterator in response
+            ) ?
+              {
+                ...result,
+                response: bindRedactionStream(
+                  response as AsyncIterable<unknown>,
+                ),
+              }
+            : result
+        },
+      )
     })
+  }
 }
 
 export function getProtocolAdapter(

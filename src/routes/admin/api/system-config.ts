@@ -1,6 +1,18 @@
 import { Hono } from "hono"
+import { z } from "zod"
 
+import { HTTPError } from "~/lib/error"
 import { readJsonBody } from "~/lib/request-body"
+import { RedactionScope } from "~/lib/redaction/context"
+import {
+  clearRedactionInspection,
+  emptyRedactionDiagnostics,
+  getRedactionDiagnostics,
+  getRedactionInspection,
+  getRedactionInspectionState,
+  setRedactionInspection,
+} from "~/lib/redaction/diagnostics"
+import { redactionConfigSchema } from "~/lib/redaction/rules"
 import { state } from "~/lib/state"
 import { getAccountWarmupModels } from "~/lib/quota/warmup"
 import { publicRoutingGroupModels } from "~/lib/routing-groups/catalog"
@@ -9,12 +21,123 @@ import { buildCodexClientModelsResponse } from "~/services/codex/client-models"
 import {
   getSystemConfig,
   systemConfigUpdateSchema,
+  updateRedactionConfig,
   updateSystemConfig,
 } from "~/lib/system-config"
 
 export const systemConfigApiRoutes = new Hono()
 
 systemConfigApiRoutes.get("/", (c) => c.json(getSystemConfig()))
+
+systemConfigApiRoutes.put("/redaction-config", async (c) => {
+  let input: unknown
+  try {
+    input = await readJsonBody(c.req.raw, 1024 * 1024)
+  } catch (error) {
+    return c.json(
+      { error: "Invalid or oversized redaction payload." },
+      error instanceof HTTPError && error.response.status === 413 ? 413 : 400,
+    )
+  }
+  const parsed = redactionConfigSchema.safeParse(input)
+  if (!parsed.success)
+    return c.json({ error: "Invalid redaction configuration or rules." }, 400)
+  return c.json(updateRedactionConfig(parsed.data))
+})
+
+systemConfigApiRoutes.get("/redaction-stats", (c) => {
+  c.header("Cache-Control", "no-store")
+  return c.json(getRedactionDiagnostics())
+})
+
+systemConfigApiRoutes.post("/redaction-inspection", async (c) => {
+  c.header("Cache-Control", "no-store")
+  let input: unknown
+  try {
+    input = await readJsonBody(c.req.raw, 1024)
+  } catch {
+    return c.json({ error: "Invalid inspection settings." }, 400)
+  }
+  const parsed = z.object({ enabled: z.boolean() }).strict().safeParse(input)
+  if (!parsed.success)
+    return c.json({ error: "Invalid inspection settings." }, 400)
+  return c.json(setRedactionInspection(parsed.data.enabled))
+})
+
+systemConfigApiRoutes.delete("/redaction-records", (c) => {
+  c.header("Cache-Control", "no-store")
+  clearRedactionInspection()
+  return c.json(getRedactionInspectionState())
+})
+
+systemConfigApiRoutes.get("/redaction-records/:id", (c) => {
+  c.header("Cache-Control", "no-store")
+  const id = Number(c.req.param("id"))
+  const detail =
+    Number.isSafeInteger(id) && id > 0 ?
+      getRedactionInspection(id, c.req.query("reveal") === "1")
+    : undefined
+  return detail ?
+      c.json(detail)
+    : c.json({ error: "Record unavailable or expired." }, 404)
+})
+
+const redactionPreviewSchema = z
+  .object({
+    text: z.string().max(65536),
+    format: z.enum(["text", "json"]),
+    config: redactionConfigSchema,
+  })
+  .strict()
+
+systemConfigApiRoutes.post("/redaction-preview", async (c) => {
+  c.header("Cache-Control", "no-store")
+  let input: unknown
+  try {
+    input = await readJsonBody(c.req.raw, 1024 * 1024)
+  } catch (error) {
+    return c.json(
+      { error: "Invalid or oversized preview payload." },
+      error instanceof HTTPError && error.response.status === 413 ? 413 : 400,
+    )
+  }
+  const parsed = redactionPreviewSchema.safeParse(input)
+  if (!parsed.success)
+    return c.json(
+      {
+        error: "Invalid preview input or rules (text limit: 65536 characters).",
+      },
+      400,
+    )
+  const { text, format, config } = parsed.data
+  try {
+    const value: unknown = format === "json" ? JSON.parse(text) : text
+    if (!config.enabled)
+      return c.json({
+        output: text,
+        enabled: false,
+        diagnostics: emptyRedactionDiagnostics(),
+      })
+    // No caller identity, lease, upstream call or telemetry recording. The
+    // preview's mappings die with this isolated scope, even for known secrets.
+    const scope = new RedactionScope(config)
+    const masked = scope.mask(value)
+    return c.json({
+      output: format === "json" ? JSON.stringify(masked, null, 2) : masked,
+      enabled: true,
+      diagnostics: scope.diagnostics(),
+    })
+  } catch {
+    // JSON parser errors can contain excerpts of the user's sensitive input.
+    return c.json(
+      {
+        error:
+          "Preview failed. Check JSON syntax, nesting and redaction limits.",
+      },
+      400,
+    )
+  }
+})
 
 systemConfigApiRoutes.get("/warmup-models", (c) =>
   c.json({ models: getAccountWarmupModels() }),

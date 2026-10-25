@@ -14,6 +14,7 @@ function adminApp() {
       "traces",
       "usage",
       "users",
+      "redaction",
       "system-config",
     ],
     initialized: false,
@@ -177,6 +178,7 @@ function adminApp() {
           items: [
             { id: "users", icon: "key" },
             { id: "guard", icon: "shield" },
+            { id: "redaction", icon: "shield-check" },
             { id: "system-config", icon: "settings" },
           ],
         },

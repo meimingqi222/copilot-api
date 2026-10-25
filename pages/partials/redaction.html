@@ -1,0 +1,887 @@
+<div
+  x-data="redactionView()"
+  x-init="if (currentView === 'redaction') enterRedaction(); $watch('currentView', view => { if (view === 'redaction') enterRedaction(); else leaveRedaction() })"
+  @visibilitychange.document="syncLive()"
+  class="redaction-page space-y-6 max-w-5xl pb-12"
+>
+  <header
+    class="page-header flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+  >
+    <div class="page-heading">
+      <div class="flex items-center gap-3 flex-wrap">
+        <h2 class="text-headline" x-text="t('nav.redaction')"></h2>
+        <template x-if="source">
+          <span
+            class="badge inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium"
+            :class="source === 'webui' ? 'bg-[rgba(52,199,89,0.1)] text-[var(--apple-green)] border border-[rgba(52,199,89,0.2)]' : 'bg-[var(--apple-gray-6)] text-[var(--apple-text-secondary)] border border-[var(--apple-gray-5)]'"
+          >
+            <span
+              class="w-1.5 h-1.5 rounded-full"
+              :class="source === 'webui' ? 'bg-[var(--apple-green)]' : 'bg-[var(--apple-gray)]'"
+            ></span>
+            <span x-text="t('system.source.' + source)"></span>
+          </span>
+        </template>
+      </div>
+      <p
+        class="page-description mt-1 text-sm text-[var(--apple-text-secondary)]"
+        x-text="t('redaction.subtitle')"
+      ></p>
+    </div>
+    <button
+      type="button"
+      class="btn btn-secondary"
+      @click="load()"
+      :disabled="loading || saving"
+      x-text="t('refresh')"
+    ></button>
+  </header>
+
+  <section
+    class="card redaction-flow"
+    :class="{ 'is-off': !appliedRedaction?.enabled }"
+  >
+    <div class="redaction-flow-head">
+      <div>
+        <h3 x-text="t('redaction.routes.title')"></h3>
+        <p x-text="t('redaction.routes.hint')"></p>
+      </div>
+      <button
+        type="button"
+        class="btn btn-secondary"
+        @click="animationPaused = !animationPaused"
+        :aria-pressed="animationPaused"
+        x-text="t(animationPaused ? 'redaction.flow.play' : 'redaction.flow.pause')"
+      ></button>
+    </div>
+    <div class="redaction-route-map">
+      <template x-for="side in ['client', 'upstream']" :key="side">
+        <div class="redaction-endpoints" :class="'redaction-endpoints-' + side">
+          <h4 x-text="t('redaction.routes.' + side)"></h4>
+          <p
+            x-show="!redactionStats.length"
+            x-text="t('redaction.routes.empty')"
+          ></p>
+          <template
+            x-for="endpoint in routeGroups(side).slice(0, 3)"
+            :key="endpoint.id"
+          >
+            <button
+              type="button"
+              class="redaction-endpoint"
+              @click="filterRoute(side, endpoint.id)"
+              :aria-pressed="(side === 'client' ? clientFilter : upstreamFilter) === endpoint.id"
+            >
+              <span
+                x-text="endpoint.name || t('redaction.routes.unknown')"
+              ></span>
+              <strong x-text="endpoint.count"></strong>
+            </button>
+          </template>
+          <details x-show="routeGroups(side).length > 3">
+            <summary
+              x-text="'+' + Math.max(0, routeGroups(side).length - 3) + ' ' + t('redaction.routes.more')"
+            ></summary>
+            <template
+              x-for="endpoint in routeGroups(side).slice(3)"
+              :key="endpoint.id"
+            >
+              <button
+                type="button"
+                class="redaction-endpoint"
+                @click="filterRoute(side, endpoint.id)"
+                :aria-pressed="(side === 'client' ? clientFilter : upstreamFilter) === endpoint.id"
+              >
+                <span
+                  x-text="endpoint.name || t('redaction.routes.unknown')"
+                ></span
+                ><strong x-text="endpoint.count"></strong>
+              </button>
+            </template>
+          </details>
+        </div>
+      </template>
+      <div class="redaction-route-hub">
+        <svg
+          viewBox="0 0 300 100"
+          aria-hidden="true"
+          x-effect="motionPaused || animationPaused || !appliedRedaction?.enabled || !redactionStats.length ? $el.pauseAnimations() : $el.unpauseAnimations()"
+        >
+          <path class="flow-in" d="M0,50 H120"></path>
+          <path class="flow-out" d="M180,50 H300"></path>
+          <g class="flow-particles" x-show="redactionStats.length">
+            <circle r="3">
+              <animateMotion
+                path="M0,50 H120"
+                dur="3s"
+                repeatCount="indefinite"
+              ></animateMotion>
+            </circle>
+            <rect width="6" height="6" x="-3" y="-3">
+              <animateMotion
+                path="M180,50 H300"
+                dur="3s"
+                repeatCount="indefinite"
+              ></animateMotion>
+            </rect>
+          </g>
+          <rect
+            class="flow-hub"
+            x="120"
+            y="20"
+            width="60"
+            height="60"
+            rx="16"
+          ></rect>
+          <path
+            class="flow-shield"
+            d="M150 32 L165 38 V51 Q165 63 150 70 Q135 63 135 51 V38 Z M143 50 L148 55 L158 44"
+          ></path>
+        </svg>
+        <strong x-text="t('redaction.routes.proxy')"></strong>
+        <span
+          x-text="redactionStats.length + ' ' + t('redaction.routes.requests')"
+        ></span>
+      </div>
+    </div>
+    <div class="redaction-flow-foot">
+      <span x-text="t('redaction.routes.legend')"></span>
+    </div>
+  </section>
+
+  <section class="card p-4 sm:p-5 space-y-3">
+    <h3
+      class="font-semibold text-sm"
+      x-text="t('redaction.inspect.title')"
+    ></h3>
+    <p
+      class="text-xs text-[var(--apple-text-secondary)]"
+      x-text="t('redaction.inspect.warning')"
+    ></p>
+    <p
+      class="text-xs"
+      role="status"
+      x-text="t(inspection.enabled ? 'redaction.inspect.active' : 'redaction.inspect.off')"
+    ></p>
+    <p
+      class="text-xs"
+      x-show="inspection.enabled"
+      x-text="inspection.expiresAt ? t('redaction.inspect.expires') + ' ' + formatTime(inspection.expiresAt) : ''"
+    ></p>
+    <div class="flex flex-wrap gap-2">
+      <button
+        type="button"
+        class="btn btn-secondary"
+        @click="changeInspection('enable')"
+        :disabled="inspectionBusy || inspection.enabled"
+        x-text="t('redaction.inspect.enable')"
+      ></button>
+      <button
+        type="button"
+        class="btn btn-secondary"
+        @click="changeInspection('disable')"
+        :disabled="inspectionBusy"
+        x-text="t('redaction.inspect.disable')"
+      ></button>
+      <button
+        type="button"
+        class="btn btn-secondary"
+        @click="changeInspection('clear')"
+        :disabled="inspectionBusy"
+        x-text="t('redaction.inspect.clear')"
+      ></button>
+    </div>
+    <p
+      role="alert"
+      class="text-xs text-red-600"
+      x-show="detailError"
+      x-text="detailError ? t(detailError) : ''"
+    ></p>
+  </section>
+
+  <div
+    role="group"
+    :aria-label="t('nav.redaction')"
+    class="flex flex-wrap gap-2"
+  >
+    <template x-for="tabKey in ['rules', 'preview', 'overview']" :key="tabKey">
+      <button
+        type="button"
+        class="btn"
+        :class="tab === tabKey ? 'btn-primary' : 'btn-secondary'"
+        :aria-pressed="tab === tabKey"
+        @click="tab = tabKey; clearDetail()"
+        x-text="t('redaction.tab.' + tabKey)"
+      ></button>
+    </template>
+  </div>
+
+  <p
+    role="alert"
+    class="text-sm text-red-600 bg-red-50 border border-red-200 p-3 rounded-xl"
+    x-show="error"
+    x-text="error"
+  ></p>
+  <p
+    role="status"
+    class="text-sm text-[var(--apple-text-secondary)]"
+    x-show="loading"
+    x-text="t('system.redaction.loading')"
+  ></p>
+
+  <template x-if="settings">
+    <div class="space-y-6">
+      <div x-show="tab === 'overview'" class="space-y-6">
+        <p
+          class="text-xs text-[var(--apple-text-secondary)]"
+          x-text="t('redaction.liveHint')"
+        ></p>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <section class="card p-5 space-y-2">
+            <h3
+              class="text-sm text-[var(--apple-text-secondary)]"
+              x-text="t('system.redaction.requests')"
+            ></h3>
+            <p
+              class="text-2xl font-semibold"
+              x-text="redactionStats.length"
+            ></p>
+          </section>
+          <section class="card p-5 space-y-2">
+            <h3
+              class="text-sm text-[var(--apple-text-secondary)]"
+              x-text="t('system.redaction.total')"
+            ></h3>
+            <p class="text-2xl font-semibold" x-text="redactionStatsTotal"></p>
+          </section>
+          <section class="card p-5 space-y-3">
+            <h3
+              class="text-sm text-[var(--apple-text-secondary)]"
+              x-text="t('redaction.status')"
+            ></h3>
+            <p
+              class="font-semibold"
+              x-text="t(appliedRedaction.enabled ? 'redaction.enabled' : 'redaction.disabled')"
+            ></p>
+            <dl class="space-y-2 text-xs">
+              <template
+                x-for="rule in ['secrets', 'homePaths', 'wordsEnabled']"
+                :key="rule"
+              >
+                <div class="flex items-start justify-between gap-3">
+                  <dt x-text="t('system.redaction.' + rule)"></dt>
+                  <dd
+                    x-text="t(appliedRedaction.enabled && appliedRedaction[rule] ? 'redaction.enabled' : 'redaction.disabled')"
+                  ></dd>
+                </div>
+              </template>
+            </dl>
+          </section>
+        </div>
+        <section class="card p-5 space-y-3">
+          <h3 class="text-sm" x-text="t('redaction.categories')"></h3>
+          <template x-for="kind in ['SECRET', 'HOME', 'WORD']" :key="kind">
+            <div class="redaction-meter">
+              <span x-text="t('system.redaction.' + kind)"></span>
+              <div class="redaction-meter-track">
+                <i
+                  :style="'width: ' + (redactionStatsTotal ? kindTotal(kind) / redactionStatsTotal * 100 : 0) + '%'"
+                ></i>
+              </div>
+              <span x-text="kindTotal(kind)"></span>
+            </div>
+          </template>
+        </section>
+        <section class="card p-4 sm:p-5 space-y-3">
+          <div class="flex items-center justify-between gap-3">
+            <h3
+              class="font-semibold text-sm"
+              x-text="t('system.redaction.recent')"
+            ></h3>
+            <button
+              type="button"
+              class="btn btn-secondary"
+              @click="loadRedactionStats()"
+              :disabled="redactionStatsLoading"
+              x-text="t('refresh')"
+            ></button>
+          </div>
+          <p
+            class="text-xs text-[var(--apple-text-secondary)]"
+            x-text="t('system.redaction.statsHint')"
+          ></p>
+          <p
+            class="text-xs text-[var(--apple-text-secondary)]"
+            x-text="t('system.redaction.countHint')"
+          ></p>
+          <div class="flex flex-wrap items-center gap-2 text-xs">
+            <span
+              x-text="t('redaction.routes.client') + ': ' + (clientFilter === null ? t('redaction.routes.all') : clientFilter || t('redaction.routes.unknown'))"
+            ></span>
+            <span
+              x-text="t('redaction.routes.upstream') + ': ' + (upstreamFilter === null ? t('redaction.routes.all') : upstreamFilter || t('redaction.routes.unknown'))"
+            ></span>
+            <button
+              type="button"
+              class="btn btn-secondary"
+              @click="clientFilter = null; upstreamFilter = null; clearDetail()"
+              x-text="t('redaction.routes.reset')"
+            ></button>
+            <span
+              x-text="filteredRecords.length + ' / ' + redactionStats.length"
+            ></span>
+          </div>
+          <p
+            class="text-xs"
+            x-show="redactionStats.length && !filteredRecords.length"
+            x-text="t('redaction.routes.noMatches')"
+          ></p>
+          <div role="status" class="text-xs">
+            <p
+              x-show="redactionStatsLoading"
+              x-text="t('system.redaction.loading')"
+            ></p>
+            <p
+              x-show="!redactionStatsLoading && !redactionStatsError && !redactionStats.length"
+              x-text="t('system.redaction.statsEmpty')"
+            ></p>
+          </div>
+          <p
+            role="alert"
+            class="text-xs text-red-600"
+            x-show="redactionStatsError"
+            x-text="redactionStatsError ? t(redactionStatsError) : ''"
+          ></p>
+          <div x-show="redactionStats.length" class="overflow-x-auto max-h-96">
+            <table class="w-full text-left text-xs">
+              <thead>
+                <tr class="border-b border-[var(--apple-gray-5)]">
+                  <th
+                    class="p-2"
+                    scope="col"
+                    x-text="t('system.redaction.time')"
+                  ></th>
+                  <th
+                    class="p-2"
+                    scope="col"
+                    x-text="t('system.redaction.hits')"
+                  ></th>
+                  <th
+                    class="p-2"
+                    scope="col"
+                    x-text="t('system.redaction.maskingMs')"
+                  ></th>
+                  <th
+                    class="p-2"
+                    scope="col"
+                    x-text="t('system.redaction.restored')"
+                  ></th>
+                  <th
+                    class="p-2"
+                    scope="col"
+                    x-text="t('redaction.inspect.route')"
+                  ></th>
+                  <th
+                    class="p-2"
+                    scope="col"
+                    x-text="t('redaction.inspect.title')"
+                  ></th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="entry in filteredRecords" :key="entry.id">
+                  <tr
+                    class="redaction-entry border-b border-[var(--apple-gray-5)] align-top"
+                  >
+                    <td
+                      class="p-2 whitespace-nowrap"
+                      x-text="formatTime(entry.timestamp)"
+                    ></td>
+                    <td class="p-2 min-w-[240px]">
+                      <p x-text="entry.total"></p>
+                      <p
+                        class="text-[var(--apple-text-secondary)]"
+                        x-text="redactionCounts(entry.byKind, 'kind')"
+                      ></p>
+                      <p
+                        class="text-[var(--apple-text-secondary)]"
+                        x-text="redactionCounts(entry.bySource, 'source')"
+                      ></p>
+                    </td>
+                    <td
+                      class="p-2 whitespace-nowrap"
+                      x-text="entry.maskingMs.toFixed(2) + ' ms'"
+                    ></td>
+                    <td class="p-2" x-text="entry.restored"></td>
+                    <td class="p-2 min-w-[180px]">
+                      <button
+                        type="button"
+                        class="redaction-route-link"
+                        @click="filterRoute('client', entry.client)"
+                        x-text="entry.client || t('redaction.routes.unknown')"
+                      ></button>
+                      <template
+                        x-for="(upstream, index) in entry.upstreams"
+                        :key="index"
+                      >
+                        <p>
+                          <span aria-hidden="true">→ </span
+                          ><button
+                            type="button"
+                            class="redaction-route-link"
+                            @click="filterRoute('upstream', upstream.id || '')"
+                            x-text="(upstream.name || upstream.id || t('redaction.routes.unknown')) + ' · ' + upstream.protocol + ' · ' + upstream.model"
+                          ></button>
+                        </p>
+                      </template>
+                      <p
+                        x-show="!entry.upstreams.length"
+                        x-text="'→ ' + t('redaction.routes.unknown')"
+                      ></p>
+                    </td>
+                    <td class="p-2">
+                      <button
+                        type="button"
+                        class="btn btn-secondary"
+                        :disabled="!inspection.enabled || inspectionBusy || !entry.contentAvailable"
+                        @click="loadDetail(entry.id)"
+                        x-text="t('redaction.inspect.open')"
+                      ></button>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <section
+          class="card p-4 sm:p-5 space-y-3"
+          x-show="detailId !== null || detailError"
+          aria-live="polite"
+        >
+          <div class="flex flex-wrap items-center gap-2">
+            <h3
+              class="font-semibold text-sm"
+              x-text="t('redaction.inspect.title') + (detailId === null ? '' : ' #' + detailId)"
+            ></h3>
+            <button
+              type="button"
+              class="btn btn-secondary"
+              @click="clearDetail()"
+              x-text="t('redaction.inspect.close')"
+            ></button>
+            <button
+              type="button"
+              class="btn btn-secondary"
+              x-show="detail && !detailRevealed"
+              :disabled="detailLoading"
+              @click="loadDetail(detailId, true)"
+              x-text="t('redaction.inspect.reveal')"
+            ></button>
+            <button
+              type="button"
+              class="btn btn-secondary"
+              x-show="detailRevealed"
+              @click="loadDetail(detailId)"
+              x-text="t('redaction.inspect.hide')"
+            ></button>
+          </div>
+          <p
+            class="text-xs"
+            x-show="detailLoading"
+            x-text="t('system.redaction.loading')"
+          ></p>
+          <p
+            class="text-xs text-red-600"
+            role="alert"
+            x-show="detailError"
+            x-text="detailError ? t(detailError) : ''"
+          ></p>
+          <template x-if="detail">
+            <div class="space-y-4 text-xs">
+              <p
+                x-show="detail.truncated"
+                x-text="t('redaction.inspect.truncated')"
+              ></p>
+              <p x-text="t('redaction.inspect.protocolHint')"></p>
+              <section>
+                <h4
+                  class="font-medium"
+                  x-text="t('redaction.inspect.input')"
+                ></h4>
+                <p
+                  x-show="!detailRevealed"
+                  x-text="t('redaction.inspect.inputHidden')"
+                ></p>
+                <details x-show="detailRevealed">
+                  <summary x-text="t('redaction.inspect.showInput')"></summary>
+                  <pre
+                    class="redaction-body"
+                    x-text="detail.input === null ? t('redaction.inspect.unavailable') : detail.input"
+                  ></pre>
+                </details>
+              </section>
+              <p x-text="t('redaction.inspect.focusHint')"></p>
+              <button
+                type="button"
+                class="btn btn-secondary"
+                x-show="detailRevealed"
+                :aria-pressed="detailComparison"
+                @click="detailComparison = !detailComparison"
+                x-text="t('redaction.inspect.compare')"
+              ></button>
+              <p
+                x-show="detailComparison && detailRevealed"
+                x-text="t('redaction.inspect.compareHint')"
+              ></p>
+              <p
+                x-show="!detail.attempts.length"
+                x-text="t('redaction.inspect.noAttempts')"
+              ></p>
+              <template
+                x-for="(attempt, index) in detail.attempts"
+                :key="index"
+              >
+                <section class="space-y-2">
+                  <h4
+                    class="font-medium"
+                    x-text="(index + 1) + '. ' + (attempt.upstream.name || attempt.upstream.id || t('redaction.routes.unknown')) + ' · ' + attempt.upstream.protocol + ' · ' + attempt.upstream.model"
+                  ></h4>
+                  <p
+                    x-text="t(attempt.stage === 'http' ? 'redaction.inspect.http' : 'redaction.inspect.adapter')"
+                  ></p>
+                  <p
+                    x-show="attempt.truncated"
+                    x-text="t('redaction.inspect.truncated')"
+                  ></p>
+                  <template
+                    x-for="(part, partIndex) in attempt.parts"
+                    :key="partIndex"
+                  >
+                    <div>
+                      <template x-if="part.changed">
+                        <section
+                          class="redaction-fragment"
+                          x-data="{ whole: false }"
+                        >
+                          <header>
+                            <strong x-text="part.role"></strong
+                            ><code x-text="part.path"></code>
+                          </header>
+                          <div
+                            class="redaction-columns"
+                            :class="{ 'is-comparing': detailComparison && detailRevealed }"
+                          >
+                            <template
+                              x-for="original in (detailComparison && detailRevealed ? [true, false] : [false])"
+                              :key="String(original)"
+                            >
+                              <div>
+                                <h5
+                                  x-text="t(original ? 'redaction.inspect.before' : 'redaction.inspect.after')"
+                                ></h5>
+                                <pre
+                                  class="redaction-excerpt"
+                                ><template x-for="(segment, segmentIndex) in excerptSegments(part.text, whole, original)" :key="segmentIndex"><span :class="segment.kind ? 'redaction-hit redaction-hit-' + segment.kind : ''" x-text="segment.text"></span></template></pre>
+                              </div>
+                            </template>
+                          </div>
+                          <button
+                            type="button"
+                            class="redaction-route-link"
+                            x-show="part.text.length > 600"
+                            :aria-expanded="whole"
+                            @click="whole = !whole"
+                            x-text="t(whole ? 'redaction.inspect.onlyChanges' : 'redaction.inspect.showWhole')"
+                          ></button>
+                        </section>
+                      </template>
+                      <template x-if="!part.changed">
+                        <details class="redaction-unchanged">
+                          <summary
+                            x-text="t('redaction.inspect.unchanged', { count: part.leaves.length })"
+                          ></summary>
+                          <template
+                            x-for="leaf in part.leaves"
+                            :key="leaf.path"
+                          >
+                            <div>
+                              <code x-text="leaf.path"></code>
+                              <pre
+                                class="redaction-body"
+                                x-text="leaf.text"
+                              ></pre>
+                            </div>
+                          </template>
+                        </details>
+                      </template>
+                    </div>
+                  </template>
+                  <details class="redaction-unchanged">
+                    <summary x-text="t('redaction.inspect.rawBody')"></summary>
+                    <pre class="redaction-body" x-text="attempt.body"></pre>
+                  </details>
+                </section>
+              </template>
+              <section class="space-y-2">
+                <h4
+                  class="font-medium"
+                  x-text="t('redaction.inspect.mappings')"
+                ></h4>
+                <template
+                  x-for="(mapping, index) in detail.mappings"
+                  :key="index"
+                >
+                  <div class="redaction-mapping">
+                    <code x-text="mapping.placeholder"></code>
+                    <span x-text="mapping.kind + ' · ' + mapping.source"></span>
+                    <pre x-show="detailRevealed" x-text="mapping.value"></pre>
+                  </div>
+                </template>
+              </section>
+            </div>
+          </template>
+        </section>
+      </div>
+
+      <form
+        x-show="tab === 'rules'"
+        @submit.prevent="save()"
+        @input="saved = false"
+        class="space-y-6"
+      >
+        <section class="card p-0 overflow-hidden">
+          <div class="p-4 sm:p-5 flex items-start justify-between gap-4">
+            <div class="space-y-1 max-w-xl">
+              <h3
+                class="font-semibold text-sm"
+                x-text="t('system.upstreamRedaction')"
+              ></h3>
+              <p
+                id="upstream-redaction-hint"
+                class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+                x-text="t('system.upstreamRedactionHint')"
+              ></p>
+            </div>
+            <div
+              class="redaction-segment"
+              role="group"
+              :aria-label="t('system.upstreamRedaction')"
+            >
+              <template x-for="on in [false, true]" :key="String(on)">
+                <button
+                  type="button"
+                  :aria-pressed="settings.redaction.enabled === on"
+                  :disabled="saving"
+                  @click="settings.redaction.enabled = on; saved = false"
+                  x-text="t(on ? 'redaction.on' : 'redaction.off')"
+                ></button>
+              </template>
+            </div>
+          </div>
+          <div
+            class="divide-y divide-[var(--apple-gray-5)] border-t border-[var(--apple-gray-5)]"
+          >
+            <template
+              x-for="rule in ['secrets', 'homePaths', 'wordsEnabled']"
+              :key="rule"
+            >
+              <div class="p-4 sm:px-5 space-y-3">
+                <div
+                  class="flex items-start justify-between gap-4"
+                  :class="{ 'opacity-50': !settings.redaction.enabled }"
+                >
+                  <div class="space-y-1 max-w-xl">
+                    <span
+                      class="text-sm font-medium"
+                      x-text="t('system.redaction.' + rule)"
+                    ></span>
+                    <p
+                      class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+                      x-text="t('system.redaction.' + rule + 'Hint')"
+                    ></p>
+                  </div>
+                  <div
+                    class="redaction-segment"
+                    role="group"
+                    :aria-label="t('system.redaction.' + rule)"
+                  >
+                    <template x-for="on in [false, true]" :key="String(on)">
+                      <button
+                        type="button"
+                        :aria-pressed="settings.redaction[rule] === on"
+                        :disabled="saving || !settings.redaction.enabled"
+                        @click="settings.redaction[rule] = on; saved = false"
+                        x-text="t(on ? 'redaction.on' : 'redaction.off')"
+                      ></button>
+                    </template>
+                  </div>
+                </div>
+                <template x-if="rule === 'homePaths'">
+                  <label class="block space-y-2">
+                    <span
+                      class="block text-xs font-medium"
+                      x-text="t('system.redaction.homePrefixes')"
+                    ></span>
+                    <textarea
+                      rows="2"
+                      class="input w-full min-h-[70px] font-mono text-xs resize-y"
+                      style="padding: 8px 12px"
+                      x-model="redactionHomePrefixesText"
+                      :disabled="saving"
+                      spellcheck="false"
+                      :placeholder="t('system.redaction.homePrefixesPlaceholder')"
+                    ></textarea>
+                    <span
+                      class="block text-xs text-[var(--apple-text-tertiary)]"
+                      x-text="t('system.redaction.listHint')"
+                    ></span>
+                  </label>
+                </template>
+                <template x-if="rule === 'wordsEnabled'">
+                  <label class="block space-y-2">
+                    <span
+                      class="block text-xs font-medium"
+                      x-text="t('system.redaction.words')"
+                    ></span>
+                    <textarea
+                      rows="2"
+                      class="input w-full min-h-[70px] font-mono text-xs resize-y"
+                      style="padding: 8px 12px"
+                      x-model="redactionWordsText"
+                      :disabled="saving"
+                      spellcheck="false"
+                      :placeholder="t('system.redaction.wordsPlaceholder')"
+                    ></textarea>
+                    <span
+                      class="block text-xs text-[var(--apple-text-tertiary)]"
+                      x-text="t('system.redaction.listHint')"
+                    ></span>
+                  </label>
+                </template>
+              </div>
+            </template>
+          </div>
+        </section>
+        <div
+          class="redaction-save p-4 sm:p-5 flex flex-wrap items-center gap-3"
+        >
+          <button
+            type="submit"
+            class="btn btn-primary"
+            :disabled="saving || loading"
+            x-text="t('system.save')"
+          ></button>
+          <span
+            class="text-xs text-[var(--apple-text-secondary)]"
+            x-text="t('redaction.saveHint')"
+          ></span>
+          <span
+            role="status"
+            class="text-xs text-[var(--apple-green)] font-medium"
+            x-show="saved"
+            x-text="t('system.saved')"
+          ></span>
+        </div>
+      </form>
+
+      <section x-show="tab === 'preview'" class="card p-4 sm:p-5 space-y-3">
+        <h3
+          class="font-semibold text-sm"
+          x-text="t('system.redaction.preview')"
+        ></h3>
+        <p
+          class="text-xs text-[var(--apple-text-secondary)]"
+          id="redaction-preview-hint"
+          x-text="t('system.redaction.previewHint')"
+        ></p>
+        <label class="block text-xs space-y-2">
+          <span x-text="t('system.redaction.format')"></span>
+          <select class="input" x-model="previewFormat">
+            <option value="text" x-text="t('system.redaction.text')"></option>
+            <option value="json">JSON</option>
+          </select>
+        </label>
+        <label class="block text-xs space-y-2">
+          <span x-text="t('system.redaction.input')"></span>
+          <textarea
+            class="input w-full min-h-[110px] font-mono text-xs resize-y"
+            style="padding: 8px 12px"
+            rows="5"
+            x-model="previewText"
+            maxlength="65536"
+            aria-describedby="redaction-preview-hint"
+            spellcheck="false"
+            autocomplete="off"
+          ></textarea>
+        </label>
+        <div class="flex flex-wrap gap-2">
+          <button
+            type="button"
+            class="btn btn-secondary"
+            @click="runRedactionPreview()"
+            :disabled="previewLoading || !previewText || loading || saving"
+            x-text="t('system.redaction.preview')"
+          ></button>
+          <button
+            type="button"
+            class="btn btn-secondary"
+            @click="clearPreview()"
+            x-text="t('system.redaction.clear')"
+          ></button>
+          <button
+            type="button"
+            class="btn btn-secondary"
+            @click="samplePreview()"
+            x-text="t('system.redaction.sample')"
+          ></button>
+        </div>
+        <p
+          role="status"
+          class="text-xs text-amber-700"
+          x-show="!settings.redaction.enabled || previewResult?.enabled === false"
+          x-text="t('system.redaction.disabled')"
+        ></p>
+        <div aria-live="polite" class="text-xs space-y-2">
+          <p x-show="previewLoading" x-text="t('system.redaction.loading')"></p>
+          <p x-show="previewStale" x-text="t('system.redaction.stale')"></p>
+          <p
+            x-show="!previewResult && !previewLoading && !previewError && !previewStale"
+            x-text="t('system.redaction.empty')"
+          ></p>
+          <p
+            role="alert"
+            class="text-red-600"
+            x-show="previewError"
+            x-text="previewError ? t(previewError) : ''"
+          ></p>
+        </div>
+        <template x-if="previewResult">
+          <div class="space-y-2 text-xs">
+            <h4 class="font-medium" x-text="t('system.redaction.output')"></h4>
+            <pre
+              class="p-3 rounded-lg bg-[var(--apple-gray-6)] whitespace-pre-wrap break-all max-h-80 overflow-auto"
+              x-text="previewResult.output"
+            ></pre>
+            <p>
+              <span x-text="t('system.redaction.total')"></span>:
+              <span x-text="previewResult.diagnostics.total"></span> ·
+              <span x-text="t('system.redaction.maskingMs')"></span>:
+              <span
+                x-text="previewResult.diagnostics.maskingMs.toFixed(2) + ' ms'"
+              ></span>
+              · <span x-text="t('system.redaction.restored')"></span>:
+              <span x-text="previewResult.diagnostics.restored"></span>
+            </p>
+            <p
+              x-text="redactionCounts(previewResult.diagnostics.byKind, 'kind')"
+            ></p>
+            <p
+              x-text="redactionCounts(previewResult.diagnostics.bySource, 'source')"
+            ></p>
+          </div>
+        </template>
+      </section>
+    </div>
+  </template>
+</div>
