@@ -11,12 +11,18 @@
  * 发往上游的请求体(经 strip/replay 改写后的形态)只在上游返回失败时落盘，
  * 便于定位第三方中转的 400(如 atria 的 `upstream_error`)到底是历史回放
  * 的问题还是本轮输入的问题。控制台不打印 body 全文。
+ *
+ * 注意:落盘是持久保留，所以默认关闭；但最近若干次**失败**上游 wire 总会
+ * 留一份有界内存副本(见 `getFailureWire`)，日志详情按 requestId 点击查看，
+ * 不依赖上面的开关。
  */
 
 import type { Context } from "hono"
 
+import { createReadStream } from "node:fs"
 import { appendFile, mkdir, readdir, stat } from "node:fs/promises"
 import { join, resolve } from "node:path"
+import { createInterface } from "node:readline"
 
 import { shouldDumpRequest } from "~/lib/llm-request"
 import {
@@ -41,7 +47,13 @@ const DEFAULT_MAX_BODY_BYTES = 8 * 1024 * 1024
 let appendQueue = Promise.resolve()
 
 export function isRequestDumpEnabled(): boolean {
-  return getSystemSettings().requestDump
+  // An explicit DUMP_REQUESTS is an operator decision and must survive a saved
+  // WebUI config (which always stores requestDump, often as false). Previously
+  // saving any setting silently turned the env-enabled dump off.
+  const fromEnv = ["1", "true", "yes"].includes(
+    process.env["DUMP_REQUESTS"]?.trim().toLowerCase() ?? "",
+  )
+  return fromEnv || getSystemSettings().requestDump
 }
 
 function resolveMaxBodyBytes(): number {
@@ -309,6 +321,8 @@ export function buildDumpFileName(dateKey: string, segment: number): string {
 }
 
 interface UpstreamResponsesWireDump {
+  /** Request that produced this failure; lets the log detail fetch its bodies. */
+  requestId?: string
   connectionId: string
   model: string
   stripMode: string
@@ -321,15 +335,75 @@ interface UpstreamResponsesWireDump {
   upstreamErrorBody: string
 }
 
+export interface FailureWire {
+  requestId: string
+  timestamp: number
+  connectionId: string
+  model: string
+  stripMode: string
+  wire: string
+  upstreamStatus: number
+  upstreamBody: string
+  upstreamBodyBytes: number
+  upstreamBodyTruncated?: boolean
+  upstreamErrorBody: string
+  upstreamErrorBodyBytes: number
+  upstreamErrorBodyTruncated?: boolean
+}
+
 /**
- * 上游失败时的 wire 落盘:只在 `DUMP_REQUESTS=1` 时写入,与 incoming dump
- * 同目录(`request-dumps-*.jsonl`,`kind: "upstream-responses"`)。
- * 只在失败路径调用,成功请求不落盘。失败只告警,不影响错误本身的抛出。
+ * Bounded in-memory copy of the most recent upstream failures. The disk dump is
+ * opt-in (`DUMP_REQUESTS=1`) because it retains prompts indefinitely; keeping
+ * the last few failures in memory costs a few MB and makes "why did the
+ * upstream answer 400?" answerable from the log detail without turning the
+ * permanent archive on. Oldest entries are evicted first.
+ */
+const MAX_FAILURE_WIRES = 50
+const MEMORY_FIELD_MAX_BYTES = 64 * 1024
+const failureWires = new Map<string, FailureWire>()
+
+function rememberFailureWire(requestId: string, entry: FailureWire): void {
+  if (failureWires.size >= MAX_FAILURE_WIRES) {
+    const oldest = failureWires.keys().next().value
+    if (oldest !== undefined) failureWires.delete(oldest)
+  }
+  failureWires.set(requestId, entry)
+}
+
+/** 按字节上限截断内存副本,并保留原始字节数/截断标记。 */
+function capForMemory(value: string, bodyBytes: number) {
+  const oversized =
+    bodyBytes > MEMORY_FIELD_MAX_BYTES
+    || Buffer.byteLength(value) > MEMORY_FIELD_MAX_BYTES
+  return {
+    text:
+      oversized ?
+        Buffer.from(value)
+          .subarray(0, MEMORY_FIELD_MAX_BYTES)
+          .toString("utf8")
+          .replace(/\uFFFD$/, "")
+      : value,
+    bytes: bodyBytes,
+    truncated: oversized,
+  }
+}
+
+export function getFailureWire(requestId: string): FailureWire | undefined {
+  return failureWires.get(requestId)
+}
+
+export function clearFailureWiresForTest(): void {
+  failureWires.clear()
+}
+
+/**
+ * 上游失败时的 wire 落盘:磁盘写入仍只在 `DUMP_REQUESTS=1` 时发生,但最近
+ * 若干次失败总会留在内存里,供日志详情按 requestId 取回(前端点击才取)。
+ * 只在失败路径调用,成功请求不落盘也不占内存。
  */
 export async function dumpUpstreamResponsesWire(
   dump: UpstreamResponsesWireDump,
 ): Promise<void> {
-  if (!isRequestDumpEnabled()) return
   try {
     const maxBodyBytes = resolveMaxBodyBytes()
     const timestamp = Date.now()
@@ -337,20 +411,48 @@ export async function dumpUpstreamResponsesWire(
       dump.upstreamBody,
       dump.upstreamErrorBody,
     ])
-    const entry = {
+    const base = {
       timestamp,
-      kind: "upstream-responses",
+      requestId: dump.requestId ?? "",
       connectionId: dump.connectionId,
       model: dump.model,
       stripMode: dump.stripMode,
       wire: sanitizer.text(dump.wire),
+      upstreamStatus: dump.upstreamStatus,
+    }
+
+    if (dump.requestId) {
+      const body = capForMemory(
+        sanitizer.json(dump.upstreamBody),
+        Buffer.byteLength(dump.upstreamBody),
+      )
+      const error = capForMemory(
+        sanitizer.error(dump.upstreamErrorBody),
+        Buffer.byteLength(dump.upstreamErrorBody),
+      )
+      rememberFailureWire(dump.requestId, {
+        ...base,
+        requestId: dump.requestId,
+        upstreamBody: body.text,
+        upstreamBodyBytes: body.bytes,
+        ...(body.truncated ? { upstreamBodyTruncated: true } : {}),
+        upstreamErrorBody: error.text,
+        upstreamErrorBodyBytes: error.bytes,
+        ...(error.truncated ? { upstreamErrorBodyTruncated: true } : {}),
+      })
+    }
+
+    if (!isRequestDumpEnabled()) return
+
+    const entry = {
+      ...base,
+      kind: "upstream-responses",
       ...capSizedField(
         "upstreamBody",
         sanitizer.json(dump.upstreamBody),
         maxBodyBytes,
         Buffer.byteLength(dump.upstreamBody),
       ),
-      upstreamStatus: dump.upstreamStatus,
       ...capSizedField(
         "upstreamErrorBody",
         sanitizer.error(dump.upstreamErrorBody),
@@ -384,4 +486,144 @@ function capSizedField(
     [`${name}Bytes`]: bodyBytes,
     [`${name}Truncated`]: true,
   }
+}
+
+export interface DumpedIncomingRequest {
+  timestamp: number
+  requestId: string
+  method?: string
+  path?: string
+  headers?: Record<string, string>
+  body: string
+  bodyBytes?: number
+  truncated?: boolean
+}
+
+export interface DumpedUpstreamRequest {
+  timestamp: number
+  connectionId?: string
+  model?: string
+  stripMode?: string
+  upstreamStatus?: number
+  body: string
+  bodyBytes?: number
+  truncated?: boolean
+  errorBody?: string
+  errorBodyBytes?: number
+  errorBodyTruncated?: boolean
+}
+
+export interface DumpedRequestBodies {
+  incoming?: DumpedIncomingRequest
+  upstream?: DumpedUpstreamRequest
+}
+
+const MAX_DUMP_FILES_PER_LOOKUP = 8
+
+/** Dump 文件按日期与分片倒序(最新在前),用于按 requestId 回溯。 */
+async function listDumpFiles(dir: string): Promise<Array<string>> {
+  try {
+    const files = await readdir(dir)
+    return files
+      .flatMap((name) => {
+        const match = DUMP_FILE_PATTERN.exec(name)
+        return match ?
+            [{ name, dateKey: match[1], segment: Number(match[2] ?? 0) }]
+          : []
+      })
+      .sort(
+        (a, b) => b.dateKey.localeCompare(a.dateKey) || b.segment - a.segment,
+      )
+      .map(({ name }) => join(dir, name))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Read the request/response bodies an operator asked for, newest dump first.
+ *
+ * Only the opt-in disk dump is searched here; the in-memory failure wire is
+ * consulted by the API route before falling back to this. Returns as soon as
+ * both shapes are found, and never throws: a missing/corrupt dump is a normal
+ * "not available" answer.
+ */
+export async function readDumpedRequestBodies(
+  requestId: string,
+): Promise<DumpedRequestBodies | undefined> {
+  const config = readLogRotationConfig()
+  const dir = resolveDumpDir(config.logDir)
+  const files = (await listDumpFiles(dir)).slice(0, MAX_DUMP_FILES_PER_LOOKUP)
+  const found: DumpedRequestBodies = {}
+
+  for (const file of files) {
+    let stream: ReturnType<typeof createReadStream> | undefined
+    try {
+      stream = createReadStream(file, { encoding: "utf8" })
+      const lines = createInterface({ input: stream, crlfDelay: Infinity })
+      for await (const line of lines) {
+        if (!line.includes(requestId)) continue
+        let parsed: Record<string, unknown>
+        try {
+          parsed = JSON.parse(line) as Record<string, unknown>
+        } catch {
+          continue
+        }
+        if (parsed["requestId"] !== requestId) continue
+
+        if (parsed["kind"] === "upstream-responses") {
+          found.upstream ??= {
+            timestamp: Number(parsed["timestamp"] ?? 0),
+            connectionId: asString(parsed["connectionId"]),
+            model: asString(parsed["model"]),
+            stripMode: asString(parsed["stripMode"]),
+            upstreamStatus:
+              typeof parsed["upstreamStatus"] === "number" ?
+                parsed["upstreamStatus"]
+              : undefined,
+            body: asString(parsed["upstreamBody"]) ?? "",
+            bodyBytes: asNumber(parsed["upstreamBodyBytes"]),
+            truncated: parsed["upstreamBodyTruncated"] === true,
+            errorBody: asString(parsed["upstreamErrorBody"]),
+            errorBodyBytes: asNumber(parsed["upstreamErrorBodyBytes"]),
+            errorBodyTruncated: parsed["upstreamErrorBodyTruncated"] === true,
+          }
+        } else if (typeof parsed["body"] === "string") {
+          found.incoming ??= {
+            timestamp: Number(parsed["timestamp"] ?? 0),
+            requestId,
+            method: asString(parsed["method"]),
+            path: asString(parsed["path"]),
+            headers:
+              parsed["headers"] && typeof parsed["headers"] === "object" ?
+                (parsed["headers"] as Record<string, string>)
+              : undefined,
+            body: parsed["body"],
+            bodyBytes: asNumber(parsed["bodyBytes"]),
+            truncated: parsed["truncated"] === true,
+          }
+        }
+
+        if (found.incoming && found.upstream) {
+          lines.close()
+          return found
+        }
+      }
+      lines.close()
+    } catch {
+      // A file may be rotating; keep looking.
+    } finally {
+      stream?.destroy()
+    }
+  }
+
+  return found.incoming || found.upstream ? found : undefined
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined
+}
+
+function asNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined
 }

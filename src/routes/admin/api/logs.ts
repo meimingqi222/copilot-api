@@ -15,6 +15,11 @@ import {
   findPersistedRequestLog,
   iteratePersistedRequestLogs,
 } from "~/lib/request-log-persist"
+import {
+  getFailureWire,
+  isRequestDumpEnabled,
+  readDumpedRequestBodies,
+} from "~/lib/request-dump"
 
 export const logApiRoutes = new Hono()
 
@@ -165,6 +170,70 @@ logApiRoutes.get("/export", (c) => {
       },
     }),
   )
+})
+
+logApiRoutes.get("/:requestId/bodies", async (c) => {
+  const requestId = c.req.param("requestId")
+  const entry =
+    logStore.getById(requestId) ?? (await findPersistedRequestLog(requestId))
+  const dumped = await readDumpedRequestBodies(requestId)
+  const wire = getFailureWire(requestId)
+
+  // Disk archive (opt-in) has the larger per-field cap; the in-memory failure
+  // copy is always present for recent failures and wins only when no file has
+  // the record.
+  const upstream =
+    dumped?.upstream
+    ?? (wire ?
+      {
+        timestamp: wire.timestamp,
+        connectionId: wire.connectionId,
+        model: wire.model,
+        stripMode: wire.stripMode,
+        upstreamStatus: wire.upstreamStatus,
+        body: wire.upstreamBody,
+        bodyBytes: wire.upstreamBodyBytes,
+        truncated: wire.upstreamBodyTruncated,
+        errorBody: wire.upstreamErrorBody,
+        errorBodyBytes: wire.upstreamErrorBodyBytes,
+        errorBodyTruncated: wire.upstreamErrorBodyTruncated,
+      }
+    : undefined)
+
+  const incoming = dumped?.incoming
+  const available = Boolean(incoming || upstream)
+  if (!entry && !available) return c.json({ error: "Log entry not found" }, 404)
+
+  return c.json({
+    requestId,
+    available,
+    /** What the client sent (only recorded when DUMP_REQUESTS is on). */
+    request: incoming ?? null,
+    /** What this proxy sent upstream, after translation/strip. */
+    upstreamRequest:
+      upstream ?
+        {
+          connectionId: upstream.connectionId,
+          model: upstream.model,
+          stripMode: upstream.stripMode,
+          body: upstream.body,
+          bytes: upstream.bodyBytes,
+          truncated: upstream.truncated,
+        }
+      : null,
+    /** The upstream's error payload (the reason a 400 is being debugged). */
+    response:
+      upstream ?
+        {
+          status: upstream.upstreamStatus,
+          body: upstream.errorBody ?? "",
+          bytes: upstream.errorBodyBytes,
+          truncated: upstream.errorBodyTruncated,
+        }
+      : null,
+    /** Whether older requests can still be recovered from disk. */
+    dumpEnabled: isRequestDumpEnabled(),
+  })
 })
 
 logApiRoutes.get("/:requestId", async (c) => {

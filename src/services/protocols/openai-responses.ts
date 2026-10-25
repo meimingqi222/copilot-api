@@ -27,15 +27,13 @@ import type {
 } from "~/services/protocols/responses/types"
 
 import { logger } from "~/lib/logger"
+import { currentLogContext } from "~/lib/log-context"
 import {
   type ApiCredential,
   type ModelMapping,
   type ProviderConnection,
 } from "~/lib/provider-connections"
-import {
-  dumpUpstreamResponsesWire,
-  isRequestDumpEnabled,
-} from "~/lib/request-dump"
+import { dumpUpstreamResponsesWire } from "~/lib/request-dump"
 import {
   buildBaseHeaders,
   connectionFetchInit,
@@ -254,18 +252,18 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
       logger.warn(
         `[openai-responses-compatible] upstream ${response.status} for model "${target.upstreamModelId}" on connection "${connection.id}" (${stripMode}): ${wire}`,
       )
-      // 开关关闭时跳过序列化与 body 读取,失败路径零开销(只保留上面的形状 warn)。
-      if (isRequestDumpEnabled()) {
-        await dumpUpstreamResponsesWire({
-          connectionId: connection.id,
-          model: target.upstreamModelId,
-          stripMode,
-          wire,
-          upstreamBody: safeStringify(upstreamPayload),
-          upstreamStatus: response.status,
-          upstreamErrorBody: await readUpstreamErrorBody(response),
-        })
-      }
+      // 完整请求体默认只留最近几十次失败(内存,按 requestId 取),开启
+      // DUMP_REQUESTS=1 时另写 request-dumps-*.jsonl;成功请求两者都不产生。
+      await dumpUpstreamResponsesWire({
+        requestId: currentLogContext()?.req,
+        connectionId: connection.id,
+        model: target.upstreamModelId,
+        stripMode,
+        wire,
+        upstreamBody: safeStringify(upstreamPayload),
+        upstreamStatus: response.status,
+        upstreamErrorBody: await readUpstreamErrorBody(response),
+      })
       await handleUpstreamFailure(
         response,
         credential,

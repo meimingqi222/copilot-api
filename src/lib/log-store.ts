@@ -242,12 +242,20 @@ class LogStore {
     entries: Array<LogEntry>
     filteredTotal: number
   } {
-    let results = [...this.buffer].reverse()
-    results = results.filter((entry) => matchesLogEntry(entry, opts))
-    const filteredTotal = results.length
     const offset = opts.offset ?? 0
     const limit = Math.min(opts.limit ?? 100, 500)
-    return { entries: results.slice(offset, offset + limit), filteredTotal }
+    const end = offset + limit
+    // Walk newest-first without copying the whole buffer: a 5000-entry copy on
+    // every keystroke was the other half of the search cost.
+    const entries: Array<LogEntry> = []
+    let filteredTotal = 0
+    for (let i = this.buffer.length - 1; i >= 0; i -= 1) {
+      const entry = this.buffer[i]
+      if (!matchesLogEntry(entry, opts)) continue
+      if (filteredTotal >= offset && filteredTotal < end) entries.push(entry)
+      filteredTotal += 1
+    }
+    return { entries, filteredTotal }
   }
 
   count(): number {
@@ -335,10 +343,92 @@ export function matchesLogEntry(
     return false
   return (
     !options.search
-    || JSON.stringify(entry)
-      .toLowerCase()
-      .includes(options.search.toLowerCase())
+    || searchableLogText(entry).includes(options.search.toLowerCase())
   )
+}
+
+/**
+ * Fixed set of short fields a log search may match. The previous implementation
+ * ran `JSON.stringify(entry)` for every record, which serialized the whole
+ * `attempts` / `candidates` arrays (tens of MB of temporary strings) on the
+ * proxy's event loop for a single query. Search is a substring match over the
+ * text an operator would actually type.
+ */
+const SEARCHABLE_FIELDS = [
+  "message",
+  "path",
+  "method",
+  "endpoint",
+  "apiKind",
+  "kind",
+  "stage",
+  "outcome",
+  "userId",
+  "username",
+  "accountId",
+  "model",
+  "modelRequested",
+  "modelUpstream",
+  "modelResponse",
+  "provider",
+  "protocol",
+  "connectionId",
+  "connectionName",
+  "credentialId",
+  "credentialLabel",
+  "requestId",
+  "parentRequestId",
+  "clientIp",
+  "userAgent",
+  "error",
+  "errorSnippet",
+  "errorType",
+  "finishReason",
+  "initiator",
+  "routingGroupName",
+  "upstreamBaseUrl",
+] as const satisfies ReadonlyArray<keyof LogEntry>
+
+const searchTextCache = new WeakMap<LogEntry, string>()
+
+function searchableLogText(entry: LogEntry): string {
+  const cached = searchTextCache.get(entry)
+  if (cached !== undefined) return cached
+
+  const parts: Array<string> = []
+  for (const field of SEARCHABLE_FIELDS) {
+    const value = entry[field]
+    if (typeof value === "string" && value) parts.push(value)
+  }
+  if (entry.diagnosticError) {
+    parts.push(entry.diagnosticError.kind, entry.diagnosticError.message)
+  }
+  for (const attempt of entry.attempts ?? []) {
+    parts.push(
+      attempt.connectionId,
+      attempt.endpoint,
+      attempt.protocol,
+      attempt.provider ?? "",
+      attempt.errorCode ?? "",
+      attempt.errorSnippet ?? "",
+      attempt.restReason ?? "",
+    )
+    if (attempt.connectionName) parts.push(attempt.connectionName)
+  }
+  for (const candidate of entry.candidates ?? []) {
+    parts.push(
+      candidate.connectionId,
+      candidate.status,
+      candidate.model ?? "",
+      candidate.why ?? "",
+      candidate.member ?? "",
+    )
+    if (candidate.connectionName) parts.push(candidate.connectionName)
+  }
+
+  const text = parts.join("\n").toLowerCase()
+  searchTextCache.set(entry, text)
+  return text
 }
 
 export const logStore = new LogStore()

@@ -35,7 +35,10 @@ export function readLogRotationConfig(): LogRotationConfig {
   return {
     logDir: process.env.LOG_DIR ?? PATHS.LOG_DIR,
     dumpDir: process.env.DUMP_REQUESTS_DIR?.trim() || undefined,
-    maxTotalBytes: settings.logMaxTotalBytes,
+    maxTotalBytes: positiveBytes(
+      process.env.LOG_MAX_TOTAL_BYTES,
+      settings.logMaxTotalBytes,
+    ),
     requestRetentionDays:
       getSystemConfig().source === "webui" ?
         settings.logRetentionDays
