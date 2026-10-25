@@ -67,8 +67,10 @@ export function publicAccountFromConnection(conn: ProviderConnection) {
     availableModels,
     enabled: conn.enabled,
     priority: conn.priority,
-    isExhausted:
-      availability.reason === "cooldown" || availability.reason === "quota",
+    // Cooldown and quota are separate states: a cooldown lifts by itself and
+    // must not be presented as a terminal "quota exhausted" account.
+    isExhausted: availability.reason === "quota",
+    isCoolingDown: availability.reason === "cooldown",
     exhaustedAt,
     availabilityReason: availability.reason,
     retryAfterSeconds: availability.retryAfterSeconds || null,

@@ -343,13 +343,20 @@ describe("Admin Dashboard API", () => {
         alerts: {
           connectionId: string
           type: string
+          title: string
           message: string
+          titleKey: string
+          messageKey: string
           cooldownRemainingMs?: number
         }[]
       }
       const alert = data.alerts.find((item) => item.connectionId === conn.id)!
       expect(alert.type).toBe("exhausted")
-      expect(alert.message).toContain("免费模型")
+      // The API ships English text plus i18n keys; the UI localizes it, so an
+      // English reader never sees the server's Chinese template.
+      expect(alert.message).toContain("free models")
+      expect(alert.messageKey).toBe("dashboard.alert.exhaustedCredit")
+      expect(alert.titleKey).toBe("dashboard.alert.exhaustedTitle")
       expect(alert.cooldownRemainingMs).toBeUndefined()
 
       // Credit exhaustion does not cancel a genuine, simultaneous rate limit.
@@ -417,6 +424,8 @@ describe("Admin Dashboard API", () => {
     expect(alert.targetView).toBe("connections")
     expect(alert.isAccountManaged).toBe(false)
     expect(alert.message).toContain("Rate limited by upstream")
+    expect(alert.messageKey).toBe("dashboard.alert.cooldownReason")
+    expect(alert.titleKey).toBe("dashboard.alert.cooldownTitle")
 
     // Test actionable auth_error on account-managed connection
     const authConn: ProviderConnection = {

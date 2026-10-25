@@ -65,8 +65,8 @@ quotaApiRoutes.get("/", async (c) => {
       enabled: conn.enabled,
       priority: conn.priority,
       isActive: conn.id === activeAccountId,
-      isExhausted:
-        availability.reason === "cooldown" || availability.reason === "quota",
+      isExhausted: availability.reason === "quota",
+      isCoolingDown: availability.reason === "cooldown",
       // 使用 connection 原生配额读取器
       quotaState: getConnectionQuotaState(conn) ?? "unknown",
       quotaInfo: enrichQuotaInfoForResponse(

@@ -114,8 +114,16 @@ interface DashboardAlert {
   provider: string
   isAccountManaged: boolean
   targetView: "accounts" | "connections" | "quotas"
+  /** English fallback text for API consumers that do not speak the UI's i18n. */
   title: string
   message: string
+  /**
+   * The admin UI renders the alert in the reader's language from these keys;
+   * `title`/`message` stay as English fallbacks so the JSON stays usable.
+   */
+  titleKey: string
+  messageKey: string
+  messageParams?: Record<string, string | number>
   cooldownRemainingMs?: number
 }
 
@@ -127,6 +135,8 @@ interface DashboardFleetItem {
   enabled: boolean
   status: "healthy" | "cooldown" | "error" | "exhausted" | "disabled"
   statusMessage?: string
+  statusKey?: string
+  statusParams?: Record<string, string | number>
   cooldownRemainingMs?: number
   modelsCount: number
   todayRequests: number
@@ -176,6 +186,8 @@ function collectFleetAndAlerts(
 
     let status: DashboardFleetItem["status"] = "healthy"
     let statusMessage: string | undefined
+    let statusKey: string | undefined
+    let statusParams: Record<string, string | number> | undefined
     let cooldownRemainingMs: number | undefined
 
     if (!conn.enabled) {
@@ -187,8 +199,11 @@ function collectFleetAndAlerts(
       const seconds = Math.max(1, Math.ceil(cooldownRemainingMs / 1000))
       statusMessage =
         reason ?
-          `${reason} (冷却剩余 ${seconds}s)`
-        : `限流冷却中 (剩余 ${seconds}s)`
+          `${reason} (cooldown ${seconds}s left)`
+        : `Rate limited, cooling down (${seconds}s left)`
+      statusKey =
+        reason ? "dashboard.fleet.cooldownReason" : "dashboard.fleet.cooldown"
+      statusParams = { seconds, reason: reason ?? "" }
       cooldownCount += 1
       alerts.push({
         id: `cooldown-${conn.id}`,
@@ -200,8 +215,14 @@ function collectFleetAndAlerts(
         provider,
         isAccountManaged,
         targetView: isAccountManaged ? "accounts" : "connections",
-        title: `${conn.name} 限流冷却中`,
+        title: `${conn.name} is cooling down`,
+        titleKey: "dashboard.alert.cooldownTitle",
         message: statusMessage,
+        messageKey:
+          reason ?
+            "dashboard.alert.cooldownReason"
+          : "dashboard.alert.cooldown",
+        messageParams: { name: conn.name, seconds, reason: reason ?? "" },
         cooldownRemainingMs,
       })
     } else if (
@@ -210,7 +231,9 @@ function collectFleetAndAlerts(
       || cred?.status === "auth_error"
     ) {
       status = "error"
-      statusMessage = authError || "鉴权失败 (401/403)"
+      statusMessage = authError || "Authentication failed (401/403)"
+      statusKey = "dashboard.fleet.authFailed"
+      statusParams = { detail: authError || "401/403" }
       errorCount += 1
       alerts.push({
         id: `auth-${conn.id}`,
@@ -222,13 +245,25 @@ function collectFleetAndAlerts(
         provider,
         isAccountManaged,
         targetView: isAccountManaged ? "accounts" : "connections",
-        title: `${conn.name} 鉴权失败`,
+        title: `${conn.name} authentication failed`,
+        titleKey: "dashboard.alert.authTitle",
         message: statusMessage,
+        messageKey: "dashboard.alert.authDetail",
+        messageParams: {
+          name: conn.name,
+          detail: authError || "401/403",
+        },
       })
     } else if (exhaustedAt || cred?.status === "quota_exhausted") {
       status = "exhausted"
       statusMessage =
-        creditExhausted ? "积分已耗尽；免费模型不受积分限制" : "配额已耗尽"
+        creditExhausted ?
+          "Credits exhausted; free models are unaffected"
+        : "Quota exhausted"
+      statusKey =
+        creditExhausted ?
+          "dashboard.fleet.creditExhausted"
+        : "dashboard.fleet.quotaExhausted"
       errorCount += 1
       alerts.push({
         id: `exhausted-${conn.id}`,
@@ -240,8 +275,14 @@ function collectFleetAndAlerts(
         provider,
         isAccountManaged,
         targetView: "quotas",
-        title: `${conn.name} 配额耗尽`,
+        title: `${conn.name} quota exhausted`,
+        titleKey: "dashboard.alert.exhaustedTitle",
         message: statusMessage,
+        messageKey:
+          creditExhausted ?
+            "dashboard.alert.exhaustedCredit"
+          : "dashboard.alert.exhaustedMessage",
+        messageParams: { name: conn.name },
       })
     } else {
       healthyCount += 1
@@ -255,6 +296,8 @@ function collectFleetAndAlerts(
       enabled: conn.enabled,
       status,
       statusMessage,
+      statusKey,
+      statusParams,
       cooldownRemainingMs,
       modelsCount: conn.models?.length ?? 0,
       todayRequests: accountStats?.requests ?? 0,

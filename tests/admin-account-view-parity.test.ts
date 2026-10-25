@@ -16,7 +16,11 @@ import {
   listAccountManagedConnections,
   setConnectionCredentialExtra,
 } from "~/lib/provider-connections"
-import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
+import {
+  clearAccountRateLimitState,
+  reportUpstreamRateLimitMs,
+  resetAdaptiveRateLimiterForTest,
+} from "~/lib/rate-limit"
 import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
 import { initializeProviderRegistry } from "~/services/providers"
@@ -249,6 +253,27 @@ describe("admin account view parity (Phase 4 G1 freeze)", () => {
     expect(typeof account.subtitle).toBe("string")
     expect(account.providerFeatures).toBeDefined()
     expect(account.quotaInfo).toBe(null)
+  })
+
+  test("a cooldown is reported as a cooldown, not as quota exhaustion", async () => {
+    setTestAccounts([copilotAccount()])
+    initializeProviderRegistry()
+    await reportUpstreamRateLimitMs("cp-parity-1", 30_000)
+    try {
+      const res = await adminJson("http://localhost/admin/api/accounts")
+      expect(res.status).toBe(200)
+      const body = (await res.json()) as Record<string, unknown>
+      const account = (body.accounts as Array<Record<string, unknown>>)[0]
+
+      expect(account.availabilityReason).toBe("cooldown")
+      // A cooldown lifts by itself; presenting it as terminal exhaustion made
+      // the account card red until someone manually intervened.
+      expect(account.isExhausted).toBe(false)
+      expect(account.isCoolingDown).toBe(true)
+      expect(account.retryAfterSeconds).toBeGreaterThan(0)
+    } finally {
+      clearAccountRateLimitState("cp-parity-1")
+    }
   })
 
   test("Claude transport selection is returned after an account update", async () => {
