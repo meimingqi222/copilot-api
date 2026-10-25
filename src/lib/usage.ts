@@ -3,6 +3,7 @@ import type { Context } from "hono"
 import type { RequestAdmission } from "~/lib/request-admission"
 
 import { resolveConnectionModelPricing } from "~/lib/connection-pricing"
+import { setLogConnection } from "~/lib/log-context"
 import { logger } from "~/lib/logger"
 import { resolveModelAlias } from "~/lib/model-aliases"
 import { calculateModelCost } from "~/lib/models-dev"
@@ -78,6 +79,7 @@ export function applyUsageIdentity(c: Context, identity: UsageIdentity): void {
   c.set("provider", identity.provider)
   c.set("connectionId", identity.connectionId)
   c.set("credentialId", identity.credentialId)
+  setLogConnection(identity.connectionId)
 }
 
 /** Internal search and failed attempts add account consumption, not another

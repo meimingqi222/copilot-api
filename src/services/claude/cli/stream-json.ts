@@ -15,6 +15,7 @@
  */
 
 import { iterateLines } from "~/lib/stream-lines"
+import type { ClaudeRateLimitInfo } from "~/services/claude/limit-headers"
 import type { AnthropicWebSearchToolResultBlock } from "~/services/protocols/anthropic/types"
 
 /** CLI 报的 usage，字段名与 Anthropic 一致。 */
@@ -65,6 +66,8 @@ interface ClaudeStreamJsonLine {
   session_id?: string
   event?: ClaudeStreamJsonEvent
   usage?: ClaudeCliUsage
+  /** `rate_limit_event`：这一轮之后订阅账号的额度。 */
+  rate_limit_info?: ClaudeRateLimitInfo
 }
 
 /** 解析一行；空行或非 JSON 返回 undefined（CLI 会往 stdout 混日志）。 */

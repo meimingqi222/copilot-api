@@ -27,7 +27,9 @@ import { accountApiRoutes, accountFlowApiRoutes } from "./api/accounts"
 import { balanceApiRoutes } from "./api/balance"
 import { dashboardApiRoutes } from "./api/dashboard"
 import { guardApiRoutes } from "./api/guard"
+import { diagnosticsApiRoutes } from "./api/diagnostics"
 import { logApiRoutes } from "./api/logs"
+import { systemLogApiRoutes } from "./api/system-logs"
 import { modelAliasApiRoutes } from "./api/model-aliases"
 import { oauthApiRoutes } from "./api/oauth"
 import { planQuotaApiRoutes } from "./api/plan-quota"
@@ -121,6 +123,8 @@ adminRoutes.route("/api/account-flows", accountFlowApiRoutes)
 adminRoutes.route("/api/providers", providerApiRoutes)
 adminRoutes.route("/api/provider-connections", providerConnectionApiRoutes)
 adminRoutes.route("/api/logs", logApiRoutes)
+adminRoutes.route("/api/system-logs", systemLogApiRoutes)
+adminRoutes.route("/api/diagnostics", diagnosticsApiRoutes)
 adminRoutes.route("/api/model-aliases", modelAliasApiRoutes)
 adminRoutes.route("/api/quota", quotaApiRoutes)
 adminRoutes.route("/api/zcode", zcodeApiRoutes)

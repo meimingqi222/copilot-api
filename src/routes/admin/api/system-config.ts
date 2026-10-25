@@ -11,9 +11,12 @@ import {
   getRedactionInspection,
   getRedactionInspectionState,
   setRedactionInspection,
+  subscribeRedactionDiagnostics,
 } from "~/lib/redaction/diagnostics"
+import { summarizeRedactionHistory } from "~/lib/redaction/history"
 import { redactionConfigSchema } from "~/lib/redaction/rules"
 import { state } from "~/lib/state"
+import { handleSseStream, writeSseEvent } from "~/lib/sse"
 import { getAccountWarmupModels } from "~/lib/quota/warmup"
 import { publicRoutingGroupModels } from "~/lib/routing-groups/catalog"
 import { refreshModelsForAllAccounts } from "~/lib/utils"
@@ -50,6 +53,51 @@ systemConfigApiRoutes.get("/redaction-stats", (c) => {
   return c.json(getRedactionDiagnostics())
 })
 
+// Invalidation only: request bodies and originals never enter this feed.
+systemConfigApiRoutes.get("/redaction-events", (c) => {
+  return handleSseStream(c, async (stream, signal) => {
+    await new Promise<void>((resolve) => {
+      let pending = false
+      let dirty = false
+      let closed = false
+      const stop = () => {
+        closed = true
+        unsubscribe()
+        signal.removeEventListener("abort", stop)
+        resolve()
+      }
+      const flush = async () => {
+        dirty = true
+        if (pending || closed) return
+        pending = true
+        try {
+          while (dirty && !closed) {
+            dirty = false
+            await writeSseEvent(stream, "{}", "change")
+          }
+        } catch {
+          stop()
+        } finally {
+          pending = false
+        }
+      }
+      const unsubscribe = subscribeRedactionDiagnostics(() => {
+        void flush()
+      })
+      if (signal.aborted) stop()
+      else {
+        signal.addEventListener("abort", stop, { once: true })
+        void flush()
+      }
+    })
+  })
+})
+
+systemConfigApiRoutes.get("/redaction-history", async (c) => {
+  c.header("Cache-Control", "no-store")
+  return c.json(await summarizeRedactionHistory(Number(c.req.query("days"))))
+})
+
 systemConfigApiRoutes.post("/redaction-inspection", async (c) => {
   c.header("Cache-Control", "no-store")
   let input: unknown
@@ -58,10 +106,16 @@ systemConfigApiRoutes.post("/redaction-inspection", async (c) => {
   } catch {
     return c.json({ error: "Invalid inspection settings." }, 400)
   }
-  const parsed = z.object({ enabled: z.boolean() }).strict().safeParse(input)
+  const parsed = z
+    .object({
+      enabled: z.boolean(),
+      mode: z.enum(["continuous", "temporary"]).optional(),
+    })
+    .strict()
+    .safeParse(input)
   if (!parsed.success)
     return c.json({ error: "Invalid inspection settings." }, 400)
-  return c.json(setRedactionInspection(parsed.data.enabled))
+  return c.json(setRedactionInspection(parsed.data.enabled, parsed.data.mode))
 })
 
 systemConfigApiRoutes.delete("/redaction-records", (c) => {
@@ -120,7 +174,7 @@ systemConfigApiRoutes.post("/redaction-preview", async (c) => {
       })
     // No caller identity, lease, upstream call or telemetry recording. The
     // preview's mappings die with this isolated scope, even for known secrets.
-    const scope = new RedactionScope(config)
+    const scope = new RedactionScope(config, undefined, { preview: true })
     const masked = scope.mask(value)
     return c.json({
       output: format === "json" ? JSON.stringify(masked, null, 2) : masked,

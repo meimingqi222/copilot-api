@@ -68,9 +68,9 @@ const i18n = {
       "redaction.flow.draft": "图示跟随当前编辑；保存后才对新请求生效",
       "redaction.flow.pause": "暂停动画",
       "redaction.flow.play": "播放动画",
-      "redaction.routes.title": "真实请求路径 · 最近 100 条保留记录",
+      "redaction.routes.title": "最近请求关联 · 内存中最多 100 条",
       "redaction.routes.hint":
-        "Client → 代理 → 实际上游；点击端点筛选请求。数量按请求归属统计，不是命中次数。",
+        "端点显示请求关联；点击筛选。同一请求可关联多个上游，重试详情单独记录。",
       "redaction.routes.client": "客户端 Client",
       "redaction.routes.upstream": "实际上游 Upstream",
       "redaction.routes.proxy": "本代理 Proxy",
@@ -82,31 +82,32 @@ const i18n = {
       "redaction.routes.reset": "清除筛选",
       "redaction.routes.noMatches": "无匹配请求",
       "redaction.routes.legend":
-        "端点仅来自保留记录。客户端按 User-Agent 推断；缺少上游表示未知。连续流动仅为示意，不代表实时流量或脱敏成功。多上游请求可分别计入多个端点。",
-      "redaction.inspect.title": "临时请求内容 Inspection",
+        "线条粗细表示最近请求关联数；粒子表示新观察到的路由活动，不代表实时吞吐或厂商接收确认。多上游关联不可相加当作请求总数。查看历史详情不回放动画。",
+      "redaction.inspect.title": "请求详情",
       "redaction.inspect.warning":
-        "仅管理员 · 默认关闭。即使脱敏内容也可能包含未检测的秘密。仅内存保存 5 分钟，逻辑预算 8 MiB、每条 128 KiB，不持久化；到期、关闭或清空会删除内容，元数据保留。",
-      "redaction.inspect.active": "采集已开启 · 5 分钟",
+        "仅管理员可查看。默认持续采集已脱敏的出站内容及映射原值，按内存预算淘汰，不持久化；映射原值需显式显示。不保存客户端原始请求。未命中的秘密仍可能留在内容中；关闭、清空或临时模式到期会删除内容。",
+      "redaction.inspect.active": "内容采集中",
       "redaction.inspect.off": "内容采集已关闭",
       "redaction.inspect.expires": "到期时间",
-      "redaction.inspect.enable": "开启 5 分钟",
+      "redaction.inspect.enable": "开启持续采集",
       "redaction.inspect.disable": "关闭并删除内容",
       "redaction.inspect.clear": "清空内容（保留元数据）",
       "redaction.inspect.route": "实际路径 Route",
       "redaction.inspect.open": "查看脱敏内容",
       "redaction.inspect.close": "关闭详情",
-      "redaction.inspect.reveal": "显示原文与映射值（敏感）",
-      "redaction.inspect.hide": "隐藏原文",
+      "redaction.inspect.reveal": "显示映射原值（敏感）",
+      "redaction.inspect.hide": "隐藏映射原值",
       "redaction.inspect.error": "内容不可用、已到期或已移除。请刷新后重试。",
       "redaction.inspect.truncated": "内容已截断",
       "redaction.inspect.protocolHint":
         "每次尝试单独显示（含故障转移 / 搜索）。客户端输入与上游可能是不同协议，不保证逐字段对应。",
       "redaction.inspect.input": "收到的客户端原始请求（协议转换前）",
       "redaction.inspect.inputHidden":
-        "原文未获取；仅点击“显示原文”后按需请求。",
+        "映射原值尚未获取。点击“并排对比出站片段”或“映射还原”会按需获取并显示敏感原值。",
       "redaction.inspect.unavailable": "未采集 / 不可用",
       "redaction.inspect.noAttempts": "尚无已观察到的上游请求体",
-      "redaction.inspect.http": "HTTP · 实际观察到的上游 HTTP 请求体（脱敏后）",
+      "redaction.inspect.http":
+        "HTTP · 调用 fetch 前观察到的序列化请求体（脱敏后），不证明厂商已接收",
       "redaction.inspect.adapter":
         "Adapter · 适配器阶段载荷（脱敏后），不等于最终发送的线路数据（如 CLI / 二进制传输）",
       "redaction.inspect.mappings": "占位符映射 · 原值仅按需显示",
@@ -114,17 +115,92 @@ const i18n = {
         "默认聚焦命中片段；长文本保留命中前后各 120 字符，相邻片段合并，未变化部分折叠。",
       "redaction.inspect.showWhole": "展开这段全文",
       "redaction.inspect.onlyChanges": "仅显示命中附近",
-      "redaction.inspect.unchanged": "{count} 个未命中文本部分 · 展开查看",
-      "redaction.inspect.rawBody": "查看完整载荷（保留范围内）",
+      "redaction.inspect.unchanged":
+        "{count} 个无已知命中标注的文本部分 · 展开查看",
+      "redaction.inspect.content": "请求内容 · 仅突出脱敏变化",
+      "redaction.inspect.vendorView": "脱敏后",
+      "redaction.inspect.originalView": "映射还原",
+      "redaction.inspect.moreParts":
+        "另有 {count} 个未改动字段，可在完整载荷中查看。",
+      "redaction.inspect.countUnknown": "请求统计不可用，不能判断命中数",
+      "redaction.inspect.matchesNotRetained":
+        "请求已执行替换，但当前截断片段或采集状态未保留可展示的命中映射；下方不是完整脱敏结果。",
+      "redaction.inspect.running": "请求进行中 · 统计仍在更新",
+      "redaction.inspect.detected": "已检测 {count} 个不同值（本请求内去重）",
+      "redaction.inspect.maskedCount":
+        "已替换 {count} 个唯一值 · 用户目录 {home} 个",
+      "redaction.inspect.noReplacements":
+        "本请求未记录替换；可能无命中、仅警告或已拦截。",
+      "redaction.inspect.rawBody": "查看已保留载荷（可能截断）",
+      "redaction.inspect.retainedExcerpt": "独立保留的命中片段（非完整载荷）",
       "redaction.inspect.showInput": "展开已获取的客户端原始请求",
       "redaction.inspect.compare": "并排对比出站片段",
       "redaction.inspect.compareHint":
         "左侧按仍保留的映射还原出站片段，仅供对比；不是协议转换前的原始请求。截断或未保留的内容无法还原。",
       "redaction.inspect.before": "出站片段 · 按映射还原",
-      "redaction.inspect.after": "上游片段 · 脱敏后",
+      "redaction.inspect.after": "出站片段 · 脱敏后",
       "redaction.saveHint": "仅保存脱敏设置，不影响其他诊断开关。",
       "redaction.liveHint":
-        "真实请求元数据每 2.5 秒刷新；隐藏页面时暂停。仅显示最近 100 条内存记录，非历史累计。",
+        "真实请求元数据实时通知更新，另有 2.5 秒轮询兜底；隐藏页面时暂停。仅显示最近 100 条内存记录，非历史累计。",
+      "redaction.inspect.policyTitle": "内容保留策略",
+      "redaction.inspect.policy.off":
+        "采集已关闭；请求元数据继续记录，不为新请求保留内容。",
+      "redaction.inspect.policy.continuous":
+        "持续采集 · 无固定到期时间 · 总预算 {max} MiB / 每条 {entry} KiB · 内存淘汰",
+      "redaction.inspect.policy.temporary":
+        "临时采集 · {expires} 到期并清空 · 总预算 {max} MiB / 每条 {entry} KiB",
+      "redaction.inspect.temporary": "重新开始临时采集（5 分钟）",
+      "redaction.inspect.mappingTruncated": "原值仅保留前段，无法完整还原",
+      "redaction.inspect.attemptSummary":
+        "{attempts} 次适配器尝试 · {bodies} 份已观察 HTTP 请求体 · 其中 {places} 个已知占位符位置",
+      "redaction.facts.title": "本次请求事实",
+      "redaction.facts.request": "请求结果",
+      "redaction.facts.detection": "检测",
+      "redaction.facts.action": "脱敏动作",
+      "redaction.facts.restoration": "响应还原",
+      "redaction.facts.evidence": "内容证据",
+      "redaction.facts.restoredCount": "已执行 {count} 次占位符还原",
+      "redaction.attempt.hint":
+        "尝试按发生顺序列出；适配器返回不等于整条流已结束。HTTP 体位置按每次 fetch 观测统计，多次序列化不累加；仅适配器载荷或 CLI 通道无法据此判断线路位置数。",
+      "redaction.attempt.partial":
+        "尝试或请求体观测达到保留上限；这里的数量仅覆盖已保留部分。",
+      "redaction.attempt.running": "适配器处理中",
+      "redaction.attempt.returned": "适配器已返回",
+      "redaction.attempt.failed": "适配器失败",
+      "redaction.attempt.body": "HTTP 体 #{index} · {places} 个已知占位符位置",
+      "redaction.attempt.noHttp":
+        "未观察到 HTTP 请求体；可用载荷见下方适配器证据。",
+      "redaction.http.prepared": "fetch 前已观察",
+      "redaction.http.response": "已收到 HTTP 响应头",
+      "redaction.http.failed": "fetch 失败，接收情况未知",
+      "redaction.content.available": "内容可查看",
+      "redaction.content.not_collected": "请求开始时未采集内容",
+      "redaction.content.cleared": "内容已手动清空",
+      "redaction.content.disabled": "采集关闭，内容已删除",
+      "redaction.content.expired": "临时采集已到期，内容已删除",
+      "redaction.content.evicted": "内容因数量或内存上限被淘汰",
+      "redaction.records.kindValues": "{kind} · 检测 {count} 个值",
+      "redaction.records.kindActions":
+        "替换 {masked} / 警告 {warned} / 拦截 {blocked}（不同值数）",
+      "redaction.records.actions":
+        "替换 {masked} · 警告 {warned} · 拦截 {blocked} 个值",
+      "redaction.records.scope":
+        "最近 {count} 条内存记录 · 平均脱敏耗时 {ms} ms · 与上方历史日期范围独立",
+      "redaction.records.facetsHint":
+        "筛选数字均为当前客户端与上游范围内的请求数，包含仅警告与拦截命中。类别可重叠，不能相加。",
+      "redaction.records.updated": "最近成功刷新：{time}",
+      "redaction.records.stale":
+        "刷新失败；当前为上次成功获取的快照，数据可能已过时。",
+      "redaction.routes.associations": "{count} 条关联请求",
+      "redaction.routes.activityHint":
+        "最近请求关联示意 · 新路由活动触发粒子，非接收确认",
+      "redaction.history.title": "历史汇总 · 近 {days} 天（按请求开始日）",
+      "redaction.history.countScope": "替换值口径",
+      "redaction.history.valueScope": "请求内去重，跨请求累计",
+      "redaction.status.in_progress": "进行中",
+      "redaction.status.completed": "已完成",
+      "redaction.status.failed": "失败",
+      "redaction.status.cancelled": "已取消",
       "redaction.categories": "最近请求的命中分布",
       "nav.system-config": "系统配置",
       "system.subtitle": "即时控制诊断开销；保留基础统计、请求追踪和错误告警。",
@@ -151,7 +227,7 @@ const i18n = {
         "识别常见 API 密钥、令牌、私钥及密码字段。",
       "system.redaction.homePaths": "用户目录",
       "system.redaction.homePathsHint":
-        "保护 Linux、macOS、Windows 用户目录前缀及已配置的额外前缀，保留项目路径后缀。",
+        "识别标准 Linux home、macOS Users、Windows Users 目录前缀（含空格用户名）及额外前缀，保留项目路径后缀。其他目录需配置额外前缀。",
       "system.redaction.wordsEnabled": "自定义词条",
       "system.redaction.wordsEnabledHint":
         "字面子串匹配，区分大小写，不支持正则。未填写词条时无效果。",
@@ -179,10 +255,10 @@ const i18n = {
       "system.redaction.restored": "还原替换次数",
       "system.redaction.recent": "最近真实请求诊断",
       "system.redaction.statsHint":
-        "仅显示最近 100 个已完成且启用脱敏的请求，最新在前。仅内存保存的元数据，重启清空；不含载荷、凭据、身份、模型或路径。进入本页或手动刷新时加载，不自动轮询。",
+        "显示最近 100 个启用脱敏的请求（含进行中），最新在前。元数据只存在内存中，重启清空；列表含客户端、上游和模型，不含载荷和凭据。本页可见时实时更新，历史统计在请求结束后入库。",
       "system.redaction.countHint":
         "总数、类别和来源按每个请求的唯一脱敏值计数，不是出现次数。耗时为累计文本脱敏毫秒数，不含网络或模型时间；还原数为替换次数。",
-      "system.redaction.statsEmpty": "暂无已完成的脱敏请求。",
+      "system.redaction.statsEmpty": "暂无脱敏请求。",
       "system.redaction.statsError": "无法加载最近诊断，请手动重试。",
       "system.redaction.requests": "请求数",
       "system.redaction.time": "完成时间",
@@ -190,6 +266,7 @@ const i18n = {
       "system.redaction.SECRET": "凭据",
       "system.redaction.HOME": "目录",
       "system.redaction.WORD": "词条",
+      "system.redaction.PERSONAL": "个人数据",
       "system.redaction.builtin": "内置规则",
       "system.redaction.word": "自定义词条",
       "system.redaction.homePrefix": "目录前缀",
@@ -1459,7 +1536,66 @@ const i18n = {
       "guard.shadowStats": "影子命中（would-block）",
 
       // Logs
-      "logs.title": "系统日志",
+      "logs.title": "日志与诊断",
+      "logs.tab.requests": "请求日志",
+      "logs.tab.system": "系统日志",
+      "logs.tab.status": "运行状态",
+      "logs.system.level": "级别",
+      "logs.system.allLevels": "所有级别",
+      "logs.system.subsystem": "子系统",
+      "logs.system.allSubsystems": "所有子系统",
+      "logs.system.search": "搜索消息、错误或上下文",
+      "logs.system.clear": "清除筛选",
+      "logs.system.liveOn": "实时：开",
+      "logs.system.liveOff": "实时：关",
+      "logs.system.export": "导出",
+      "logs.system.empty": "没有符合条件的系统日志",
+      "logs.system.connectionHistory":
+        "以下为连接保存的最近错误摘要。日志按连接筛选；旧日志可能缺少连接标识，或已超过保留期限，无法还原当时的完整日志。",
+      "logs.system.older": "加载更早的日志",
+      "logs.system.forRequest": "查看系统日志",
+      "logs.status.refresh": "刷新",
+      "logs.status.process": "进程",
+      "logs.status.version": "版本",
+      "logs.status.uptime": "运行时长",
+      "logs.status.memory": "内存（进程 / 系统）",
+      "logs.status.platform": "平台",
+      "logs.status.jobs": "后台任务",
+      "logs.status.noJobs": "还没有任务运行过",
+      "logs.status.job": "任务",
+      "logs.status.lastRun": "上次运行",
+      "logs.status.result": "结果",
+      "logs.status.next": "下次运行",
+      "logs.status.running": "运行中",
+      "logs.status.outcome.ok": "正常",
+      "logs.status.outcome.warn": "部分失败",
+      "logs.status.outcome.error": "失败",
+      "logs.status.connections": "有问题的连接",
+      "logs.status.allHealthy": "所有凭据状态正常",
+      "logs.status.connectionLogs": "相关日志",
+      "logs.status.ago": "前",
+      "logs.status.in": "还有",
+      "logs.bundle.button": "导出诊断包",
+      "logs.bundle.title": "导出诊断包",
+      "logs.bundle.hint":
+        "把排查问题需要的信息打包成一个文件，发给帮你排查的人。所有内容在打包前都会脱敏。",
+      "logs.bundle.range": "时间范围",
+      "logs.bundle.requests": "请求日志",
+      "logs.bundle.failedOnly": "只含失败的请求",
+      "logs.bundle.allRequests": "全部请求",
+      "logs.bundle.section.runtime": "运行环境",
+      "logs.bundle.section.config": "系统设置",
+      "logs.bundle.section.connections": "连接状态",
+      "logs.bundle.section.jobs": "后台任务",
+      "logs.bundle.section.systemLogs": "系统日志",
+      "logs.bundle.section.requests": "请求日志",
+      "logs.bundle.preparing": "正在统计…",
+      "logs.bundle.size": "压缩后约 {size}",
+      "logs.bundle.masked": "打包时又遮蔽了 {n} 处疑似密钥",
+      "logs.bundle.truncated": "条数超出上限，只保留最新的部分：{what}",
+      "logs.bundle.never": "不包含：提示词和请求体、凭据值、脱敏词库。",
+      "logs.bundle.cancel": "取消",
+      "logs.bundle.download": "下载",
       "logs.level": "级别",
       "logs.all": "全部",
       "logs.allLevels": "所有级别",
@@ -1882,9 +2018,9 @@ const i18n = {
       "redaction.flow.pause": "Pause animation",
       "redaction.flow.play": "Play animation",
       "redaction.routes.title":
-        "Actual request routes · Latest 100 retained records",
+        "Recent request associations · Up to 100 in memory",
       "redaction.routes.hint":
-        "Client → proxy → actual upstream. Click endpoints to filter. Counts are request membership, not redaction hits.",
+        "Endpoints show request associations. Click to filter. A request can belong to several upstreams; retries are recorded separately in details.",
       "redaction.routes.client": "Client",
       "redaction.routes.upstream": "Actual upstream",
       "redaction.routes.proxy": "This proxy",
@@ -1896,22 +2032,21 @@ const i18n = {
       "redaction.routes.reset": "Reset filters",
       "redaction.routes.noMatches": "No matching requests",
       "redaction.routes.legend":
-        "Endpoints come only from retained records. Clients are inferred from User-Agent; missing upstream means unknown. Continuous flow is schematic, not live traffic or proof of masking. A multi-upstream request can count toward multiple endpoints.",
-      "redaction.inspect.title": "Temporary content inspection",
+        "Line width represents recent request associations. Particles indicate newly observed routing activity, not throughput or vendor receipt. Upstream memberships cannot be added into a request total. Clients are inferred from User-Agent. Inspecting history does not replay animation.",
+      "redaction.inspect.title": "Request detail",
       "redaction.inspect.warning":
-        "Admin only · Off by default. Even masked content may contain undetected secrets. Memory only for 5 minutes; 8 MiB logical budget, 128 KiB per record, no persistence. Expiry, disabling or clearing deletes content, not metadata.",
-      "redaction.inspect.active": "Capture enabled · 5 minutes",
+        "Admin only. Masked outbound content and original mapping values are collected continuously by default, bounded in memory and never persisted. Mapping values require explicit reveal. Raw client requests are not retained. Content may still contain undetected secrets. Disabling, clearing or temporary-mode expiry removes content.",
+      "redaction.inspect.active": "Collecting content",
       "redaction.inspect.off": "Content capture off",
       "redaction.inspect.expires": "Expires",
-      "redaction.inspect.enable": "Enable for 5 minutes",
+      "redaction.inspect.enable": "Enable continuous collection",
       "redaction.inspect.disable": "Disable & delete content",
       "redaction.inspect.clear": "Clear content, keep metadata",
       "redaction.inspect.route": "Actual route",
       "redaction.inspect.open": "View masked content",
       "redaction.inspect.close": "Close detail",
-      "redaction.inspect.reveal":
-        "Reveal original & mapping values (sensitive)",
-      "redaction.inspect.hide": "Hide original",
+      "redaction.inspect.reveal": "Reveal original mapping values (sensitive)",
+      "redaction.inspect.hide": "Hide original mapping values",
       "redaction.inspect.error":
         "Content unavailable, expired or removed. Refresh and try again.",
       "redaction.inspect.truncated": "Content truncated",
@@ -1919,11 +2054,11 @@ const i18n = {
         "Each attempt is shown separately, including failover / search. Client input and upstream may use different protocols; fields need not match.",
       "redaction.inspect.input": "Received client request (before translation)",
       "redaction.inspect.inputHidden":
-        "Original not fetched. Only Reveal explicitly requests it.",
+        "Original mapping values have not been fetched. Selecting Compare outbound excerpts or Mapping-restored fetches and displays sensitive originals on demand.",
       "redaction.inspect.unavailable": "Not captured / unavailable",
       "redaction.inspect.noAttempts": "No observed upstream bodies yet",
       "redaction.inspect.http":
-        "HTTP · Actual observed upstream HTTP request body (masked)",
+        "HTTP · Masked serialized body observed before fetch; not proof of vendor receipt",
       "redaction.inspect.adapter":
         "Adapter · Masked adapter-stage payload, NOT the final sent wire (e.g. CLI / binary transport)",
       "redaction.inspect.mappings":
@@ -1932,18 +2067,103 @@ const i18n = {
         "Focus on matches: long text keeps 120 characters on either side, merges nearby excerpts and folds unchanged parts.",
       "redaction.inspect.showWhole": "Show this whole text",
       "redaction.inspect.onlyChanges": "Show only nearby changes",
-      "redaction.inspect.unchanged": "{count} unchanged text parts · Expand",
-      "redaction.inspect.rawBody": "View complete retained payload",
+      "redaction.inspect.unchanged":
+        "{count} text parts without known match annotations · Expand",
+      "redaction.inspect.content": "Request content · Redaction changes",
+      "redaction.inspect.vendorView": "Masked",
+      "redaction.inspect.originalView": "Mappings restored",
+      "redaction.inspect.moreParts":
+        "{count} more unchanged fields are available in the retained payload.",
+      "redaction.inspect.countUnknown":
+        "Request counters unavailable; match count unknown",
+      "redaction.inspect.matchesNotRetained":
+        "Replacements were recorded, but the current capture has no retained match mappings. The excerpts below are not the complete redaction result.",
+      "redaction.inspect.running": "Request in progress; counters are updating",
+      "redaction.inspect.detected":
+        "{count} distinct values detected within this request",
+      "redaction.inspect.maskedCount":
+        "{count} unique values replaced; {home} home directories",
+      "redaction.inspect.noReplacements":
+        "No replacements recorded: there may be no matches, warning-only actions or a block.",
+      "redaction.inspect.rawBody": "View retained payload (may be truncated)",
+      "redaction.inspect.retainedExcerpt":
+        "Retained match excerpt (not the complete payload)",
       "redaction.inspect.showInput": "Expand fetched original client request",
       "redaction.inspect.compare": "Compare outbound excerpts side by side",
       "redaction.inspect.compareHint":
         "Left: outbound excerpts reconstructed using retained mappings, NOT the pretranslation client request. Truncated or missing content cannot be reconstructed.",
       "redaction.inspect.before": "Outbound excerpt · Mappings restored",
-      "redaction.inspect.after": "Upstream excerpt · Masked",
+      "redaction.inspect.after": "Outbound excerpt · Masked",
       "redaction.saveHint":
         "Saves redaction only; other diagnostics remain unchanged.",
       "redaction.liveHint":
-        "Real request metadata refreshes every 2.5 seconds while visible. Latest 100 in-memory records only, not all-time totals.",
+        "Real request metadata updates via live notifications, with a 2.5-second polling fallback while visible. Latest 100 in-memory records only, not all-time totals.",
+      "redaction.inspect.policyTitle": "Content retention",
+      "redaction.inspect.policy.off":
+        "Collection is off. Request metadata continues; new request content is not retained.",
+      "redaction.inspect.policy.continuous":
+        "Continuous collection · No fixed expiry · {max} MiB total / {entry} KiB per record · Memory eviction",
+      "redaction.inspect.policy.temporary":
+        "Temporary collection · Expires and clears at {expires} · {max} MiB total / {entry} KiB per record",
+      "redaction.inspect.temporary": "Restart temporary collection (5 minutes)",
+      "redaction.inspect.mappingTruncated":
+        "Original value truncated; full reconstruction unavailable",
+      "redaction.inspect.attemptSummary":
+        "{attempts} adapter attempts · {bodies} observed HTTP bodies · {places} known placeholder positions",
+      "redaction.facts.title": "Request facts",
+      "redaction.facts.request": "Request result",
+      "redaction.facts.detection": "Detection",
+      "redaction.facts.action": "Redaction actions",
+      "redaction.facts.restoration": "Response restoration",
+      "redaction.facts.evidence": "Content evidence",
+      "redaction.facts.restoredCount":
+        "{count} placeholder restorations performed",
+      "redaction.attempt.hint":
+        "Attempts are listed in occurrence order. Adapter return does not mean the response stream finished. HTTP positions are counted once per observed fetch, not per serialization. Adapter-only or CLI payloads do not establish HTTP wire counts.",
+      "redaction.attempt.partial":
+        "Attempt or HTTP observation limits reached; counts cover only retained observations.",
+      "redaction.attempt.running": "Adapter running",
+      "redaction.attempt.returned": "Adapter returned",
+      "redaction.attempt.failed": "Adapter failed",
+      "redaction.attempt.body":
+        "HTTP body #{index} · {places} known placeholder positions",
+      "redaction.attempt.noHttp":
+        "No HTTP body observed; see available adapter evidence below.",
+      "redaction.http.prepared": "Observed before fetch",
+      "redaction.http.response": "HTTP response headers received",
+      "redaction.http.failed": "Fetch failed; receipt unknown",
+      "redaction.content.available": "Content available",
+      "redaction.content.not_collected":
+        "Content was not collected when the request started",
+      "redaction.content.cleared": "Content manually cleared",
+      "redaction.content.disabled": "Collection disabled; content removed",
+      "redaction.content.expired":
+        "Temporary collection expired; content removed",
+      "redaction.content.evicted": "Content evicted by record or memory limits",
+      "redaction.records.kindValues": "{kind} · {count} values detected",
+      "redaction.records.kindActions":
+        "Replace {masked} / Warn {warned} / Block {blocked} (distinct values)",
+      "redaction.records.actions":
+        "Replace {masked} · Warn {warned} · Block {blocked} values",
+      "redaction.records.scope":
+        "Latest {count} in-memory records · Average masking {ms} ms · Independent of the historical date range above",
+      "redaction.records.facetsHint":
+        "All facets count requests within the current client/upstream filters, including warning-only and blocked matches. Categories overlap and cannot be added.",
+      "redaction.records.updated": "Last successful refresh: {time}",
+      "redaction.records.stale":
+        "Refresh failed. Showing the last successful snapshot; data may be stale.",
+      "redaction.routes.associations": "{count} associated requests",
+      "redaction.routes.activityHint":
+        "Recent request associations · Particles indicate new routing activity, not receipt confirmation",
+      "redaction.history.title":
+        "History · Last {days} days (request start date)",
+      "redaction.history.countScope": "Replacement value scope",
+      "redaction.history.valueScope":
+        "Distinct within a request; summed across requests",
+      "redaction.status.in_progress": "In progress",
+      "redaction.status.completed": "Completed",
+      "redaction.status.failed": "Failed",
+      "redaction.status.cancelled": "Cancelled",
       "redaction.categories": "Matches in recent requests",
       "nav.system-config": "System Settings",
       "system.subtitle":
@@ -1972,7 +2192,7 @@ const i18n = {
         "Recognize common API keys, tokens, private keys and password fields.",
       "system.redaction.homePaths": "Home directories",
       "system.redaction.homePathsHint":
-        "Protect Linux, macOS and Windows home prefixes and configured extra prefixes; preserve project path suffixes.",
+        "Matches standard Linux home, macOS Users and Windows Users prefixes, including spaced usernames, plus configured prefixes. Project suffixes remain. Other directories need an explicit prefix.",
       "system.redaction.wordsEnabled": "Custom literal words",
       "system.redaction.wordsEnabledHint":
         "Case-sensitive literal substring matching, not regex. Has no effect when the list is empty.",
@@ -2003,10 +2223,10 @@ const i18n = {
       "system.redaction.restored": "Restored replacements",
       "system.redaction.recent": "Recent production diagnostics",
       "system.redaction.statsHint":
-        "Latest 100 finished requests with redaction enabled, newest first. Memory-only metadata resets on restart; no payloads, secrets, identities, models or paths. Loads on entering this page or manual refresh; no polling.",
+        "Latest 100 requests with redaction enabled, including in-progress requests, newest first. Metadata lives in memory only and resets on restart; it holds client, upstream and model, never payloads or secrets. Updates live while visible; history is saved when each request ends.",
       "system.redaction.countHint":
         "Totals, categories and sources count unique masked values per request, not occurrences. Time is cumulative text masking in milliseconds, not network or model time. Restored counts replacements.",
-      "system.redaction.statsEmpty": "No finished redaction requests yet.",
+      "system.redaction.statsEmpty": "No redaction requests yet.",
       "system.redaction.statsError":
         "Could not load recent diagnostics. Refresh to retry.",
       "system.redaction.requests": "Requests",
@@ -2015,6 +2235,7 @@ const i18n = {
       "system.redaction.SECRET": "Credential",
       "system.redaction.HOME": "Home",
       "system.redaction.WORD": "Word",
+      "system.redaction.PERSONAL": "Personal",
       "system.redaction.builtin": "Built-in",
       "system.redaction.word": "Custom word",
       "system.redaction.homePrefix": "Home prefix",
@@ -3327,7 +3548,67 @@ const i18n = {
       "guard.shadowStats": "Shadow hits (would-block)",
 
       // Logs
-      "logs.title": "System Logs",
+      "logs.title": "Logs & diagnostics",
+      "logs.tab.requests": "Request logs",
+      "logs.tab.system": "System logs",
+      "logs.tab.status": "Runtime status",
+      "logs.system.level": "Level",
+      "logs.system.allLevels": "All levels",
+      "logs.system.subsystem": "Subsystem",
+      "logs.system.allSubsystems": "All subsystems",
+      "logs.system.search": "Search message, error or context",
+      "logs.system.clear": "Clear filters",
+      "logs.system.liveOn": "Live: on",
+      "logs.system.liveOff": "Live: off",
+      "logs.system.export": "Export",
+      "logs.system.empty": "No system log entries match",
+      "logs.system.connectionHistory":
+        "Saved connection error summary below. Logs are filtered by connection; older entries may lack connection identifiers or have expired, so the original event may no longer be available.",
+      "logs.system.older": "Load older entries",
+      "logs.system.forRequest": "System logs",
+      "logs.status.refresh": "Refresh",
+      "logs.status.process": "Process",
+      "logs.status.version": "Version",
+      "logs.status.uptime": "Uptime",
+      "logs.status.memory": "Memory (process / system)",
+      "logs.status.platform": "Platform",
+      "logs.status.jobs": "Background jobs",
+      "logs.status.noJobs": "No job has run yet",
+      "logs.status.job": "Job",
+      "logs.status.lastRun": "Last run",
+      "logs.status.result": "Result",
+      "logs.status.next": "Next run",
+      "logs.status.running": "Running",
+      "logs.status.outcome.ok": "OK",
+      "logs.status.outcome.warn": "Partly failed",
+      "logs.status.outcome.error": "Failed",
+      "logs.status.connections": "Connections with problems",
+      "logs.status.allHealthy": "All credentials are healthy",
+      "logs.status.connectionLogs": "Related logs",
+      "logs.status.ago": "ago",
+      "logs.status.in": "in",
+      "logs.bundle.button": "Diagnostic bundle",
+      "logs.bundle.title": "Export diagnostic bundle",
+      "logs.bundle.hint":
+        "One file with what someone needs to help you troubleshoot. Everything is redacted before it is packed.",
+      "logs.bundle.range": "Time range",
+      "logs.bundle.requests": "Request logs",
+      "logs.bundle.failedOnly": "Failed requests only",
+      "logs.bundle.allRequests": "All requests",
+      "logs.bundle.section.runtime": "Runtime",
+      "logs.bundle.section.config": "Settings",
+      "logs.bundle.section.connections": "Connections",
+      "logs.bundle.section.jobs": "Background jobs",
+      "logs.bundle.section.systemLogs": "System logs",
+      "logs.bundle.section.requests": "Request logs",
+      "logs.bundle.preparing": "Counting…",
+      "logs.bundle.size": "About {size} compressed",
+      "logs.bundle.masked": "Packing masked {n} more secret-looking values",
+      "logs.bundle.truncated": "Over the limit, newest kept: {what}",
+      "logs.bundle.never":
+        "Never included: prompts and request bodies, credential values, redaction word lists.",
+      "logs.bundle.cancel": "Cancel",
+      "logs.bundle.download": "Download",
       "logs.level": "Level",
       "logs.all": "All",
       "logs.allLevels": "All Levels",

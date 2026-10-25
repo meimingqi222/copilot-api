@@ -418,10 +418,11 @@ an error and does not silently switch to HTTP. You can also set
 
 Other knobs:
 
-| Environment variable                 | Default | Meaning                                                                                |
-| ------------------------------------ | ------- | -------------------------------------------------------------------------------------- |
-| `COPILOT_API_CLAUDE_MAX_RUNS`        | `4`     | Live `claude` processes per connection (each run is one process).                      |
-| `COPILOT_API_CLAUDE_MCP_PATIENCE_MS` | `55000` | Tool-call wait in milliseconds, capped at 55 seconds; shorter overrides are supported. |
+| Environment variable                 | Default | Meaning                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `COPILOT_API_CLAUDE_MAX_RUNS`        | `4`     | Live `claude` processes per connection (each run is one process).                                                                                                                                                                                                                                                              |
+| `COPILOT_API_CLAUDE_MAX_PROCESSES`   | memory  | Live `claude` processes on this machine, all connections together. Default: (memory limit − 256 MiB) ÷ 128 MiB, at least 1, where the limit is the least of physical memory and the process's cgroup limits. When full, an idle run is let go first; otherwise the request gets a 503 and failover moves to the next provider. |
+| `COPILOT_API_CLAUDE_MCP_PATIENCE_MS` | `55000` | Tool-call wait in milliseconds, capped at 55 seconds; shorter overrides are supported.                                                                                                                                                                                                                                         |
 
 Because the CLI transport never touches the credential store, the OAuth refresh
 chain in the proxy stays the single holder of the rotating refresh token. See

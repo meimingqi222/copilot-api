@@ -75,8 +75,17 @@ export function performanceFetch(
   input: string | URL | Request,
   init?: RequestInit,
 ): Promise<Response> {
-  observeRedactionHttp(init?.body)
-  return measureUpstreamFetch(() => globalThis.fetch(input, init))
+  const observation = observeRedactionHttp(init?.body)
+  return measureUpstreamFetch(() => globalThis.fetch(input, init)).then(
+    (response) => {
+      observation?.response(response.status)
+      return response
+    },
+    (error: unknown) => {
+      observation?.failed()
+      throw error
+    },
+  )
 }
 
 export function observeUpstreamResponse(response: Response): void {

@@ -9,7 +9,7 @@ import {
   LocalPayloadUnsupportedError,
   LocalUnavailableError,
 } from "~/lib/error"
-import { logger } from "~/lib/logger"
+import { createLogger } from "~/lib/logger"
 import { identityFromAdmission, recordAccountUsage } from "~/lib/usage"
 import {
   takeUsagePricingRounds,
@@ -64,6 +64,8 @@ import {
   getProtocolAdapter,
   initializeProtocolAdapters,
 } from "~/services/protocols"
+
+const logger = createLogger("dispatch")
 
 export { recordUpstreamFailure } from "~/services/dispatch/cooldown"
 

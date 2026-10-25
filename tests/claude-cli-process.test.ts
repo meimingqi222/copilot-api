@@ -86,7 +86,7 @@ test("terminates the launcher and its live CLI child", async () => {
       }
     }
     expect(childPid).toBeGreaterThan(0)
-    terminateClaudeProcess(proc)
+    terminateClaudeProcess(proc, { graceMs: 0 })
     await proc.exited
     if (process.platform === "win32") {
       const deadline = Date.now() + 3000
@@ -103,7 +103,7 @@ test("terminates the launcher and its live CLI child", async () => {
     }
   } finally {
     reader.releaseLock()
-    terminateClaudeProcess(proc)
+    terminateClaudeProcess(proc, { graceMs: 0 })
     if (childPid) {
       try {
         process.kill(childPid)
@@ -111,5 +111,40 @@ test("terminates the launcher and its live CLI child", async () => {
         /* Already terminated. */
       }
     }
+  }
+})
+
+test("lets the CLI exit on its own before the grace period forces it", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "claude-grace-test-"))
+  const marker = path.join(dir, "cleaned")
+  // Exits cleanly on EOF (Windows' ask) or SIGTERM (POSIX'), leaving a marker
+  // a forced kill could never write: the OAuth lock release stands for it.
+  const script = path.join(dir, "cli.ts")
+  await fs.writeFile(
+    script,
+    [
+      'import fs from "node:fs"',
+      `const done = () => setTimeout(() => { fs.writeFileSync(${JSON.stringify(marker)}, "ok"); process.exit(0) }, 500)`,
+      'process.on("SIGTERM", done)',
+      'process.stdin.on("end", done)',
+      "process.stdin.resume()",
+      'process.stdout.write("ready")',
+    ].join("\n"),
+  )
+  const proc = Bun.spawn([process.execPath, script], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "ignore",
+  })
+  try {
+    const reader = proc.stdout.getReader()
+    await reader.read()
+    reader.releaseLock()
+    terminateClaudeProcess(proc, { graceMs: 3000 })
+    await proc.exited
+    expect(await Bun.file(marker).text()).toBe("ok")
+  } finally {
+    terminateClaudeProcess(proc, { graceMs: 0 })
+    await fs.rm(dir, { recursive: true, force: true })
   }
 })

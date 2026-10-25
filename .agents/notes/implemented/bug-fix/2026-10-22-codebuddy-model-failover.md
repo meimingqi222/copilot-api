@@ -39,12 +39,15 @@ permanently removed. Failover is possible before downstream streaming starts.
 
 ## Verification
 
+Focused suites: `tests/codebuddy-model-cooldown.test.ts`.
+
 - `tests/codebuddy-model-cooldown.test.ts::11102 rotates to another source without penalizing the account`
 - `tests/codebuddy-model-cooldown.test.ts::parses client reset wording as UTC+8`
 
 Proved: the pre-fix run of `bun test tests/codebuddy-model-cooldown.test.ts`
 failed three new cases: reset duration was 60000 rather than about 3600000 ms,
 and both HTTP request variants returned the original 400 instead of reaching
-the backup. Original output is retained in ignored `temp/codebuddy-model-red.log`
-under the repository's policy that command logs stay in temp. The focused suite
+the backup. The original ignored temporary log is no longer present; the
+expected-versus-actual results above retain the historical natural-red summary
+rather than retrievable raw output. The focused suite
 passed after the fix; first-event SSE variants also pass.

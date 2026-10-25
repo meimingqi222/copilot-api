@@ -2,6 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { Hono } from "hono"
 
 import { HTTPError } from "~/lib/error"
+import {
+  __resetProviderConnectionsForTest,
+  getProviderConnection,
+  upsertProviderConnection,
+} from "~/lib/provider-connections"
+import { claudeLimitHeaders } from "~/services/claude/limit-headers"
 import { claudeMcpRoutes } from "~/routes/claude-mcp/route"
 import { ClaudeCliUnavailableError } from "~/services/claude/cli/errors"
 import { runRegistry } from "~/services/claude/cli/run-registry"
@@ -233,6 +239,31 @@ describe("claude cli bridge", () => {
     expect(textOf(events)).toContain("hello")
   })
 
+  test("the turn's rate_limit_event reaches the account's quota", async () => {
+    process.env.FAKE_CLAUDE_SCENARIO = "text"
+    const resetsAt = Math.floor(Date.now() / 1000) + 3600
+    process.env.FAKE_CLAUDE_RATE_LIMIT = JSON.stringify({
+      status: "allowed",
+      unifiedWindows: { five_hour: { utilization: 0.37, resetsAt } },
+    })
+    upsertProviderConnection(context.connection)
+    try {
+      await drain(await streamClaudeCliMessages(context, userPayload("hi")))
+      expect(
+        claudeLimitHeaders(
+          getProviderConnection(context.connection.id)?.credentials[0].quota
+            ?.details,
+        ),
+      ).toEqual({
+        "anthropic-ratelimit-unified-5h-utilization": "0.37",
+        "anthropic-ratelimit-unified-5h-reset": String(resetsAt),
+      })
+    } finally {
+      delete process.env.FAKE_CLAUDE_RATE_LIMIT
+      __resetProviderConnectionsForTest()
+    }
+  }, 15_000)
+
   /**
    * Privacy: Claude Code writes full conversation transcripts under its config
    * dir. Pointing `CLAUDE_CONFIG_DIR` at our own data dir keeps them out of the
@@ -436,6 +467,27 @@ describe("claude cli bridge failures", () => {
       expect((error as HTTPError).response.status).toBe(429)
     }
     // Two sequential fake-CLI spawns; each costs ~2.4s on Windows.
+  }, 15_000)
+
+  test("Claude Code's own too-long check is a 400 that says whose check it was", async () => {
+    process.env.FAKE_CLAUDE_SCENARIO = "too-long"
+    const error = await streamClaudeCliMessages(
+      context,
+      userPayload("hi"),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    )
+    expect(error).toBeInstanceOf(HTTPError)
+    const response = (error as HTTPError).response
+    // A 400 is not failed over or retried; the client compacts instead.
+    expect(response.status).toBe(400)
+    const body = (await response.json()) as {
+      error: { type: string; message: string }
+    }
+    expect(body.error.type).toBe("invalid_request_error")
+    expect(body.error.message).toContain("Prompt is too long")
+    expect(body.error.message).toContain("Claude Code's own check")
   }, 15_000)
 
   /**

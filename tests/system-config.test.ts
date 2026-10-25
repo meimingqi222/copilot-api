@@ -6,7 +6,11 @@ import path from "node:path"
 
 import { isDebugLoggingEnabled, logger, setRuntimeLogLevel } from "~/lib/logger"
 import { isRequestDumpEnabled } from "~/lib/request-dump"
-import { getRedactionDiagnostics } from "~/lib/redaction/diagnostics"
+import {
+  getRedactionDiagnostics,
+  emptyRedactionDiagnostics,
+  recordRedactionDiagnostics,
+} from "~/lib/redaction/diagnostics"
 import { RedactionScope } from "~/lib/redaction/context"
 import { redactionConfigSchema } from "~/lib/redaction/rules"
 import {
@@ -519,7 +523,12 @@ test("redaction preview uses isolated unsaved rules with safe counts and never c
   ])
     expect(preview.output).not.toContain(value)
   expect(preview.diagnostics.total).toBe(5)
-  expect(preview.diagnostics.byKind).toEqual({ SECRET: 2, HOME: 2, WORD: 1 })
+  expect(preview.diagnostics.byKind).toEqual({
+    SECRET: 2,
+    HOME: 2,
+    WORD: 1,
+    PERSONAL: 0,
+  })
   expect(preview.diagnostics.bySource).toEqual({
     builtin: 2,
     field: 1,
@@ -600,6 +609,7 @@ test("redaction preview rejects invalid, deeply nested and oversized inputs with
   for (const [path, method] of [
     ["redaction-preview", "POST"],
     ["redaction-stats", "GET"],
+    ["redaction-events", "GET"],
     ["redaction-inspection", "POST"],
     ["redaction-records", "DELETE"],
     ["redaction-records/1?reveal=1", "GET"],
@@ -612,7 +622,39 @@ test("redaction preview rejects invalid, deeply nested and oversized inputs with
   }
 })
 
-test("inspection controls are bounded, temporary and independent of persisted settings", async () => {
+test("redaction live feed sends metadata invalidations and disconnects cleanly", async () => {
+  const controller = new AbortController()
+  const response = await systemConfigApiRoutes.request("/redaction-events", {
+    signal: controller.signal,
+  })
+  expect(response.headers.get("content-type")).toContain("text/event-stream")
+  expect(response.headers.get("cache-control")).toBe("no-cache")
+  const reader = response.body!.getReader()
+  const decoder = new TextDecoder()
+  const readChange = async () => {
+    let text = ""
+    while (!text.includes("event: change")) {
+      const item = await reader.read()
+      if (item.done) throw new Error("unexpected feed EOF")
+      text += decoder.decode(item.value)
+    }
+    expect(text).toContain("data: {}")
+    expect(text).not.toContain("private-client")
+  }
+  try {
+    await readChange()
+    recordRedactionDiagnostics(emptyRedactionDiagnostics(), {
+      client: "private-client",
+      upstreams: [],
+    })
+    await readChange()
+  } finally {
+    controller.abort()
+    await reader.cancel()
+  }
+})
+
+test("inspection controls default to continuous, allow explicit temporary mode and stay independent of persisted settings", async () => {
   const before = getSystemConfig()
   const call = (body: string) =>
     systemConfigApiRoutes.request("/redaction-inspection", {
@@ -627,7 +669,13 @@ test("inspection controls are bounded, temporary and independent of persisted se
   ])
     expect((await call(body)).status).toBe(400)
   try {
-    const enabled = await call('{"enabled":true}')
+    const continuous = await call('{"enabled":true}')
+    expect(await continuous.json()).toMatchObject({
+      mode: "continuous",
+      expiresAt: null,
+      retainsClientInput: false,
+    })
+    const enabled = await call('{"enabled":true,"mode":"temporary"}')
     expect(enabled.headers.get("cache-control")).toBe("no-store")
     const status = (await enabled.json()) as {
       enabled: boolean

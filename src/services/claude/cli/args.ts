@@ -56,7 +56,11 @@ export function claudeCliArgs(options: ClaudeCliArgsOptions): Array<string> {
   if (effort) {
     args.push("--effort", effort, "--thinking-display", "summarized")
   }
-  if (options.jsonSchema)
-    args.push("--json-schema", JSON.stringify(options.jsonSchema))
+  if (options.jsonSchema) {
+    // Claude Code exits on a root "$schema" it cannot resolve (zod emits the
+    // draft 2020-12 URI); the dialect adds nothing to validation here.
+    const { $schema: _dialect, ...schema } = options.jsonSchema
+    args.push("--json-schema", JSON.stringify(schema))
+  }
   return args
 }

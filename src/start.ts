@@ -116,6 +116,12 @@ async function runServer(options: RunServerOptions): Promise<void> {
     }
     logger.error("Unhandled rejection:", reason)
   })
+  // The file sink writes synchronously, so the fatal line and its stack are
+  // on disk before the process ends as it would have without a handler.
+  process.on("uncaughtException", (error: Error) => {
+    logger.fatal("Uncaught exception; exiting:", error)
+    process.exit(1)
+  })
 
   if (options.proxyEnv) {
     initProxyFromEnv()

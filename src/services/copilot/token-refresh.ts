@@ -20,12 +20,15 @@ import type {
 
 import { GITHUB_API_BASE_URL, githubApiHeaders } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
-import { logger } from "~/lib/logger"
+import { describeJob, runJob } from "~/lib/jobs"
+import { createLogger } from "~/lib/logger"
 import {
   getMutableProviderConnection,
   persistProviderConnections,
 } from "~/lib/provider-connections"
 import { state } from "~/lib/state"
+
+const logger = createLogger("auth")
 
 const TOKEN_REFRESH_RETRY_DELAY_MS = 60_000
 
@@ -119,13 +122,28 @@ export function scheduleConnectionTokenRefresh(
     }
 
     logger.debug(`Refreshing Copilot token for "${conn.name}"`)
-    refreshCopilotTokenForConnection(conn).catch((error: unknown) => {
+    runCopilotTokenJob(conn).catch((error: unknown) => {
       logger.error(`Failed to refresh Copilot token for "${conn.name}":`, error)
       scheduleConnectionTokenRefreshRetry(connectionId)
     })
   }, refreshInterval)
 
   tokenRefreshTimers.set(connectionId, timerId)
+  describeJob(copilotTokenJobName(connectionId), {
+    nextRunAt: Date.now() + refreshInterval,
+  })
+}
+
+function copilotTokenJobName(connectionId: string): string {
+  return `copilot-token:${connectionId}`
+}
+
+function runCopilotTokenJob(conn: ProviderConnection): Promise<unknown> {
+  return runJob(
+    copilotTokenJobName(conn.id),
+    () => refreshCopilotTokenForConnection(conn),
+    { label: `Copilot token refresh · ${conn.name}`, connectionId: conn.id },
+  )
 }
 
 function scheduleConnectionTokenRefreshRetry(connectionId: string): void {
@@ -140,7 +158,7 @@ function scheduleConnectionTokenRefreshRetry(connectionId: string): void {
       tokenRefreshRetries.delete(connectionId)
       return
     }
-    refreshCopilotTokenForConnection(conn).catch((error: unknown) => {
+    runCopilotTokenJob(conn).catch((error: unknown) => {
       logger.error(`Token refresh retry failed for "${conn.name}":`, error)
       scheduleConnectionTokenRefreshRetry(connectionId)
     })

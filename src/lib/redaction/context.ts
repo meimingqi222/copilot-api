@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks"
 import { createHmac, createHash, randomBytes } from "node:crypto"
 import type { Context } from "hono"
 
+import { inferClientAgent } from "~/lib/client-agent"
 import { LocalUnavailableError } from "~/lib/error"
 import { state } from "~/lib/state"
 import { getSystemSettings } from "~/lib/system-config"
@@ -13,13 +14,24 @@ import {
   finishRedactionInspection,
   redactionInspectionTokens,
   recordRedactionDiagnostics,
+  updateRedactionDiagnostics,
+  type RedactionRecordStatus,
   type RedactionUpstream,
+  type RedactionAttempt,
 } from "~/lib/redaction/diagnostics"
 import {
+  categoryEnabled,
   findRedactions,
+  isAllowed,
   type RedactionConfig,
   type RedactionMatch,
 } from "~/lib/redaction/rules"
+import {
+  base32,
+  canonicalToken,
+  loosePattern,
+  tokenPattern,
+} from "~/lib/redaction/token"
 import {
   coveredContent,
   record,
@@ -27,7 +39,6 @@ import {
   type SignedContent,
 } from "~/lib/redaction/wire"
 
-const TOKEN = /\{\{(SECRET|HOME|WORD)_[a-f0-9]{32}\}\}/g
 const KEY = randomBytes(32)
 const TTL_MS = 60 * 60_000
 const MAX_BYTES = 16 * 1024 * 1024
@@ -45,6 +56,7 @@ interface Entry {
   value: string
   json: string
   kind: RedactionMatch["kind"]
+  label: RedactionMatch["label"]
 }
 interface SignedReplay {
   original: Record<string, unknown>
@@ -145,6 +157,15 @@ function reserve(tenant: Tenant, bytes: number): void {
   tenant.touched = Date.now()
 }
 
+/** What a refusal may say about a value: its kind's usual prefix or first character, and its length. */
+function valueHint(match: RedactionMatch): string {
+  const head =
+    match.label === "API_KEY" ?
+      (/^[A-Za-z]+[-_]/.exec(match.value)?.[0] ?? match.value[0])
+    : match.value[0]
+  return `${head}…, ${[...match.value].length} characters`
+}
+
 function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex")
 }
@@ -157,6 +178,9 @@ export class RedactionScope {
   private readonly counted = new Map<string, RedactionMatch["source"]>()
   private readonly metrics = emptyRedactionDiagnostics()
   private readonly words: Set<string>
+  private readonly warned = new Set<string>()
+  private readonly detected = new Set<string>()
+  private readonly preview: boolean
   private readonly textCache = Array.from(
     { length: 4 },
     () => new Map<string, { version: number; value: string }>(),
@@ -165,17 +189,34 @@ export class RedactionScope {
   private leases = 0
   readonly config: RedactionConfig
 
-  constructor(config: RedactionConfig, identity?: string) {
+  /** `preview` reports values a `block` action would refuse instead of throwing. */
+  constructor(
+    config: RedactionConfig,
+    identity?: string,
+    options: { preview?: boolean } = {},
+  ) {
     this.config = Object.freeze(config)
     Object.freeze(this.config.words)
     Object.freeze(this.config.homePrefixes)
-    this.words = new Set(config.words)
+    this.words = new Set(
+      config.wordsAnyCase ?
+        config.words.map((word) => word.toLowerCase())
+      : config.words,
+    )
+    this.preview = options.preview ?? false
     this.identity = identity ?? randomBytes(16).toString("hex")
     this.tenant = tenantFor(identity)
   }
 
   diagnostics() {
     return structuredClone(this.metrics)
+  }
+
+  outboundPlaces(body: string): number {
+    let count = 0
+    for (const match of body.matchAll(tokenPattern()))
+      if (this.allowed.has(match[0])) count++
+    return count
   }
 
   inspectionMappings(tokens: Array<string>) {
@@ -186,6 +227,7 @@ export class RedactionScope {
             {
               placeholder,
               kind: entry.kind,
+              label: entry.label,
               source: this.counted.get(placeholder) ?? "known",
               value: entry.value,
             },
@@ -262,15 +304,57 @@ export class RedactionScope {
     this.touch(key)
   }
 
+  private token(match: RedactionMatch): string {
+    const hash = createHmac("sha256", KEY)
+      .update(`${this.identity}\0${match.label}\0${match.value}`)
+      .digest()
+    // 8 base32 characters keep prompts short; a collision within this
+    // caller's mappings falls back to 16 rather than failing the request.
+    for (const length of [8, 16]) {
+      const token = `{{${match.label}_${base32(hash, length)}}}`
+      const previous = this.tenant.entries.get(token)
+      if (!previous || previous.value === match.value) return token
+    }
+    throw new RedactionError("Redaction placeholder collision", 503)
+  }
+
+  /** Applies the category's action: mask returns a placeholder, warn and preview-block the value itself. */
+  private act(match: RedactionMatch): string {
+    const action = this.config.actions[match.kind]
+    const key = `${match.label}\0${match.value}`
+    if (!this.detected.has(key)) {
+      this.detected.add(key)
+      this.metrics.detected++
+      this.metrics.detectedByKind[match.kind]++
+    }
+    if (action === "mask") return this.placeholder(match)
+    if (!this.warned.has(key)) {
+      this.warned.add(key)
+      if (action === "warn") {
+        this.metrics.warned++
+        this.metrics.warnedByKind[match.kind]++
+      } else {
+        this.metrics.blockedCount++
+        this.metrics.blockedByKind[match.kind]++
+        if (this.metrics.blocked.length < 16)
+          this.metrics.blocked.push({
+            label: match.label,
+            hint: valueHint(match),
+          })
+      }
+    }
+    if (action === "block" && !this.preview)
+      // The message names the kind and a hint, never the value.
+      throw new RedactionError(
+        `Request refused before sending: redaction settings block ${match.label} values and this request contains one (${valueHint(match)}). Nothing was sent upstream.`,
+        400,
+      )
+    return match.value
+  }
+
   private placeholder(match: RedactionMatch): string {
-    const suffix = createHmac("sha256", KEY)
-      .update(`${this.identity}\0${match.kind}\0${match.value}`)
-      .digest("hex")
-      .slice(0, 32)
-    const token = `{{${match.kind}_${suffix}}}`
+    const token = this.token(match)
     const previous = this.tenant.entries.get(token)
-    if (previous && previous.value !== match.value)
-      throw new RedactionError("Redaction placeholder collision", 503)
     if (!previous) {
       const json = JSON.stringify(match.value).slice(1, -1)
       if (Buffer.byteLength(match.value) + token.length + 128 > MAX_BLOCK_BYTES)
@@ -285,6 +369,7 @@ export class RedactionScope {
         value: match.value,
         json,
         kind: match.kind,
+        label: match.label,
       })
       this.tenant.cache.set(token, bytes)
       this.tenant.version++
@@ -295,6 +380,8 @@ export class RedactionScope {
       this.counted.set(token, match.source)
       this.metrics.total++
       this.metrics.byKind[match.kind]++
+      this.metrics.byLabel[match.label] =
+        (this.metrics.byLabel[match.label] ?? 0) + 1
       this.metrics.bySource[match.source]++
     }
     return token
@@ -326,7 +413,7 @@ export class RedactionScope {
     secretField: boolean,
   ): string {
     const tokenSpans: Array<{ start: number; end: number }> = []
-    for (const token of text.matchAll(TOKEN)) {
+    for (const token of text.matchAll(tokenPattern())) {
       const entry = this.tenant.entries.get(token[0])
       // Restarted/evicted contexts and other tools can supply opaque placeholders.
       // Preserve them without granting access to another caller's original value.
@@ -358,6 +445,7 @@ export class RedactionScope {
             end: span.start,
             value: text.slice(start, span.start),
             kind: "SECRET",
+            label: "SECRET",
             source: "field",
           })
         start = span.end
@@ -367,13 +455,16 @@ export class RedactionScope {
     // assignment followed by its bare value must be safe on the first pass too.
     const scanned = new Set<string>()
     for (const entry of [...this.tenant.entries.values(), ...matches]) {
-      if (entry.kind === "SECRET" && !this.config.secrets) continue
-      if (entry.kind === "HOME" && !this.config.homePaths) continue
+      if (!categoryEnabled(this.config, entry.kind, entry.label)) continue
+      if (isAllowed(this.config, entry.value)) continue
       // Plain custom words are already matched by the compiled rules. Partial
       // JSON still needs their escaped spelling, without reviving removed rules.
       if (
         entry.kind === "WORD"
-        && (!json || !this.config.wordsEnabled || !this.words.has(entry.value))
+        && (!json
+          || !this.words.has(
+            this.config.wordsAnyCase ? entry.value.toLowerCase() : entry.value,
+          ))
       )
         continue
       const value =
@@ -382,7 +473,7 @@ export class RedactionScope {
             entry.json
           : JSON.stringify(entry.value).slice(1, -1)
         : entry.value
-      const key = `${entry.kind}:${value}`
+      const key = `${entry.label}:${value}`
       if (scanned.has(key)) continue
       scanned.add(key)
       let from = 0
@@ -400,6 +491,7 @@ export class RedactionScope {
             end,
             value: entry.value,
             kind: entry.kind,
+            label: entry.label,
             source: "known",
           })
         from = end
@@ -416,7 +508,7 @@ export class RedactionScope {
         )
       )
         continue
-      output += text.slice(cursor, match.start) + this.placeholder(match)
+      output += text.slice(cursor, match.start) + this.act(match)
       cursor = match.end
     }
     return output + text.slice(cursor)
@@ -424,13 +516,16 @@ export class RedactionScope {
 
   restoreText(text: string, json = false, toolInput = false): string {
     this.tenant.touched = Date.now()
-    return text.replaceAll(TOKEN, (token) => {
-      const entry = this.allowed.get(token)
-      if (!entry && toolInput)
+    // Models sometimes echo a placeholder with spaces inside the braces or in
+    // another case; those still map back to the exact placeholder sent.
+    return text.replaceAll(loosePattern(), (found, label, suffix) => {
+      const token = canonicalToken(label, suffix)
+      const entry = token ? this.allowed.get(token) : undefined
+      if (!entry && toolInput && found === token)
         throw new RedactionError(
           "Cannot restore redacted tool input; resend the original unredacted context",
         )
-      if (!entry) return token // Never disclose a different request's known secret.
+      if (!entry) return found // Never disclose a different request's known secret.
       this.metrics.restored++
       return json ? entry.json : entry.value
     })
@@ -547,11 +642,17 @@ export class RedactionScope {
 }
 
 interface ActiveRedaction {
+  publish?: () => void
   scope: RedactionScope
   issuer?: string
   inspection?: number
   upstreams?: Array<RedactionUpstream>
-  attempt?: { index?: number; prepared: Set<string> }
+  attempts?: { entries: Array<RedactionAttempt>; truncated: boolean }
+  attempt?: {
+    index?: number
+    metadata?: RedactionAttempt
+    prepared: Set<string>
+  }
 }
 const active = new AsyncLocalStorage<ActiveRedaction>()
 
@@ -577,45 +678,103 @@ export function withRedactionUpstream<T>(
   )
     current.upstreams.push(safe)
   const index = captureRedactionAttempt(current.inspection, safe, payload)
-  return active.run(
-    { ...current, attempt: { index, prepared: new Set() } },
-    run,
-  )
+  const metadata: RedactionAttempt = {
+    upstream: safe,
+    status: "running",
+    bodies: [],
+    truncated: false,
+  }
+  if (current.attempts) {
+    if (current.attempts.entries.length < 16)
+      current.attempts.entries.push(metadata)
+    else current.attempts.truncated = true
+  }
+  current.publish?.()
+  const finish = (status: RedactionAttempt["status"]) => {
+    metadata.status = status
+    current.publish?.()
+  }
+  try {
+    const result = active.run(
+      { ...current, attempt: { index, metadata, prepared: new Set() } },
+      run,
+    )
+    if (result instanceof Promise)
+      return result.then(
+        (value: unknown) => {
+          finish("returned")
+          return value
+        },
+        (error: unknown) => {
+          finish("failed")
+          throw error
+        },
+      ) as T
+    finish("returned")
+    return result
+  } catch (error) {
+    finish("failed")
+    throw error
+  }
 }
 
 /** Only bodies prepared by our generation serializer qualify as HTTP evidence. */
 export function prepareRedactionBody(body: string): string {
   const current = active.getStore()
-  if (
-    current?.inspection !== undefined
-    && current.attempt
-    && current.attempt.prepared.size < 16
-  )
+  if (current?.attempt && current.attempt.prepared.size < 16)
     current.attempt.prepared.add(
       createHash("sha256").update(body).digest("hex"),
     )
   return body
 }
 
-export function observeRedactionHttp(body: unknown): void {
+export function observeRedactionHttp(body: unknown):
+  | {
+      response: (status: number) => void
+      failed: () => void
+    }
+  | undefined {
   const current = active.getStore()
-  if (
-    typeof body !== "string"
-    || current?.inspection === undefined
-    || !current.attempt
-  )
-    return
+  if (typeof body !== "string" || !current?.attempt) return
   if (
     current.attempt.prepared.has(
       createHash("sha256").update(body).digest("hex"),
     )
-  )
+  ) {
     captureRedactionHttp(current.inspection, current.attempt.index, body)
+    const metadata = current.attempt.metadata
+    if (!metadata) return
+    if (metadata.bodies.length >= 16) {
+      metadata.truncated = true
+      current.publish?.()
+      return
+    }
+    const observation: RedactionAttempt["bodies"][number] = {
+      places: current.scope.outboundPlaces(body),
+      status: "prepared",
+    }
+    metadata.bodies.push(observation)
+    current.publish?.()
+    return {
+      response: (status) => {
+        observation.status = "response"
+        observation.httpStatus = status
+        current.publish?.()
+      },
+      failed: () => {
+        observation.status = "failed"
+        current.publish?.()
+      },
+    }
+  }
 }
 
 export function maskUpstream<T>(value: T): T {
   const current = active.getStore()
-  return current ? current.scope.mask(value, current.issuer) : value
+  if (!current) return value
+  const masked = current.scope.mask(value, current.issuer)
+  current.publish?.()
+  return masked
 }
 
 /** Adapters and lazy search streams stay in the same scope, including final serializers. */
@@ -671,20 +830,41 @@ export async function runRedactedCall<P, R extends { response: unknown }>(
   const scope = new RedactionScope(config, identity)
   const releaseLease = scope.acquire()
   const inspection = beginRedactionInspection(payload)
+  const startedAt = Date.now()
+  const attempts = { entries: [] as Array<RedactionAttempt>, truncated: false }
   const upstreams: Array<RedactionUpstream> = []
-  const ua = c?.req.header("user-agent") ?? ""
-  const client =
-    /claude[- ]?code/i.test(ua) ? "Claude Code"
-    : /codex/i.test(ua) ? "Codex"
-    : /cursor/i.test(ua) ? "Cursor"
-    : /kilo/i.test(ua) ? "Kilo Code"
-    : /roo[- ]?code/i.test(ua) ? "Roo Code"
-    : /cline/i.test(ua) ? "Cline"
-    : /openai/i.test(ua) ? "OpenAI SDK"
-    : /anthropic/i.test(ua) ? "Anthropic SDK"
-    : "Unknown client"
+  const client = inferClientAgent(c, payload)
+  let diagnosticId: number | undefined
   let released = false
-  const release = () => {
+  const publish = (status: RedactionRecordStatus = "in_progress") => {
+    if (released && status === "in_progress") return
+    finishRedactionInspection(
+      inspection,
+      scope.inspectionMappings(redactionInspectionTokens(inspection)),
+    )
+    const route = {
+      client,
+      upstreams,
+      attempts: attempts.entries,
+      attemptsTruncated: attempts.truncated,
+      startedAt,
+    }
+    if (diagnosticId === undefined)
+      diagnosticId = recordRedactionDiagnostics(
+        scope.diagnostics(),
+        route,
+        inspection,
+        status,
+      )
+    else
+      updateRedactionDiagnostics(
+        diagnosticId,
+        scope.diagnostics(),
+        route,
+        status,
+      )
+  }
+  const release = (status: RedactionRecordStatus = "completed") => {
     if (released) return
     released = true
     finishRedactionInspection(
@@ -692,17 +872,16 @@ export async function runRedactedCall<P, R extends { response: unknown }>(
       scope.inspectionMappings(redactionInspectionTokens(inspection)),
     )
     releaseLease()
-    recordRedactionDiagnostics(
-      scope.diagnostics(),
-      { client, upstreams },
-      inspection,
-    )
+    publish(status)
   }
   try {
     const previousId = record(payload)?.previous_response_id
     if (typeof previousId === "string") scope.inheritResponse(previousId.trim())
-    const result = await active.run({ scope, inspection, upstreams }, () =>
-      execute(scope.mask(payload)),
+    const prepared = scope.mask(payload)
+    publish()
+    const result = await active.run(
+      { scope, inspection, upstreams, publish, attempts },
+      () => execute(prepared),
     )
     const identityResult = result as R & {
       accountId?: string
@@ -718,7 +897,7 @@ export async function runRedactedCall<P, R extends { response: unknown }>(
     ) {
       const { restoreRedactionStream } = await import("~/lib/redaction/stream")
       const restored = active.run(
-        { scope, issuer, inspection, upstreams },
+        { scope, issuer, inspection, upstreams, publish, attempts },
         () =>
           restoreRedactionStream(
             bindRedactionStream(response as AsyncIterable<unknown>),
@@ -738,20 +917,21 @@ export async function runRedactedCall<P, R extends { response: unknown }>(
                   if (item.done) release()
                   return item
                 } catch (error) {
-                  release()
+                  release("failed")
                   throw error
                 }
               },
               async return() {
                 try {
-                  return (
-                    (await iterator.return?.()) ?? {
-                      done: true as const,
-                      value: undefined,
-                    }
-                  )
-                } finally {
-                  release()
+                  const result = (await iterator.return?.()) ?? {
+                    done: true as const,
+                    value: undefined,
+                  }
+                  release("cancelled")
+                  return result
+                } catch (error) {
+                  release("failed")
+                  throw error
                 }
               },
             }
@@ -759,13 +939,11 @@ export async function runRedactedCall<P, R extends { response: unknown }>(
         },
       }
     }
-    try {
-      return { ...result, response: scope.restore(response, issuer) }
-    } finally {
-      release()
-    }
-  } catch (error) {
+    const output = { ...result, response: scope.restore(response, issuer) }
     release()
+    return output
+  } catch (error) {
+    release("failed")
     throw error
   }
 }

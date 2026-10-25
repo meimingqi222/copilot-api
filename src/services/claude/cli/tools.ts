@@ -55,11 +55,48 @@ const WAIT_TOOL: BridgeTool = {
   },
 }
 
+/**
+ * 调用方声明的工具名 → 交给 Claude Code 的名字。
+ *
+ * Claude Code 只保留 MCP 工具名里的 `[A-Za-z0-9_-]`：调用方的 `spawn.agent`
+ * 会被它叫成 `spawn_agent`，原样回传的话调用方根本没有这个工具。所以先由
+ * 我们换成合法名字（撞名时加 `_2`…），回传时再换回声明的名字。
+ * 按 payload 里的顺序确定，同一份工具表每轮得到同样的名字（prompt cache）。
+ */
+export function bridgeToolNames(
+  payload: AnthropicMessagesPayload,
+): Map<string, string> {
+  const names = new Map<string, string>()
+  const taken = new Set<string>([CLAUDE_WAIT_TOOL_NAME])
+  for (const tool of payload.tools ?? []) {
+    if (!("input_schema" in tool) || names.has(tool.name)) continue
+    const base = tool.name.replaceAll(/[^\w-]/g, "_") || "tool"
+    let name = base
+    for (let n = 2; taken.has(name); n++) name = `${base}_${n}`
+    taken.add(name)
+    names.set(tool.name, name)
+  }
+  return names
+}
+
+/** 交给 Claude Code 的名字 → 调用方声明的名字。 */
+export function declaredToolNames(
+  payload: AnthropicMessagesPayload,
+): Map<string, string> {
+  return new Map(
+    [...bridgeToolNames(payload)].map(([declared, bridge]) => [
+      bridge,
+      declared,
+    ]),
+  )
+}
+
 export function bridgeTools(
   payload: AnthropicMessagesPayload,
 ): Array<BridgeTool> {
   const choice = payload.tool_choice
   const only = choice?.type === "tool" ? choice.name : undefined
+  const names = bridgeToolNames(payload)
   const out: Array<BridgeTool> = []
   for (const tool of payload.tools ?? []) {
     if (choice?.type === "none") continue
@@ -68,7 +105,7 @@ export function bridgeTools(
     // (e.g. web_search) have no bridge representation.
     if (!("input_schema" in tool)) continue
     out.push({
-      name: tool.name,
+      name: names.get(tool.name) ?? tool.name,
       ...(tool.description ? { description: tool.description } : {}),
       inputSchema: tool.input_schema ?? EMPTY_SCHEMA,
     })
@@ -109,9 +146,14 @@ export function toolResults(
   payload: AnthropicMessagesPayload,
 ): Array<BridgeToolResult> {
   const out: Array<BridgeToolResult> = []
+  const notices: Array<string> = []
   for (const message of freshResultMessages(payload)) {
-    if (typeof message.content === "string") continue
+    if (typeof message.content === "string") {
+      notices.push(...sideNotices(message.content))
+      continue
+    }
     for (const block of message.content) {
+      if (block.type === "text") notices.push(...sideNotices(block.text))
       if (block.type !== "tool_result") continue
       out.push({
         toolUseId: block.tool_use_id,
@@ -120,6 +162,41 @@ export function toolResults(
       })
     }
   }
+  // A running Claude Code only hears what arrives as a tool result, so what
+  // came beside the results rides on the last one, as Claude Code itself
+  // attaches a notice that lands mid-turn.
+  const last = out.at(-1)
+  if (last && notices.length)
+    last.content = [...last.content, { type: "text", text: notices.join("\n") }]
+  return out
+}
+
+const TASK_NOTIFICATION = /<task-notification>[\s\S]*?<\/task-notification>/g
+const SYSTEM_REMINDER = /<system-reminder>[\s\S]*?<\/system-reminder>/g
+
+/**
+ * What a text beside the tool results must still reach the run with.
+ *
+ * - `<task-notification>`: a background sub-agent finished (Claude Code
+ *   2.1.310 runs Agent sub-agents in the background). Dropped, the model
+ *   never hears it and keeps waiting.
+ * - The user's own words typed while the agent worked.
+ * - Other `<system-reminder>`s (hook notices, token counts) are the client
+ *   Claude Code's own bookkeeping; the run makes its own, so they are left out.
+ */
+function sideNotices(text: string): Array<string> {
+  const out = [...text.matchAll(TASK_NOTIFICATION)].map(
+    (match) => `<system-reminder>\n${match[0]}\n</system-reminder>`,
+  )
+  // Notifications were taken above, also those wrapped in a reminder.
+  const words = text
+    .replaceAll(SYSTEM_REMINDER, "")
+    .replaceAll(TASK_NOTIFICATION, "")
+    .trim()
+  if (words)
+    out.push(
+      `<system-reminder>\nThe user sent a new message while you were working:\n${words}\n\nIMPORTANT: After completing your current task, you MUST address the user's message above. Do not ignore it.\n</system-reminder>`,
+    )
   return out
 }
 

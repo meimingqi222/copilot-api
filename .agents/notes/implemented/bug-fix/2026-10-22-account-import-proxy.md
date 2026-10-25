@@ -34,6 +34,8 @@ proxy is restored. Existing API clients keep their previous behavior.
 
 ## Verification
 
+Focused suites: `tests/admin-account-import.test.ts`, `tests/accounts-import-proxy-ui.test.ts`, `tests/codebuddy-quota.test.ts`.
+
 - `tests/admin-account-import.test.ts::account import can discard a source-machine proxy without losing other settings`
 - `tests/admin-account-import.test.ts::account import keeps the source proxy when explicitly requested`
 - `tests/accounts-import-proxy-ui.test.ts::standard import sends the proxy choice`
@@ -41,7 +43,8 @@ proxy is restored. Existing API clients keep their previous behavior.
 
 Proved: before the fix, `bun test tests/admin-account-import.test.ts tests/codebuddy-quota.test.ts`
 failed because restoreProxy=false still exported the source proxy and the quota
-failure message remained Unable to connect. Original output is retained in
-ignored `temp/codebuddy-import-red.log` under the repository's command-log policy.
+failure message remained Unable to connect. The original ignored temporary
+log is no longer present; these assertion differences are the historical
+natural-red summary rather than a retrievable raw log.
 Both tests pass with the implementation; the UI test verifies the default and
 both explicit choices.

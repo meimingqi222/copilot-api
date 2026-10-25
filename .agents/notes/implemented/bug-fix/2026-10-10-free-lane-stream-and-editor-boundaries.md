@@ -55,10 +55,11 @@ Focused suite: `tests/opencode-zen-free-lane.test.ts` and
 - `tests/kilo-free-lane.test.ts::keyless discovery does not imply freeOnly for custom endpoints`
 - `tests/kilo-free-lane.test.ts::missing credentials do not bypass the editor API key requirement`
 
-Proved: the pre-fix run of both test files (output saved locally to
-`temp/free-lanes-red.log`) failed at the first four bound
-assertions (43 pass, 4 fail). The Responses event list contained the four decoy
+Proved: the historical pre-fix run of both test files failed at the first
+four bound assertions (43 pass, 4 fail). The Responses event list contained the four decoy
 events instead of only text and completion; Chat returned only `[DONE]` instead
 of usage plus `[DONE]`; both saved-keyless probes returned an empty request list
 instead of `["fetch"]`. Applying the guards made the same run green (47 pass,
 0 fail). The missing-credentials case is an additional negative control.
+The original ignored temporary log is no longer present; the observed assertion
+differences above preserve the natural-red summary, not a retrievable raw log.

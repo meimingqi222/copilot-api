@@ -144,6 +144,11 @@ export async function* normalizeClaudeTurns(
       yield* finish()
       continue
     }
+    // The account's allowance after this turn; translate hands it over.
+    if (parsed.type === "rate_limit_event") {
+      yield line
+      continue
+    }
     if (parsed.type !== "stream_event" || !parsed.event) continue
     const event = parsed.event
     if (event.type === "message_start") {

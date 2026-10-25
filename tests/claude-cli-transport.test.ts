@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test"
 
 import { setClaudeCliTestHooks } from "~/services/claude/cli/binary"
-import { ClaudeCliUnavailableError } from "~/services/claude/cli/errors"
+import {
+  ClaudeCliUnavailableError,
+  toHttpError,
+} from "~/services/claude/cli/errors"
 import { resolveClaudeTransport } from "~/services/claude/cli/transport"
 
 import { testConnection } from "./claude-cli-fixtures"
@@ -96,4 +99,13 @@ describe("resolveClaudeTransport", () => {
       ClaudeCliUnavailableError,
     )
   })
+})
+
+test("toHttpError keeps quota words a 429 even when they mention length", () => {
+  expect(
+    toHttpError(new Error("Prompt is too long: usage limit reached")).response
+      .status,
+  ).toBe(429)
+  expect(toHttpError(new Error("prompt is too long")).response.status).toBe(400)
+  expect(toHttpError(new Error("socket hang up")).response.status).toBe(502)
 })

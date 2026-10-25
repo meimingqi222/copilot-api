@@ -7,7 +7,7 @@
     <title>Copilot API Admin</title>
     <link rel="stylesheet" href="/admin/static/css/apple-theme.css?v=0.7.5" />
     <link rel="stylesheet" href="/admin/static/css/traces.css?v=0.7.6" />
-    <link rel="stylesheet" href="/admin/static/css/redaction.css?v=0.7.2" />
+    <link rel="stylesheet" href="/admin/static/css/redaction.css?v=0.8.9" />
     <link
       rel="stylesheet"
       href="/admin/static/css/routing-groups.css?v=0.7.3"
@@ -25,7 +25,7 @@
       import autoAnimate from "https://cdn.jsdelivr.net/npm/@formkit/auto-animate@0.8.2/index.min.mjs"
       globalThis.autoAnimate = autoAnimate
     </script>
-    <script src="/admin/static/js/i18n.js?v=0.7.25"></script>
+    <script src="/admin/static/js/i18n.js?v=0.7.28"></script>
     <script src="/admin/static/js/api.js?v=0.7.4"></script>
     <script src="/admin/static/js/admin-icons.js?v=0.7.0"></script>
     <script src="/admin/static/js/view-helpers.js?v=0.7.5"></script>
@@ -7462,6 +7462,14 @@
               </div>
               <div class="page-actions">
                 <button
+                  @click="$dispatch('open-diagnostic-bundle')"
+                  class="btn btn-secondary text-xs px-3"
+                >
+                  <i data-lucide="package" class="w-3.5 h-3.5 mr-1"></i>
+                  <span x-text="t('logs.bundle.button')"></span>
+                </button>
+                <button
+                  x-show="logTab === 'requests'"
                   @click="autoRefresh = !autoRefresh"
                   class="btn text-xs px-3"
                   :class="autoRefresh ? 'btn-primary' : 'btn-secondary'"
@@ -7472,6 +7480,7 @@
                   ></span>
                 </button>
                 <button
+                  x-show="logTab === 'requests'"
                   @click="load()"
                   class="btn btn-secondary text-xs px-3"
                   :class="{ 'opacity-75': loading }"
@@ -7485,275 +7494,846 @@
               </div>
             </header>
 
-            <!-- Filters -->
-            <div class="card p-4 mb-6 flex flex-wrap gap-4 items-center">
-              <select
-                x-model="filters.level"
-                @change="filters.offset = 0; load()"
-                class="input w-32"
+            <!-- 日志与诊断 tabs -->
+            <div class="flex gap-1 mb-5 border-b border-[var(--apple-gray-5)]">
+              <template
+                x-for="tab in ['requests', 'system', 'status']"
+                :key="tab"
               >
-                <option value="" x-text="t('logs.allLevels')"></option>
-                <option value="debug">Debug</option>
-                <option value="info">Info</option>
-                <option value="warn">Warn</option>
-                <option value="error">Error</option>
-              </select>
-              <select
-                x-model="filters.apiKind"
-                @change="filters.offset = 0; load()"
-                class="input w-36"
-              >
-                <option value="" x-text="t('logs.allApis')"></option>
-                <option value="chat">chat</option>
-                <option value="messages">messages</option>
-                <option value="responses">responses</option>
-                <option value="embeddings">embeddings</option>
-              </select>
-              <select
-                x-model="filters.outcome"
-                @change="filters.offset = 0; load()"
-                class="input w-36"
-              >
-                <option value="" x-text="t('logs.allOutcomes')"></option>
-                <option
-                  value="success"
-                  x-text="t('logs.outcomeSuccess')"
-                ></option>
-                <option
-                  value="incomplete"
-                  x-text="t('logs.outcomeIncomplete')"
-                ></option>
-                <option
-                  value="failed"
-                  x-text="t('logs.outcomeFailed')"
-                ></option>
-                <option
-                  value="cancelled"
-                  x-text="t('logs.outcomeCancelled')"
-                ></option>
-              </select>
-              <input
-                x-model="filters.search"
-                @keyup.enter="filters.offset = 0; load()"
-                type="text"
-                :placeholder="t('logs.search')"
-                class="input flex-1 min-w-[200px]"
-              />
-              <select
-                x-model="filters.modelMismatch"
-                @change="filters.offset = 0; load()"
-                class="input w-40"
-                :title="t('logs.modelAudit')"
-              >
-                <option value="" x-text="t('logs.modelAuditAll')"></option>
-                <option
-                  value="true"
-                  x-text="t('logs.modelAuditMismatch')"
-                ></option>
-                <option
-                  value="false"
-                  x-text="t('logs.modelAuditMatch')"
-                ></option>
-              </select>
-              <button
-                @click="clearFilters()"
-                class="btn btn-secondary"
-                x-text="t('logs.clearFilters')"
-              ></button>
-              <button
-                @click="exportLogs()"
-                class="btn btn-secondary"
-                x-text="t('logs.exportJsonl')"
-              ></button>
-            </div>
-
-            <div x-show="loading" class="flex justify-center py-20">
-              <div
-                class="animate-spin h-12 w-12 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full"
-              ></div>
-            </div>
-
-            <div x-show="!loading" class="card overflow-hidden">
-              <table class="w-full text-sm">
-                <thead>
-                  <tr
-                    class="border-b border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)]"
-                  >
-                    <th class="text-left p-3" x-text="t('logs.time')"></th>
-                    <th class="text-left p-3">API</th>
-                    <th class="text-left p-3">Upstream</th>
-                    <th class="text-left p-3" x-text="t('logs.level')"></th>
-                    <th class="text-left p-3">Result</th>
-                    <th class="text-left p-3">Latency</th>
-                    <th class="text-left p-3" x-text="t('logs.model')"></th>
-                    <th class="text-left p-3" x-text="t('logs.clientIp')"></th>
-                    <th class="text-left p-3">Request</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <template x-for="log in entries" :key="log.id">
-                    <tr
-                      class="border-b border-[var(--apple-gray-5)] last:border-0 hover:bg-[var(--apple-bg-secondary)] cursor-pointer"
-                      :title="log.error || log.errorSnippet || ''"
-                      @click="selectedLog = selectedLog?.requestId === log.requestId ? null : log"
-                    >
-                      <td
-                        class="p-3 text-[var(--apple-text-secondary)] text-xs"
-                        x-text="formatTime(log.timestamp)"
-                      ></td>
-                      <td
-                        class="p-3 font-mono text-xs"
-                        x-text="(log.apiKind || log.endpoint || '-') + ' ' + (log.modelRequested || log.model || '-') + (log.reasoningEffort ? ' (' + log.reasoningEffort + ')' : '')"
-                      ></td>
-                      <td
-                        class="p-3 font-mono text-xs"
-                        x-text="formatUpstream(log)"
-                        :title="log.upstreamBaseUrl || ''"
-                      ></td>
-                      <td class="p-3">
-                        <span
-                          class="badge"
-                          :class="getLevelClass(log.level)"
-                          x-text="log.level"
-                        ></span>
-                      </td>
-                      <td class="p-3 text-xs">
-                        <span
-                          :class="log.outcome === 'success' ? 'text-[var(--apple-green)]' : 'text-[var(--apple-red)]'"
-                          x-text="(log.outcome || 'unknown') + ' HTTP ' + (log.statusCode || '-')"
-                        ></span>
-                        <span
-                          x-show="log.error"
-                          class="block text-[var(--apple-text-secondary)] max-w-[280px] truncate"
-                          x-text="log.error"
-                        ></span>
-                      </td>
-                      <td
-                        class="p-3 text-xs"
-                        x-text="log.latencyMs != null ? (log.latencyMs + 'ms') : '-'"
-                      ></td>
-                      <td class="p-3 text-xs">
-                        <span
-                          x-text="log.modelUpstream || log.model || '-'"
-                        ></span>
-                        <span
-                          x-show="log.modelResponse"
-                          class="block break-all text-[11px]"
-                          :class="log.modelMismatch ? 'text-[var(--apple-red)]' : 'text-[var(--apple-text-secondary)]'"
-                          :title="`${t('logs.sentModel')}: ${log.modelUpstream || log.model || '-'}\n${t('logs.responseModel')}: ${log.modelResponse || '-'}`"
-                        >
-                          <span x-text="`↳ ${log.modelResponse}`"></span>
-                          <span
-                            x-show="log.modelMismatch || log.modelVariant || log.modelConflict"
-                            class="ml-1 inline-flex rounded px-1 py-px text-[10px] font-medium ring-1 ring-inset"
-                            :class="log.modelMismatch || log.modelConflict ? 'bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/30' : 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/30'"
-                            x-text="log.modelConflict ? t('logs.modelConflict') : (log.modelMismatch ? t('logs.modelMismatch') : t('logs.modelVariant'))"
-                          ></span>
-                        </span>
-                      </td>
-                      <td
-                        class="p-3 font-mono text-xs"
-                        :title="log.userAgent || ''"
-                        x-text="log.clientIp || '-'"
-                      ></td>
-                      <td
-                        class="p-3 font-mono text-xs"
-                        :title="log.requestId || ''"
-                        x-text="`${log.attempts?.length || 0} attempts · ${(log.requestId || '-').slice(0, 8)}`"
-                      ></td>
-                    </tr>
-                  </template>
-                </tbody>
-              </table>
-              <div x-show="!entries.length" class="empty-state py-12">
-                <i data-lucide="scroll-text" class="empty-state-icon"></i>
-                <p
-                  class="text-body text-[var(--apple-text-secondary)]"
-                  x-text="t('logs.noLogs')"
-                ></p>
-              </div>
-            </div>
-
-            <div
-              x-show="selectedLog"
-              class="card p-5 mt-4"
-              style="display: none"
-            >
-              <div class="flex justify-between items-start gap-4 mb-4">
-                <div>
-                  <div
-                    class="font-mono text-sm"
-                    x-text="selectedLog?.requestId"
-                  ></div>
-                  <div
-                    class="text-xs text-[var(--apple-text-secondary)]"
-                    x-text="selectedLog ? `${selectedLog.clientIp || '-'} · ${selectedLog.userAgent || '-'}` : ''"
-                  ></div>
-                </div>
                 <button
-                  class="btn btn-secondary btn-small"
-                  @click="selectedLog = null"
+                  type="button"
+                  class="px-4 py-2 text-sm -mb-px border-b-2"
+                  :class="logTab === tab ? 'border-[var(--apple-blue)] text-[var(--apple-text)] font-medium' : 'border-transparent text-[var(--apple-text-secondary)]'"
+                  :aria-pressed="logTab === tab"
+                  @click="logTab = tab"
+                  x-text="t('logs.tab.' + tab)"
+                ></button>
+              </template>
+            </div>
+
+            <div x-show="logTab === 'requests'">
+              <!-- Filters -->
+              <div class="card p-4 mb-6 flex flex-wrap gap-4 items-center">
+                <button
+                  type="button"
+                  x-show="filters.requestId"
+                  class="btn btn-secondary btn-small font-mono"
+                  @click="filters.requestId = ''; load()"
+                  x-text="'requestId=' + (filters.requestId || '').slice(0, 12) + ' ×'"
+                ></button>
+                <select
+                  x-model="filters.level"
+                  @change="filters.offset = 0; load()"
+                  class="input w-32"
                 >
-                  Close
-                </button>
+                  <option value="" x-text="t('logs.allLevels')"></option>
+                  <option value="debug">Debug</option>
+                  <option value="info">Info</option>
+                  <option value="warn">Warn</option>
+                  <option value="error">Error</option>
+                </select>
+                <select
+                  x-model="filters.apiKind"
+                  @change="filters.offset = 0; load()"
+                  class="input w-36"
+                >
+                  <option value="" x-text="t('logs.allApis')"></option>
+                  <option value="chat">chat</option>
+                  <option value="messages">messages</option>
+                  <option value="responses">responses</option>
+                  <option value="embeddings">embeddings</option>
+                </select>
+                <select
+                  x-model="filters.outcome"
+                  @change="filters.offset = 0; load()"
+                  class="input w-36"
+                >
+                  <option value="" x-text="t('logs.allOutcomes')"></option>
+                  <option
+                    value="success"
+                    x-text="t('logs.outcomeSuccess')"
+                  ></option>
+                  <option
+                    value="incomplete"
+                    x-text="t('logs.outcomeIncomplete')"
+                  ></option>
+                  <option
+                    value="failed"
+                    x-text="t('logs.outcomeFailed')"
+                  ></option>
+                  <option
+                    value="cancelled"
+                    x-text="t('logs.outcomeCancelled')"
+                  ></option>
+                </select>
+                <input
+                  x-model="filters.search"
+                  @keyup.enter="filters.offset = 0; load()"
+                  type="text"
+                  :placeholder="t('logs.search')"
+                  class="input flex-1 min-w-[200px]"
+                />
+                <select
+                  x-model="filters.modelMismatch"
+                  @change="filters.offset = 0; load()"
+                  class="input w-40"
+                  :title="t('logs.modelAudit')"
+                >
+                  <option value="" x-text="t('logs.modelAuditAll')"></option>
+                  <option
+                    value="true"
+                    x-text="t('logs.modelAuditMismatch')"
+                  ></option>
+                  <option
+                    value="false"
+                    x-text="t('logs.modelAuditMatch')"
+                  ></option>
+                </select>
+                <button
+                  @click="clearFilters()"
+                  class="btn btn-secondary"
+                  x-text="t('logs.clearFilters')"
+                ></button>
+                <button
+                  @click="exportLogs()"
+                  class="btn btn-secondary"
+                  x-text="t('logs.exportJsonl')"
+                ></button>
               </div>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                <div>
-                  <div class="font-medium mb-2">Result</div>
-                  <pre
-                    class="overflow-auto text-xs bg-[var(--apple-bg-secondary)] p-3 rounded"
-                    x-text="formatJson({ outcome: selectedLog?.outcome, httpStatus: selectedLog?.statusCode, outputObserved: selectedLog?.outputObserved, protocolTerminal: selectedLog?.protocolTerminal, finishReason: selectedLog?.finishReason, error: selectedLog?.diagnosticError || selectedLog?.error })"
-                  ></pre>
-                </div>
-                <div>
-                  <div class="font-medium mb-2">Routing</div>
-                  <pre
-                    class="overflow-auto text-xs bg-[var(--apple-bg-secondary)] p-3 rounded"
-                    x-text="formatJson({ initialTarget: selectedLog?.initialTarget, finalTarget: selectedLog?.finalTarget, provider: selectedLog?.provider, protocol: selectedLog?.protocol, upstreamModel: selectedLog?.modelUpstream, reasoningEffort: selectedLog?.reasoningEffort })"
-                  ></pre>
-                </div>
-              </div>
-              <div x-show="selectedLog?.modelResponse" class="mt-4">
+
+              <div x-show="loading" class="flex justify-center py-20">
                 <div
-                  class="font-medium mb-2"
-                  x-text="t('logs.modelAudit')"
+                  class="animate-spin h-12 w-12 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full"
                 ></div>
+              </div>
+
+              <div x-show="!loading" class="card overflow-hidden">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr
+                      class="border-b border-[var(--apple-gray-5)] bg-[var(--apple-bg-secondary)]"
+                    >
+                      <th class="text-left p-3" x-text="t('logs.time')"></th>
+                      <th class="text-left p-3">API</th>
+                      <th class="text-left p-3">Upstream</th>
+                      <th class="text-left p-3" x-text="t('logs.level')"></th>
+                      <th class="text-left p-3">Result</th>
+                      <th class="text-left p-3">Latency</th>
+                      <th class="text-left p-3" x-text="t('logs.model')"></th>
+                      <th
+                        class="text-left p-3"
+                        x-text="t('logs.clientIp')"
+                      ></th>
+                      <th class="text-left p-3">Request</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="log in entries" :key="log.id">
+                      <tr
+                        class="border-b border-[var(--apple-gray-5)] last:border-0 hover:bg-[var(--apple-bg-secondary)] cursor-pointer"
+                        :title="log.error || log.errorSnippet || ''"
+                        @click="selectedLog = selectedLog?.requestId === log.requestId ? null : log"
+                      >
+                        <td
+                          class="p-3 text-[var(--apple-text-secondary)] text-xs"
+                          x-text="formatTime(log.timestamp)"
+                        ></td>
+                        <td
+                          class="p-3 font-mono text-xs"
+                          x-text="(log.apiKind || log.endpoint || '-') + ' ' + (log.modelRequested || log.model || '-') + (log.reasoningEffort ? ' (' + log.reasoningEffort + ')' : '')"
+                        ></td>
+                        <td
+                          class="p-3 font-mono text-xs"
+                          x-text="formatUpstream(log)"
+                          :title="log.upstreamBaseUrl || ''"
+                        ></td>
+                        <td class="p-3">
+                          <span
+                            class="badge"
+                            :class="getLevelClass(log.level)"
+                            x-text="log.level"
+                          ></span>
+                        </td>
+                        <td class="p-3 text-xs">
+                          <span
+                            :class="log.outcome === 'success' ? 'text-[var(--apple-green)]' : 'text-[var(--apple-red)]'"
+                            x-text="(log.outcome || 'unknown') + ' HTTP ' + (log.statusCode || '-')"
+                          ></span>
+                          <span
+                            x-show="log.error"
+                            class="block text-[var(--apple-text-secondary)] max-w-[280px] truncate"
+                            x-text="log.error"
+                          ></span>
+                        </td>
+                        <td
+                          class="p-3 text-xs"
+                          x-text="log.latencyMs != null ? (log.latencyMs + 'ms') : '-'"
+                        ></td>
+                        <td class="p-3 text-xs">
+                          <span
+                            x-text="log.modelUpstream || log.model || '-'"
+                          ></span>
+                          <span
+                            x-show="log.modelResponse"
+                            class="block break-all text-[11px]"
+                            :class="log.modelMismatch ? 'text-[var(--apple-red)]' : 'text-[var(--apple-text-secondary)]'"
+                            :title="`${t('logs.sentModel')}: ${log.modelUpstream || log.model || '-'}\n${t('logs.responseModel')}: ${log.modelResponse || '-'}`"
+                          >
+                            <span x-text="`↳ ${log.modelResponse}`"></span>
+                            <span
+                              x-show="log.modelMismatch || log.modelVariant || log.modelConflict"
+                              class="ml-1 inline-flex rounded px-1 py-px text-[10px] font-medium ring-1 ring-inset"
+                              :class="log.modelMismatch || log.modelConflict ? 'bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/10 dark:text-red-300 dark:ring-red-500/30' : 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/30'"
+                              x-text="log.modelConflict ? t('logs.modelConflict') : (log.modelMismatch ? t('logs.modelMismatch') : t('logs.modelVariant'))"
+                            ></span>
+                          </span>
+                        </td>
+                        <td
+                          class="p-3 font-mono text-xs"
+                          :title="log.userAgent || ''"
+                          x-text="log.clientIp || '-'"
+                        ></td>
+                        <td
+                          class="p-3 font-mono text-xs"
+                          :title="log.requestId || ''"
+                          x-text="`${log.attempts?.length || 0} attempts · ${(log.requestId || '-').slice(0, 8)}`"
+                        ></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+                <div x-show="!entries.length" class="empty-state py-12">
+                  <i data-lucide="scroll-text" class="empty-state-icon"></i>
+                  <p
+                    class="text-body text-[var(--apple-text-secondary)]"
+                    x-text="t('logs.noLogs')"
+                  ></p>
+                </div>
+              </div>
+
+              <div
+                x-show="selectedLog"
+                class="card p-5 mt-4"
+                style="display: none"
+              >
+                <div class="flex justify-between items-start gap-4 mb-4">
+                  <div>
+                    <div
+                      class="font-mono text-sm"
+                      x-text="selectedLog?.requestId"
+                    ></div>
+                    <div
+                      class="text-xs text-[var(--apple-text-secondary)]"
+                      x-text="selectedLog ? `${selectedLog.clientIp || '-'} · ${selectedLog.userAgent || '-'}` : ''"
+                    ></div>
+                  </div>
+                  <div class="flex gap-2">
+                    <button
+                      class="btn btn-secondary btn-small"
+                      x-show="selectedLog?.requestId"
+                      @click="$dispatch('system-logs-for-request', selectedLog.requestId)"
+                      x-text="t('logs.system.forRequest')"
+                    ></button>
+                    <button
+                      class="btn btn-secondary btn-small"
+                      @click="selectedLog = null"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <div class="font-medium mb-2">Result</div>
+                    <pre
+                      class="overflow-auto text-xs bg-[var(--apple-bg-secondary)] p-3 rounded"
+                      x-text="formatJson({ outcome: selectedLog?.outcome, httpStatus: selectedLog?.statusCode, outputObserved: selectedLog?.outputObserved, protocolTerminal: selectedLog?.protocolTerminal, finishReason: selectedLog?.finishReason, error: selectedLog?.diagnosticError || selectedLog?.error })"
+                    ></pre>
+                  </div>
+                  <div>
+                    <div class="font-medium mb-2">Routing</div>
+                    <pre
+                      class="overflow-auto text-xs bg-[var(--apple-bg-secondary)] p-3 rounded"
+                      x-text="formatJson({ initialTarget: selectedLog?.initialTarget, finalTarget: selectedLog?.finalTarget, provider: selectedLog?.provider, protocol: selectedLog?.protocol, upstreamModel: selectedLog?.modelUpstream, reasoningEffort: selectedLog?.reasoningEffort })"
+                    ></pre>
+                  </div>
+                </div>
+                <div x-show="selectedLog?.modelResponse" class="mt-4">
+                  <div
+                    class="font-medium mb-2"
+                    x-text="t('logs.modelAudit')"
+                  ></div>
+                  <pre
+                    class="overflow-auto text-xs bg-[var(--apple-bg-secondary)] p-3 rounded"
+                    x-text="formatJson({ requestedModel: selectedLog?.modelRequested, sentUpstream: selectedLog?.modelUpstream, upstreamResponse: selectedLog?.modelResponse, mismatch: selectedLog?.modelMismatch, variant: selectedLog?.modelVariant, conflict: selectedLog?.modelConflict })"
+                  ></pre>
+                </div>
+                <div class="font-medium mt-4 mb-2">Upstream attempts</div>
                 <pre
-                  class="overflow-auto text-xs bg-[var(--apple-bg-secondary)] p-3 rounded"
-                  x-text="formatJson({ requestedModel: selectedLog?.modelRequested, sentUpstream: selectedLog?.modelUpstream, upstreamResponse: selectedLog?.modelResponse, mismatch: selectedLog?.modelMismatch, variant: selectedLog?.modelVariant, conflict: selectedLog?.modelConflict })"
+                  class="overflow-auto text-xs bg-[var(--apple-bg-secondary)] p-3 rounded max-h-80"
+                  x-text="formatJson(selectedLog?.attempts || [])"
                 ></pre>
               </div>
-              <div class="font-medium mt-4 mb-2">Upstream attempts</div>
-              <pre
-                class="overflow-auto text-xs bg-[var(--apple-bg-secondary)] p-3 rounded max-h-80"
-                x-text="formatJson(selectedLog?.attempts || [])"
-              ></pre>
+
+              <!-- Pagination -->
+              <div
+                class="flex justify-between items-center mt-6"
+                x-show="total > 0"
+              >
+                <span
+                  class="text-body text-[var(--apple-text-secondary)]"
+                  x-text="`${filters.offset + 1} - ${Math.min(filters.offset + filters.limit, total)} of ${total}`"
+                ></span>
+                <div class="flex gap-3">
+                  <button
+                    @click="prevPage()"
+                    :disabled="filters.offset === 0"
+                    class="btn btn-secondary btn-small"
+                    :class="{ 'opacity-50': filters.offset === 0 }"
+                    x-text="t('logs.previous')"
+                  ></button>
+                  <button
+                    @click="nextPage()"
+                    :disabled="filters.offset + filters.limit >= total"
+                    class="btn btn-secondary btn-small"
+                    :class="{ 'opacity-50': filters.offset + filters.limit >= total }"
+                    x-text="t('logs.next')"
+                  ></button>
+                </div>
+              </div>
             </div>
 
-            <!-- Pagination -->
+            <!-- System logs, runtime status and the diagnostic bundle -->
             <div
-              class="flex justify-between items-center mt-6"
-              x-show="total > 0"
+              x-data="systemLogsView()"
+              @system-logs-for-request.window="showRequest($event.detail)"
+              @open-diagnostic-bundle.window="openBundle()"
             >
-              <span
-                class="text-body text-[var(--apple-text-secondary)]"
-                x-text="`${filters.offset + 1} - ${Math.min(filters.offset + filters.limit, total)} of ${total}`"
-              ></span>
-              <div class="flex gap-3">
-                <button
-                  @click="prevPage()"
-                  :disabled="filters.offset === 0"
-                  class="btn btn-secondary btn-small"
-                  :class="{ 'opacity-50': filters.offset === 0 }"
-                  x-text="t('logs.previous')"
-                ></button>
-                <button
-                  @click="nextPage()"
-                  :disabled="filters.offset + filters.limit >= total"
-                  class="btn btn-secondary btn-small"
-                  :class="{ 'opacity-50': filters.offset + filters.limit >= total }"
-                  x-text="t('logs.next')"
-                ></button>
+              <!-- Tab: system logs -->
+              <div
+                x-ref="systemLogPanel"
+                x-show="logTab === 'system'"
+                style="display: none"
+              >
+                <div class="card p-4 mb-4 flex flex-wrap gap-3 items-center">
+                  <select
+                    class="input text-xs py-1"
+                    x-model="filters.level"
+                    @change="load()"
+                    :aria-label="t('logs.system.level')"
+                  >
+                    <option
+                      value=""
+                      x-text="t('logs.system.allLevels')"
+                    ></option>
+                    <option value="debug">debug</option>
+                    <option value="info">info+</option>
+                    <option value="warn">warn+</option>
+                    <option value="error">error+</option>
+                  </select>
+                  <select
+                    class="input text-xs py-1"
+                    x-model="filters.sub"
+                    @change="load()"
+                    :aria-label="t('logs.system.subsystem')"
+                  >
+                    <option
+                      value=""
+                      x-text="t('logs.system.allSubsystems')"
+                    ></option>
+                    <template x-for="sub in subsystems" :key="sub">
+                      <option :value="sub" x-text="sub"></option>
+                    </template>
+                  </select>
+                  <input
+                    class="input text-xs py-1 flex-1 min-w-[160px]"
+                    type="search"
+                    x-model="filters.q"
+                    @keydown.enter="load()"
+                    :placeholder="t('logs.system.search')"
+                    :aria-label="t('logs.system.search')"
+                  />
+                  <input
+                    class="input text-xs py-1 font-mono w-[200px]"
+                    x-model="filters.req"
+                    @keydown.enter="load()"
+                    placeholder="requestId"
+                    aria-label="requestId"
+                  />
+                  <span
+                    x-show="filters.job || filters.conn"
+                    class="text-xs text-[var(--apple-text-secondary)] font-mono"
+                    x-text="[filters.job && ('job=' + filters.job), filters.run && ('run=' + filters.run), filters.conn && ('conn=' + filters.conn)].filter(Boolean).join(' · ')"
+                  ></span>
+                  <button
+                    type="button"
+                    class="btn btn-secondary btn-small"
+                    @click="clearFilters()"
+                    x-text="t('logs.system.clear')"
+                  ></button>
+                  <button
+                    type="button"
+                    class="btn btn-small"
+                    :class="live ? 'btn-primary' : 'btn-secondary'"
+                    :aria-pressed="live"
+                    @click="toggleLive()"
+                    x-text="live ? t('logs.system.liveOn') : t('logs.system.liveOff')"
+                  ></button>
+                  <button
+                    type="button"
+                    class="btn btn-secondary btn-small"
+                    @click="exportLogs()"
+                    x-text="t('logs.system.export')"
+                  ></button>
+                </div>
+
+                <div
+                  class="card p-4 mb-4 text-xs space-y-2"
+                  x-show="selectedConnection && filters.conn === selectedConnection?.id"
+                >
+                  <div
+                    class="font-medium"
+                    x-text="selectedConnection?.name"
+                  ></div>
+                  <p
+                    class="text-[var(--apple-text-secondary)]"
+                    x-text="t('logs.system.connectionHistory')"
+                  ></p>
+                  <template
+                    x-for="credential in selectedConnection?.credentials || []"
+                    :key="credential.id"
+                  >
+                    <div
+                      class="whitespace-pre-wrap break-all"
+                      x-text="credential.lastError ? formatTs(credential.lastErrorAt) + ' · ' + credential.lastError : credential.status"
+                    ></div>
+                  </template>
+                </div>
+                <div class="card overflow-hidden">
+                  <div
+                    x-show="!loading && entries.length === 0"
+                    class="p-8 text-center text-sm text-[var(--apple-text-secondary)]"
+                    x-text="t('logs.system.empty')"
+                  ></div>
+                  <template
+                    x-for="entry in entries"
+                    :key="entry.ts + ':' + entry.id"
+                  >
+                    <div
+                      class="border-b border-[var(--apple-gray-5)] last:border-0"
+                    >
+                      <button
+                        type="button"
+                        class="w-full text-left px-4 py-2 flex gap-3 items-start text-xs hover:bg-[var(--apple-gray-6)]"
+                        :aria-expanded="expanded === entry"
+                        @click="expanded = expanded === entry ? null : entry"
+                      >
+                        <span
+                          class="font-mono text-[var(--apple-text-secondary)] whitespace-nowrap"
+                          x-text="formatTs(entry.ts)"
+                        ></span>
+                        <span
+                          class="badge"
+                          :class="levelClass(entry.level)"
+                          x-text="entry.level"
+                        ></span>
+                        <span
+                          class="font-mono text-[var(--apple-text-secondary)]"
+                          x-text="entry.sub"
+                        ></span>
+                        <span
+                          class="flex-1 min-w-0 break-words"
+                          x-text="entry.msg + (entry.err && !entry.msg.includes(entry.err.message) ? ' — ' + entry.err.message : '')"
+                        ></span>
+                        <span
+                          x-show="entry.err?.stack"
+                          class="text-[var(--apple-text-secondary)]"
+                          >⋯</span
+                        >
+                      </button>
+                      <div
+                        x-show="expanded === entry"
+                        class="px-4 pb-3 space-y-2 text-xs"
+                        style="display: none"
+                      >
+                        <div class="flex flex-wrap gap-2 font-mono">
+                          <button
+                            type="button"
+                            class="btn btn-secondary btn-small"
+                            x-show="entry.req"
+                            @click="logTab = 'requests'; filters.req = ''; $dispatch('admin:inspect-request', entry.req)"
+                            x-text="'request ' + (entry.req || '').slice(0, 12)"
+                          ></button>
+                          <button
+                            type="button"
+                            class="btn btn-secondary btn-small"
+                            x-show="entry.run"
+                            @click="showRun(entry.job, entry.run)"
+                            x-text="'job ' + entry.job + ' · run ' + entry.run"
+                          ></button>
+                          <span
+                            x-show="entry.conn"
+                            x-text="'conn ' + entry.conn"
+                          ></span>
+                        </div>
+                        <template x-if="entry.err">
+                          <div>
+                            <div
+                              class="font-mono"
+                              style="color: var(--apple-red)"
+                              x-text="entry.err.name + ': ' + entry.err.message + (entry.err.status ? ' (HTTP ' + entry.err.status + ')' : '')"
+                            ></div>
+                            <pre
+                              x-show="entry.err.body"
+                              class="mt-1 p-2 rounded bg-[var(--apple-gray-6)] overflow-x-auto whitespace-pre-wrap break-all"
+                              x-text="entry.err.body"
+                            ></pre>
+                            <pre
+                              x-show="entry.err.stack"
+                              class="mt-1 p-2 rounded bg-[var(--apple-gray-6)] overflow-x-auto"
+                              x-text="entry.err.stack"
+                            ></pre>
+                          </div>
+                        </template>
+                        <pre
+                          x-show="entry.ctx"
+                          class="p-2 rounded bg-[var(--apple-gray-6)] overflow-x-auto"
+                          x-text="JSON.stringify(entry.ctx, null, 2)"
+                        ></pre>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+                <div class="flex justify-center mt-4" x-show="more && !live">
+                  <button
+                    type="button"
+                    class="btn btn-secondary btn-small"
+                    :disabled="loading"
+                    @click="load(true)"
+                    x-text="t('logs.system.older')"
+                  ></button>
+                </div>
+              </div>
+
+              <!-- Tab: runtime status -->
+              <div
+                x-show="logTab === 'status'"
+                style="display: none"
+                class="space-y-6"
+              >
+                <div class="flex justify-end">
+                  <button
+                    type="button"
+                    class="btn btn-secondary btn-small"
+                    :disabled="statusLoading"
+                    @click="loadStatus()"
+                    x-text="t('logs.status.refresh')"
+                  ></button>
+                </div>
+                <div class="card p-4" x-show="status">
+                  <h3
+                    class="text-sm font-semibold mb-3"
+                    x-text="t('logs.status.process')"
+                  ></h3>
+                  <dl class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                    <div>
+                      <dt
+                        class="text-[var(--apple-text-secondary)]"
+                        x-text="t('logs.status.version')"
+                      ></dt>
+                      <dd
+                        class="font-mono"
+                        x-text="status?.runtime.version + ' · Bun ' + status?.runtime.bun"
+                      ></dd>
+                    </div>
+                    <div>
+                      <dt
+                        class="text-[var(--apple-text-secondary)]"
+                        x-text="t('logs.status.uptime')"
+                      ></dt>
+                      <dd
+                        class="font-mono"
+                        x-text="formatSpan(Math.round((status?.runtime.uptimeMs || 0) / 1000))"
+                      ></dd>
+                    </div>
+                    <div>
+                      <dt
+                        class="text-[var(--apple-text-secondary)]"
+                        x-text="t('logs.status.memory')"
+                      ></dt>
+                      <dd
+                        class="font-mono"
+                        x-text="formatBytes(status?.runtime.memory.rss) + ' / ' + formatBytes(status?.runtime.memory.systemTotal)"
+                      ></dd>
+                    </div>
+                    <div>
+                      <dt
+                        class="text-[var(--apple-text-secondary)]"
+                        x-text="t('logs.status.platform')"
+                      ></dt>
+                      <dd
+                        class="font-mono"
+                        x-text="status?.runtime.platform"
+                      ></dd>
+                    </div>
+                  </dl>
+                </div>
+
+                <div class="card overflow-hidden" x-show="status">
+                  <h3
+                    class="text-sm font-semibold px-4 pt-4 pb-2"
+                    x-text="t('logs.status.jobs')"
+                  ></h3>
+                  <div
+                    x-show="jobs.length === 0"
+                    class="px-4 pb-4 text-xs text-[var(--apple-text-secondary)]"
+                    x-text="t('logs.status.noJobs')"
+                  ></div>
+                  <table class="w-full text-xs" x-show="jobs.length">
+                    <thead>
+                      <tr class="text-left text-[var(--apple-text-secondary)]">
+                        <th
+                          class="px-4 py-2"
+                          x-text="t('logs.status.job')"
+                        ></th>
+                        <th
+                          class="px-4 py-2"
+                          x-text="t('logs.status.lastRun')"
+                        ></th>
+                        <th
+                          class="px-4 py-2"
+                          x-text="t('logs.status.result')"
+                        ></th>
+                        <th
+                          class="px-4 py-2"
+                          x-text="t('logs.status.next')"
+                        ></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <template x-for="job in jobs" :key="job.name">
+                        <tr
+                          class="border-t border-[var(--apple-gray-5)] align-top"
+                        >
+                          <td class="px-4 py-2">
+                            <div x-text="job.label || job.name"></div>
+                            <div
+                              class="font-mono text-[var(--apple-text-secondary)]"
+                              x-text="job.schedule || ''"
+                            ></div>
+                          </td>
+                          <td
+                            class="px-4 py-2 whitespace-nowrap"
+                            x-text="job.running ? t('logs.status.running') : formatAgo(job.lastEndAt)"
+                          ></td>
+                          <td class="px-4 py-2">
+                            <span
+                              class="badge"
+                              :class="job.lastOutcome === 'error' ? 'badge-danger' : job.lastOutcome === 'warn' ? 'badge-warning' : 'badge-success'"
+                              x-text="job.lastOutcome ? t('logs.status.outcome.' + job.lastOutcome) : '-'"
+                            ></span>
+                            <span
+                              x-show="job.consecutiveFailures > 1"
+                              class="ml-1"
+                              style="color: var(--apple-red)"
+                              x-text="'×' + job.consecutiveFailures"
+                            ></span>
+                            <button
+                              type="button"
+                              x-show="job.lastProblem && job.lastOutcome !== 'ok'"
+                              class="block text-left mt-1 underline text-[var(--apple-text-secondary)]"
+                              @click="showRun(job.name, job.lastProblem.run)"
+                              x-text="job.lastProblem?.message"
+                            ></button>
+                          </td>
+                          <td
+                            class="px-4 py-2 whitespace-nowrap"
+                            x-text="job.nextRunAt ? formatAgo(job.nextRunAt) : '-'"
+                          ></td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+
+                <div class="card p-4" x-show="status">
+                  <h3
+                    class="text-sm font-semibold mb-3"
+                    x-text="t('logs.status.connections')"
+                  ></h3>
+                  <div
+                    x-show="troubledConnections.length === 0"
+                    class="text-xs text-[var(--apple-text-secondary)]"
+                    x-text="t('logs.status.allHealthy')"
+                  ></div>
+                  <template
+                    x-for="connection in troubledConnections"
+                    :key="connection.id"
+                  >
+                    <div
+                      class="text-xs py-2 border-t border-[var(--apple-gray-5)] first:border-0"
+                    >
+                      <div class="flex gap-2 items-center">
+                        <span
+                          class="font-medium"
+                          x-text="connection.name"
+                        ></span>
+                        <span
+                          class="font-mono text-[var(--apple-text-secondary)]"
+                          x-text="connection.protocol"
+                        ></span>
+                        <button
+                          type="button"
+                          class="underline text-[var(--apple-text-secondary)]"
+                          @click="showConnection(connection.id)"
+                          x-text="t('logs.status.connectionLogs')"
+                        ></button>
+                      </div>
+                      <template
+                        x-for="credential in connection.credentials"
+                        :key="credential.id"
+                      >
+                        <div class="ml-3 text-[var(--apple-text-secondary)]">
+                          <span
+                            x-text="credential.label || credential.id"
+                          ></span
+                          >:
+                          <span x-text="credential.status"></span>
+                          <span
+                            x-show="credential.lastError"
+                            style="color: var(--apple-red)"
+                            x-text="' · ' + credential.lastError + ' (' + formatAgo(credential.lastErrorAt) + ')'"
+                          ></span>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+                </div>
+              </div>
+
+              <!-- Diagnostic bundle dialog -->
+              <div
+                x-show="bundle.open"
+                style="display: none"
+                class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+                @keydown.escape.window="bundle.open = false"
+                @click.self="bundle.open = false"
+              >
+                <div
+                  class="card p-6 w-full max-w-lg space-y-4"
+                  role="dialog"
+                  aria-modal="true"
+                  :aria-label="t('logs.bundle.title')"
+                >
+                  <div>
+                    <h3
+                      class="text-base font-semibold"
+                      x-text="t('logs.bundle.title')"
+                    ></h3>
+                    <p
+                      class="text-xs text-[var(--apple-text-secondary)] mt-1"
+                      x-text="t('logs.bundle.hint')"
+                    ></p>
+                  </div>
+                  <div class="flex flex-wrap gap-3 text-xs items-center">
+                    <label class="flex items-center gap-2">
+                      <span x-text="t('logs.bundle.range')"></span>
+                      <select
+                        class="input text-xs py-1"
+                        x-model.number="bundle.sinceHours"
+                        @change="previewBundle()"
+                      >
+                        <option :value="1">1h</option>
+                        <option :value="24">24h</option>
+                        <option :value="168">7d</option>
+                      </select>
+                    </label>
+                    <label class="flex items-center gap-2">
+                      <span x-text="t('logs.bundle.requests')"></span>
+                      <select
+                        class="input text-xs py-1"
+                        x-model="bundle.requests"
+                        @change="previewBundle()"
+                      >
+                        <option
+                          value="failed"
+                          x-text="t('logs.bundle.failedOnly')"
+                        ></option>
+                        <option
+                          value="all"
+                          x-text="t('logs.bundle.allRequests')"
+                        ></option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="grid grid-cols-2 gap-2 text-xs">
+                    <template
+                      x-for="name in Object.keys(bundle.sections)"
+                      :key="name"
+                    >
+                      <label class="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          x-model="bundle.sections[name]"
+                          @change="previewBundle()"
+                        />
+                        <span x-text="t('logs.bundle.section.' + name)"></span>
+                        <span
+                          class="text-[var(--apple-text-secondary)]"
+                          x-show="bundle.preview?.manifest.counts[name] !== undefined"
+                          x-text="'(' + bundle.preview?.manifest.counts[name] + ')'"
+                        ></span>
+                      </label>
+                    </template>
+                  </div>
+                  <div
+                    class="text-xs p-3 rounded bg-[var(--apple-gray-6)] space-y-1"
+                  >
+                    <div
+                      x-show="bundle.busy && !bundle.preview"
+                      x-text="t('logs.bundle.preparing')"
+                    ></div>
+                    <template x-if="bundle.preview">
+                      <div class="space-y-1">
+                        <div
+                          x-text="t('logs.bundle.size', { size: formatBytes(bundle.preview.bytes) })"
+                        ></div>
+                        <div
+                          x-text="t('logs.bundle.masked', { n: bundle.preview.manifest.redactions })"
+                        ></div>
+                        <div
+                          x-show="bundle.preview.manifest.truncated.length"
+                          x-text="t('logs.bundle.truncated', { what: bundle.preview.manifest.truncated.join(', ') })"
+                        ></div>
+                      </div>
+                    </template>
+                    <div
+                      x-text="t('logs.bundle.never')"
+                      class="text-[var(--apple-text-secondary)]"
+                    ></div>
+                  </div>
+                  <div
+                    x-show="bundle.error"
+                    style="color: var(--apple-red)"
+                    class="text-xs"
+                    x-text="bundle.error"
+                  ></div>
+                  <div class="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      class="btn btn-secondary"
+                      @click="bundle.open = false"
+                      x-text="t('logs.bundle.cancel')"
+                    ></button>
+                    <button
+                      type="button"
+                      class="btn btn-primary"
+                      :disabled="bundle.busy || !Object.values(bundle.sections).some(Boolean)"
+                      @click="downloadBundle()"
+                      x-text="t('logs.bundle.download')"
+                    ></button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -7762,7 +8342,7 @@
           <div
             x-show="currentView === 'system-config'"
             x-init="loadPartial($el)"
-            data-partial="partials/system-config.html?v=0.7.2"
+            data-partial="partials/system-config.html?v=0.7.3"
             style="display: none"
           ></div>
         </template>
@@ -7770,7 +8350,7 @@
           <div
             x-show="currentView === 'redaction'"
             x-init="loadPartial($el)"
-            data-partial="partials/redaction.html?v=0.7.2"
+            data-partial="partials/redaction.html?v=0.8.9"
             style="display: none"
           ></div>
         </template>
@@ -7779,7 +8359,7 @@
 
     <script src="/admin/static/js/views/app.js?v=0.7.6"></script>
     <script src="/admin/static/js/views/system-config.js?v=0.7.3"></script>
-    <script src="/admin/static/js/views/redaction.js?v=0.7.3"></script>
+    <script src="/admin/static/js/views/redaction.js?v=0.8.9"></script>
     <script src="/admin/static/js/views/dashboard.js?v=0.7.3"></script>
     <script src="/admin/static/js/views/users.js?v=0.7.3"></script>
     <script src="/admin/static/js/views/accounts.js?v=0.7.4"></script>
@@ -7791,7 +8371,8 @@
     <script src="/admin/static/js/views/performance.js?v=0.7.10"></script>
     <script src="/admin/static/js/views/traces.js?v=0.7.12"></script>
     <script src="/admin/static/js/views/guard.js?v=0.7.3"></script>
-    <script src="/admin/static/js/views/logs.js?v=0.7.3"></script>
+    <script src="/admin/static/js/views/logs.js?v=0.7.4"></script>
+    <script src="/admin/static/js/views/system-logs.js?v=0.1.0"></script>
     <script src="/admin/static/js/partials.js?v=0.7.3"></script>
   </body>
 </html>

@@ -27,6 +27,7 @@ import { forwardSseEvent, handleSseStream, writeSseEvent } from "~/lib/sse"
 import { computeStreamingTiming } from "~/lib/timing"
 import { applyUsageIdentity, recordUsage } from "~/lib/usage"
 import { isAbortError } from "~/lib/utils"
+import { applyClaudeLimitHeaders } from "~/services/claude/limit-headers"
 import { dispatchMessages } from "~/services/dispatch/messages"
 import {
   type AnthropicMessagesPayload,
@@ -93,6 +94,7 @@ export async function handleAnthropicViaConnection(
       return handlePreStreamDispatchError(c, error, signal)
     }
     applyUsageIdentity(c, result.identity)
+    applyClaudeLimitHeaders(c, result.identity)
     c.set("model", anthropicPayload.model)
     patchRequestLog(c, { streaming: false })
     if (!isAsyncIterable(result.response)) {
@@ -145,6 +147,7 @@ export async function handleAnthropicViaConnection(
     return handlePreStreamDispatchError(c, error, signal)
   }
   applyUsageIdentity(c, result.identity)
+  applyClaudeLimitHeaders(c, result.identity)
   c.set("model", anthropicPayload.model)
 
   beginStreamLog(c)

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test"
 import * as connectionStore from "~/lib/provider-connections/store"
 import { onStateChange } from "~/lib/state-events"
+import { currentLogContext } from "~/lib/log-context"
 
 import {
   __resetProviderConnectionsForTest,
@@ -67,6 +68,25 @@ async function account(
     ],
   })
 }
+
+test("parallel background quota probes retain each connection log context", async () => {
+  await account("codex-native", "context-one")
+  await account("codex-native", "context-two")
+  const observed: Array<[string, string | undefined]> = []
+  registerProvider({
+    ...originalCodex,
+    async refreshQuota(connection) {
+      await Bun.sleep(connection.id === "context-one" ? 5 : 1)
+      observed.push([connection.id, currentLogContext()?.conn])
+      throw new Error("probe failed")
+    },
+  })
+  await refreshAllQuotas()
+  expect(observed.sort()).toEqual([
+    ["context-one", "context-one"],
+    ["context-two", "context-two"],
+  ])
+})
 
 test("background refresh includes healthy OAuth accounts and skips disabled accounts", async () => {
   const connection = await account()

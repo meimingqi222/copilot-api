@@ -1,5 +1,6 @@
 import type { Context, Next } from "hono"
 
+import { runWithLogContext } from "~/lib/log-context"
 import { logger } from "~/lib/logger"
 import { isLlmRequest } from "~/lib/llm-request"
 
@@ -184,7 +185,9 @@ export const requestLogger = async (c: Context, next: Next) => {
   setRequestLogFinisher(c, persistRequestLog)
 
   try {
-    await next()
+    // Every system log line written while serving this request — including
+    // from its SSE producer, which starts inside next() — carries its id.
+    await runWithLogContext({ req: ctx.requestId }, () => next())
   } catch (error) {
     nextError = error
     recordTraceError(c, error)

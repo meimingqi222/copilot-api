@@ -1,4 +1,5 @@
 import { RedactionError, type RedactionScope } from "~/lib/redaction/context"
+import { pendingTokenSuffix } from "~/lib/redaction/token"
 import { record } from "~/lib/redaction/wire"
 import { extractSignatureAlias } from "~/lib/thinking"
 
@@ -37,21 +38,6 @@ interface DeltaSpec {
 
 const MAX_BLOCK_BYTES = 1024 * 1024
 const MAX_RETAINED_BYTES = 4 * 1024 * 1024
-
-function pendingSuffix(text: string): string {
-  if (text.endsWith("{") && !text.endsWith("{{")) return "{"
-  const start = text.lastIndexOf("{{")
-  if (start < 0) return ""
-  const suffix = text.slice(start)
-  if (
-    ["{{SECRET_", "{{HOME_", "{{WORD_"].some((prefix) =>
-      prefix.startsWith(suffix),
-    )
-    || /^\{\{(?:SECRET|HOME|WORD)_[a-f0-9]{0,32}\}?$/.test(suffix)
-  )
-    return suffix
-  return ""
-}
 
 function append(change: Packet, key: string, entry: Packet): void {
   change[key] = [...((change[key] as Array<Packet> | undefined) ?? []), entry]
@@ -182,7 +168,7 @@ class StreamRestorer {
       this.retain(channel, text)
     }
     const combined = channel.tail + text
-    channel.tail = spec.final ? "" : pendingSuffix(combined)
+    channel.tail = spec.final ? "" : pendingTokenSuffix(combined)
     object[key] = this.scope.restoreText(
       combined.slice(0, combined.length - channel.tail.length),
       spec.json,

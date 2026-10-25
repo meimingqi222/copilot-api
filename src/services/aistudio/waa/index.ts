@@ -51,6 +51,14 @@ const receiver = g.__waaReceiver; delete g.__waaReceiver;`,
     "(self === undefined || self === null || self === receiver) && iface === 'Window'",
   )
 
+/** How long the guard program may settle after it reports ready, before the
+ * first proof. Tests shorten it; otherwise every adapter test waits 3 s. */
+let settleMs = 3000
+
+export function setWaaSettleMsForTest(ms: number): void {
+  settleMs = ms
+}
+
 /** Compatibility context only: node:vm is NOT a security boundary.
  * Derived from Mag1cFall's MIT runtime, commit 370a313814099b508881807effa2a9d72f2d7e66.
  * Each generation owns this runtime and must close it in finally.
@@ -314,7 +322,7 @@ export function createWaaRuntime(state: WAARuntimeState): WAARuntime {
         const id = setTimeout(() => {
           handles.delete(id)
           resolve()
-        }, 3000)
+        }, settleMs)
         handles.add(id)
       })
     })

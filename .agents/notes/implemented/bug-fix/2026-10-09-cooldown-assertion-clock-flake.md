@@ -29,12 +29,20 @@ still fail on a slower machine where the two reads are further apart.
 Freezing the clock in the test — rejected: heavier, and it would stop exercising
 the real timestamp path.
 
+## Consequences
+
+The regression still checks that quota recovery preserves the exact generic
+cooldown deadline and that the deadline is approximately one minute ahead.
+It no longer depends on two wall-clock reads sharing a millisecond. Production
+cooldown behavior is unchanged.
+
 ## Verification
 
-`.agents/notes-evidence/cooldown-assertion-clock-flake-red.log`: with a 2ms delay
+Proved: `.agents/notes-evidence/cooldown-assertion-clock-flake-red.log` records a 2ms delay
 inserted between the cooldown stamp and the assertion, the old form fails
 deterministically (`Expected: …817 / Received: …814`) while the new form passes —
 i.e. the old assertion was racing the clock, and the new one is insensitive to it.
 
-`tests/provider-connections.test.ts` passes 3/3 in isolation; the full suite is
-green.
+Regression target: `tests/provider-connections.test.ts`. The current test
+reads the written deadline, checks its remaining duration, then verifies quota
+recovery leaves that exact deadline unchanged.

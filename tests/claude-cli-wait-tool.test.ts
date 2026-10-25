@@ -73,6 +73,8 @@ async function makeRun(patienceMs: number): Promise<{
     run,
     dispose: async () => {
       run.abort()
+      // The stand-in ignores abort()'s exit request; skip the grace.
+      proc.kill()
       await proc.exited
     },
   }

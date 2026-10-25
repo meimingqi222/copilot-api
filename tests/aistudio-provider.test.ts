@@ -15,6 +15,7 @@ import {
 import { resetProtectedRouteGuardForTest } from "~/lib/protected-route-guard"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { AIStudioClient } from "~/services/aistudio/client"
+import { setWaaSettleMsForTest } from "~/services/aistudio/waa"
 import { decodeAIStudioModels } from "~/services/aistudio/models"
 import { getAIStudioModule } from "~/services/providers/modules/aistudio"
 import { server } from "~/server"
@@ -38,8 +39,11 @@ beforeEach(() => {
   __resetProviderConnectionsForTest()
   resetProtectedRouteGuardForTest()
   resetAdaptiveRateLimiterForTest()
+  // The fixture guard program is ready at once; skip the production settle.
+  setWaaSettleMsForTest(0)
 })
 afterEach(() => {
+  setWaaSettleMsForTest(3000)
   globalThis.fetch = originalFetch
   __resetProviderConnectionsForTest()
   clearAdminAuth()

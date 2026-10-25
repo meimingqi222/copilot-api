@@ -5,7 +5,9 @@ import {
   translateClaudeStreamJson,
 } from "~/services/claude/cli/translate"
 import { readClaudeSearchResults } from "~/services/claude/cli/search-results"
+import os from "node:os"
 import { RunRegistry } from "~/services/claude/cli/run-registry"
+import { memoryLimitBytes, processesFor } from "~/services/claude/cli/room"
 import { encodeChatTextFormat } from "~/services/ir/codecs/messages-chat/text-format"
 import type { ClaudeStreamJsonEvent } from "~/services/claude/cli/stream-json"
 import { drain } from "./claude-cli-fixtures"
@@ -239,11 +241,43 @@ describe("CLI resource reservations", () => {
   test("accounts for concurrent startup before a subprocess is registered", () => {
     const registry = new RunRegistry()
     const release = registry.reserveConnection("connection", 1)
-    expect(release).toBeDefined()
+    expect(typeof release).toBe("function")
     expect(registry.countForConnection("connection")).toBe(1)
-    expect(registry.reserveConnection("connection", 1)).toBeUndefined()
-    release?.()
+    expect(registry.reserveConnection("connection", 1)).toBe("connection")
+    if (typeof release === "function") release()
     expect(registry.countForConnection("connection")).toBe(0)
-    expect(registry.reserveConnection("connection", 1)).toBeDefined()
+    expect(typeof registry.reserveConnection("connection", 1)).toBe("function")
+  })
+  test("holds every connection together to the machine's room, letting an idle run go first", () => {
+    const registry = new RunRegistry()
+    let aborted = false
+    const idle = {
+      token: "idle",
+      connectionId: "a",
+      credentialId: "cred",
+      abort() {
+        aborted = true
+        registry.unregister(idle)
+      },
+      hasPending: () => false,
+      deliver: () => false,
+      awaitToolCall: () => Promise.resolve({ content: [] }),
+      awaitWaitRequest: () => Promise.resolve({ content: [] }),
+    }
+    registry.register(idle)
+    registry.keepIdle("idle-key", idle)
+    expect(typeof registry.reserveConnection("b", 4, 2)).toBe("function")
+    // Full: the idle run of another connection is let go for the room.
+    expect(typeof registry.reserveConnection("c", 4, 2)).toBe("function")
+    expect(aborted).toBe(true)
+    // Full with nothing idle: the machine refuses, whatever the connection.
+    expect(registry.reserveConnection("d", 4, 2)).toBe("machine")
+  })
+  test("counts Claude Code processes from the memory it may use", () => {
+    const mib = 1024 * 1024
+    expect(processesFor(512 * mib)).toBe(2)
+    expect(processesFor(1024 * mib)).toBe(6)
+    expect(processesFor(128 * mib)).toBe(1)
+    expect(memoryLimitBytes()).toBeLessThanOrEqual(os.totalmem())
   })
 })

@@ -13,7 +13,8 @@ import {
   resolveConnectionBalanceSource,
   syncConnectionBalance,
 } from "~/lib/balance/sync"
-import { logger } from "~/lib/logger"
+import { createLogger } from "~/lib/logger"
+import { runWithLogContext } from "~/lib/log-context"
 import {
   listAccountManagedConnections,
   listProviderConnections,
@@ -29,7 +30,10 @@ import { runZcodeClaimRound } from "~/services/zcode/claim"
 import { fetchCopilotQuota } from "~/lib/quota/fetchers/copilot"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { emitStateChange } from "~/lib/state-events"
+import { everyMs, runJob } from "~/lib/jobs"
 import { globalTimers } from "~/lib/timer-registry"
+
+const logger = createLogger("quota")
 
 const QUOTA_EXHAUSTION_THRESHOLD = 5
 const QUOTA_RECHECK_INTERVAL_MS = 60 * 1000
@@ -91,20 +95,30 @@ export async function refreshQuotaForConnection(
  */
 export function scheduleQuotaRefresh(): void {
   initializeProviderRegistry()
-  void refreshAllQuotas()
-  void runAccountWarmups()
-  globalTimers.interval(() => {
-    void runAccountWarmups()
-  }, 30_000)
-  globalTimers.interval(() => {
-    void refreshAllQuotas()
-  }, QUOTA_RECHECK_INTERVAL_MS)
-  globalTimers.timeout(() => {
-    void runZcodeClaimRound()
-  }, 60_000)
-  globalTimers.interval(() => {
-    void runZcodeClaimRound()
-  }, ZCODE_CLAIM_TICK_MS)
+  const quota = () =>
+    runJob("quota-refresh", refreshAllQuotas, {
+      label: "Quota refresh",
+      schedule: everyMs(QUOTA_RECHECK_INTERVAL_MS),
+    })
+  const warmup = () =>
+    runJob("account-warmup", runAccountWarmups, {
+      label: "Account warm-up",
+      schedule: everyMs(30_000),
+    })
+  const claim = () =>
+    runJob("zcode-claim", () => runZcodeClaimRound(), {
+      label: "ZCode plan claim",
+      schedule: everyMs(ZCODE_CLAIM_TICK_MS),
+    })
+  void quota()
+  void warmup()
+  globalTimers.interval(() => void warmup().catch(() => {}), 30_000)
+  globalTimers.interval(
+    () => void quota().catch(() => {}),
+    QUOTA_RECHECK_INTERVAL_MS,
+  )
+  globalTimers.timeout(() => void claim().catch(() => {}), 60_000)
+  globalTimers.interval(() => void claim().catch(() => {}), ZCODE_CLAIM_TICK_MS)
 }
 
 let refreshing = false
@@ -151,19 +165,22 @@ async function refreshAllQuotasOnce(): Promise<void> {
   await Promise.all(
     Array.from({ length: QUOTA_REFRESH_WORKERS }, async () => {
       for (let conn = queue.shift(); conn; conn = queue.shift()) {
-        try {
-          await refreshManagedQuota(conn)
-        } catch (error) {
-          logger.warn("Failed to refresh quota for connection:", error)
-        }
-        try {
-          await autoResetExpiringCodexQuota(conn)
-        } catch (error) {
-          logger.warn(
-            `Failed to automatically reset Codex quota for "${conn.name}":`,
-            error,
-          )
-        }
+        const connection = conn
+        await runWithLogContext({ conn: connection.id }, async () => {
+          try {
+            await refreshManagedQuota(connection)
+          } catch (error) {
+            logger.warn("Failed to refresh quota for connection:", error)
+          }
+          try {
+            await autoResetExpiringCodexQuota(connection)
+          } catch (error) {
+            logger.warn(
+              `Failed to automatically reset Codex quota for "${connection.name}":`,
+              error,
+            )
+          }
+        })
       }
     }),
   )
@@ -216,30 +233,34 @@ export async function syncBalances(now: number = Date.now()): Promise<number> {
 
   let read = 0
   const results = await Promise.allSettled(
-    due.map(async (conn) => {
-      lastBalanceSyncAt.set(conn.id, now)
-      const balance = await syncConnectionBalance(
-        conn,
-        AbortSignal.timeout(BALANCE_PROBE_TIMEOUT_MS),
-      )
-      if (!balance) return
-      read += 1
-      const gate = applyBalanceGate(conn)
-      if (!gate.changed) return
-      if (gate.gated) {
-        logger.warn(
-          `Connection "${conn.name}" balance depleted (${balance.display}) — routing skips it`,
+    due.map((conn) =>
+      runWithLogContext({ conn: conn.id }, async () => {
+        lastBalanceSyncAt.set(conn.id, now)
+        const balance = await syncConnectionBalance(
+          conn,
+          AbortSignal.timeout(BALANCE_PROBE_TIMEOUT_MS),
         )
-      } else {
-        logger.info(
-          `Connection "${conn.name}" balance restored — re-activating`,
-        )
-      }
-    }),
+        if (!balance) return
+        read += 1
+        const gate = applyBalanceGate(conn)
+        if (!gate.changed) return
+        if (gate.gated) {
+          logger.warn(
+            `Connection "${conn.name}" balance depleted (${balance.display}) — routing skips it`,
+          )
+        } else {
+          logger.info(
+            `Connection "${conn.name}" balance restored — re-activating`,
+          )
+        }
+      }),
+    ),
   )
-  for (const result of results) {
+  for (const [index, result] of results.entries()) {
     if (result.status === "rejected") {
-      logger.warn("Failed to sync connection balance:", result.reason)
+      logger.warn("Failed to sync connection balance:", result.reason, {
+        connectionId: due[index].id,
+      })
     }
   }
   return read

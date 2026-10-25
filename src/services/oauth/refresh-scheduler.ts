@@ -2,7 +2,8 @@ import type { OAuthProviderId } from "~/lib/provider-config"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { HTTPError } from "~/lib/error"
-import { logger } from "~/lib/logger"
+import { describeJob, runJob } from "~/lib/jobs"
+import { createLogger } from "~/lib/logger"
 import { isOAuthProviderId } from "~/lib/provider-config"
 import {
   getConnectionAuthError,
@@ -22,6 +23,8 @@ import {
   OAUTH_REFRESH_LEAD_MS,
   OAUTH_REFRESH_STRATEGIES,
 } from "./refresh-strategies"
+
+const logger = createLogger("auth")
 
 const DEFAULT_REFRESH_LEAD_MS = 5 * 60 * 1000
 const INITIAL_RETRY_DELAY_MS = 60_000
@@ -208,7 +211,14 @@ function scheduleOAuthRefreshAttempt(
         }
 
         try {
-          await refreshOAuthConnectionToken(connection, reason)
+          await runJob(
+            `oauth-refresh:${accountId}`,
+            () => refreshOAuthConnectionToken(connection, reason),
+            {
+              label: `OAuth token refresh · ${connection.name}`,
+              connectionId: accountId,
+            },
+          )
           // Success — reset retry count
           oauthRetryCounts.delete(accountId)
         } catch (error: unknown) {
@@ -234,7 +244,7 @@ function scheduleOAuthRefreshAttempt(
           logger.warn(
             `OAuth refresh failed for "${connection.name}" (attempt ${retryCount}), `
               + `retrying in ${backoffMs / 1000}s:`,
-            error instanceof Error ? error.message : String(error),
+            error,
           )
           scheduleOAuthRefreshAttempt(accountId, backoffMs, "retry")
         }
@@ -244,6 +254,9 @@ function scheduleOAuthRefreshAttempt(
   )
 
   oauthRefreshTimers.set(accountId, timer)
+  describeJob(`oauth-refresh:${accountId}`, {
+    nextRunAt: Date.now() + Math.max(delayMs, 1_000),
+  })
 }
 
 /**

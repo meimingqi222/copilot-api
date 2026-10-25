@@ -128,6 +128,22 @@ function callbackFromArgs(argv: ReadonlyArray<string>): string | undefined {
   return bridge.callbackUrl
 }
 
+/** The account's allowance after a turn, as `FAKE_CLAUDE_RATE_LIMIT` says. */
+function emitRateLimit(): void {
+  const info = process.env.FAKE_CLAUDE_RATE_LIMIT
+  if (info)
+    emit({ type: "rate_limit_event", rate_limit_info: JSON.parse(info) })
+}
+
+/** Scenarios that end in a `result` envelope carrying is_error. */
+const ERROR_RESULTS: Record<string, { subtype: string; result: string }> = {
+  error: {
+    subtype: "error_during_execution",
+    result: "Claude AI usage limit reached",
+  },
+  "too-long": { subtype: "success", result: "Prompt is too long" },
+}
+
 async function main(): Promise<number> {
   if (scenario === "search-permission") {
     const input = createInterface({ input: process.stdin })
@@ -251,13 +267,10 @@ async function main(): Promise<number> {
     process.stderr.write("fake claude: not signed in\n")
     return 1
   }
-  if (scenario === "error") {
-    emit({
-      type: "result",
-      subtype: "error_during_execution",
-      is_error: true,
-      result: "Claude AI usage limit reached",
-    })
+  // "too-long" is Claude Code's own length check: Anthropic was never asked.
+  const failure = ERROR_RESULTS[scenario]
+  if (failure) {
+    emit({ type: "result", is_error: true, ...failure })
     return 0
   }
 
@@ -429,6 +442,7 @@ async function main(): Promise<number> {
   )
   if (scenario === "slow-text") await sleep(400)
   endTurn()
+  emitRateLimit()
   emit({
     type: "result",
     subtype: "success",

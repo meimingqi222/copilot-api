@@ -149,6 +149,55 @@ export function claudeVersion(): string | undefined {
 }
 
 /**
+ * 启动 `binary` 的命令行前缀（程序 + 固定参数），之后拼接 CLI 参数。
+ *
+ * Windows 上 npm 装的是 `.cmd` shim。经 cmd.exe 传参时 Bun 会拒绝含 `"`
+ * 等特殊字符的参数（防 BatBadBut 注入），而 `--json-schema` 只接受内联
+ * JSON。所以把 shim 解析成它真正执行的命令（通常是 node + cli.js），
+ * 直接启动，参数不再经过 cmd.exe。解析不出来时退回 shim 本身。
+ */
+export function claudeLaunchCommand(binary: string): Array<string> {
+  if (process.platform !== "win32" || !/\.(?:cmd|bat)$/i.test(binary))
+    return [binary]
+  let text: string
+  try {
+    text = fs.readFileSync(binary, "utf8")
+  } catch {
+    return [binary]
+  }
+  return parseCmdShim(text, path.dirname(binary)) ?? [binary]
+}
+
+/**
+ * 从 `.cmd` shim 的执行行（含 `%*` 的最后一行）取出引号里的程序与脚本。
+ * 认识 npm cmd-shim 的 `%dp0%` / `%~dp0` 与 `%_prog%`（node）。
+ */
+export function parseCmdShim(
+  text: string,
+  dir: string,
+): Array<string> | undefined {
+  const line = text
+    .split(/\r?\n/)
+    .findLast((candidate) => candidate.includes("%*"))
+  if (!line) return undefined
+  const command = line.slice(0, line.indexOf("%*"))
+  const tail = command.slice(command.lastIndexOf("&") + 1)
+  const tokens = [...tail.matchAll(/"([^"]+)"/g)].map((match) => match[1])
+  if (!tokens.length) return undefined
+  const resolved = tokens.map((token) => {
+    if (token === "%_prog%") {
+      const local = path.join(dir, "node.exe")
+      return isFile(local) ? local : "node"
+    }
+    return path.normalize(
+      token.replaceAll(/%~dp0\\?|%dp0%\\?/gi, dir + path.sep),
+    )
+  })
+  // 仍含未展开的变量就不可信，交回 shim。
+  return resolved.some((token) => token.includes("%")) ? undefined : resolved
+}
+
+/**
  * 每个 connection 一个**持久**的 Claude Code 工作目录。
  *
  * 必须是持久的，不能用 `mkdtemp`：Claude Code 的 system prompt 里带

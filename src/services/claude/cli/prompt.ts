@@ -24,6 +24,7 @@ import type {
   AnthropicToolResultBlock,
   AnthropicUserContentBlock,
 } from "~/services/protocols/anthropic/types"
+import { bridgeToolNames } from "~/services/claude/cli/tools"
 
 /** CLI user 消息里的一个内容块。 */
 export type ClaudePromptBlock =
@@ -47,13 +48,14 @@ function systemText(system: AnthropicMessagesPayload["system"]): string {
  */
 function toolChoiceNote(
   toolChoice: AnthropicMessagesPayload["tool_choice"],
+  names: ReadonlyMap<string, string>,
 ): string {
   if (!toolChoice) return ""
   if (toolChoice.type === "any") {
     return "\nYou must call at least one available tool before answering."
   }
   if (toolChoice.type === "tool" && toolChoice.name) {
-    return `\nYou must call the ${toolChoice.name} tool.`
+    return `\nYou must call the ${names.get(toolChoice.name) ?? toolChoice.name} tool.`
   }
   return ""
 }
@@ -92,7 +94,9 @@ export function renderClaudePrompt(
   }
 
   const system = systemText(payload.system)
-  const note = toolChoiceNote(payload.tool_choice)
+  // The model sees the tools under the names Claude Code lists them by.
+  const names = bridgeToolNames(payload)
+  const note = toolChoiceNote(payload.tool_choice, names)
   if (system || note) {
     // 调用方的 system 不能进 CLI 的 system 字段：那正是 Anthropic 内容
     // 分类器读的地方。包成 user 内容，指令仍然是上下文的一部分。
@@ -113,7 +117,7 @@ export function renderClaudePrompt(
         }
         case "server_tool_use":
         case "tool_use": {
-          text += `\n[tool call ${block.name} id=${block.id} args=${JSON.stringify(block.input)}]`
+          text += `\n[tool call ${names.get(block.name) ?? block.name} id=${block.id} args=${JSON.stringify(block.input)}]`
           break
         }
         case "tool_result": {

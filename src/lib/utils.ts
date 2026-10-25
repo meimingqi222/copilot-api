@@ -5,7 +5,7 @@ import { getConnInfo } from "hono/bun"
 import type { ChatCompletionResponse } from "~/services/protocols/chat/types"
 
 import { HTTPError, UpstreamModelUnavailableError } from "~/lib/error"
-import { logger } from "~/lib/logger"
+import { createLogger } from "~/lib/logger"
 import {
   accountManagedProvider,
   classifyUpstreamError,
@@ -18,6 +18,7 @@ import {
 import { hasEnabledCredential } from "~/lib/provider-connections/anonymous-credential"
 import { listExposedPublicModels } from "~/lib/route-target/build"
 import { onStateChange } from "~/lib/state-events"
+import { everyMs, runJob } from "~/lib/jobs"
 import { globalTimers } from "~/lib/timer-registry"
 import { getVSCodeVersion } from "~/services/get-vscode-version"
 import { initializeProviderRegistry } from "~/services/providers"
@@ -28,6 +29,8 @@ import {
 } from "~/services/windsurf/variant-collapse"
 
 import { state } from "./state"
+
+const logger = createLogger("models")
 
 const MODELS_REFRESH_INTERVAL_MS = 10 * 60 * 1000
 
@@ -299,10 +302,13 @@ export async function refreshModelsForAllAccounts(): Promise<void> {
 }
 
 export function scheduleModelsRefresh(): void {
-  void refreshModelsForAllAccounts()
-  globalTimers.interval(() => {
-    void refreshModelsForAllAccounts()
-  }, MODELS_REFRESH_INTERVAL_MS)
+  const refresh = () =>
+    runJob("models-refresh", () => refreshModelsForAllAccounts(), {
+      label: "Model list refresh",
+      schedule: everyMs(MODELS_REFRESH_INTERVAL_MS),
+    }).catch(() => {})
+  void refresh()
+  globalTimers.interval(() => void refresh(), MODELS_REFRESH_INTERVAL_MS)
 }
 
 export const cacheVSCodeVersion = async () => {

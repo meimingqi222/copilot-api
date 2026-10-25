@@ -475,6 +475,57 @@ const API = {
     },
   },
 
+  // System logs and diagnostics (the 日志与诊断 view's other tabs)
+  systemLogs: {
+    params(filters = {}) {
+      const params = new URLSearchParams()
+      for (const key of [
+        "level",
+        "sub",
+        "q",
+        "req",
+        "conn",
+        "connName",
+        "job",
+        "run",
+      ])
+        if (filters[key]) params.set(key, filters[key])
+      if (filters.before) params.set("before", String(filters.before))
+      if (filters.limit) params.set("limit", String(filters.limit))
+      return params
+    },
+    get: (filters = {}) =>
+      API.request(`/system-logs?${API.systemLogs.params(filters)}`),
+    streamUrl: (filters = {}) =>
+      `${API.baseUrl}/system-logs/stream?${API.systemLogs.params(filters)}`,
+    exportLogs: async (filters = {}) => {
+      const response = await fetch(
+        `${API.baseUrl}/system-logs/export?${API.systemLogs.params(filters)}`,
+      )
+      if (!response.ok)
+        throw API.extractErrorMessage(await response.text(), response.status)
+      return response
+    },
+  },
+  diagnostics: {
+    status: () => API.request("/diagnostics/status"),
+    preview: (options) =>
+      API.request("/diagnostics/bundle", {
+        method: "POST",
+        body: { ...options, preview: true },
+      }),
+    download: async (options) => {
+      const response = await fetch(`${API.baseUrl}/diagnostics/bundle`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(options),
+      })
+      if (!response.ok)
+        throw API.extractErrorMessage(await response.text(), response.status)
+      return response
+    },
+  },
+
   // Trace (live request feed for the 请求追踪 view)
   trace: {
     recent: (limit = 60) => API.request(`/trace/recent?limit=${limit}`),

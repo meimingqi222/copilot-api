@@ -4,8 +4,13 @@ import path from "node:path"
 import { PATHS } from "~/lib/paths"
 import { getSystemConfig, getSystemSettings } from "~/lib/system-config"
 
-/** Matches `server-2026-06-27.log` and `server-2026-06-27.1.log`. */
-const LOG_FILE_PATTERN = /^server-(\d{4}-\d{2}-\d{2})(?:\.(\d+))?\.log$/
+/**
+ * System log files: `system-2026-06-27.jsonl`, `system-2026-06-27.1.jsonl`,
+ * and the plain-text `server-*.log` that earlier versions wrote, still read
+ * and expired until retention removes them.
+ */
+const LOG_FILE_PATTERN =
+  /^(?:system-(\d{4}-\d{2}-\d{2})(?:\.(\d+))?\.jsonl|server-(\d{4}-\d{2}-\d{2})(?:\.(\d+))?\.log)$/
 /** Matches daily request logs and their numbered size-based segments. */
 export const REQUEST_LOG_JSONL_PATTERN =
   /^requests-(\d{4}-\d{2}-\d{2})(?:\.(\d+))?\.jsonl$/
@@ -75,7 +80,7 @@ export function enforceLogStorageLimits(
     }
     for (const name of entries) {
       const match =
-        /^(server|requests|request-dumps)-(\d{4}-\d{2}-\d{2})(?:\.(\d+))?\.(log|jsonl)$/.exec(
+        /^(server|system|requests|request-dumps)-(\d{4}-\d{2}-\d{2})(?:\.(\d+))?\.(log|jsonl)$/.exec(
           name,
         )
       if (
@@ -177,18 +182,21 @@ export function buildRotatedLogFileName(
   segment: number,
 ): string {
   return segment === 0 ?
-      `server-${dateKey}.log`
-    : `server-${dateKey}.${segment}.log`
+      `system-${dateKey}.jsonl`
+    : `system-${dateKey}.${segment}.jsonl`
 }
 
 export function parseRotatedLogFileName(
   fileName: string,
-): { dateKey: string; segment: number } | null {
+): { dateKey: string; segment: number; legacy: boolean } | null {
   const match = LOG_FILE_PATTERN.exec(fileName)
   if (!match) return null
+  const legacy = match[1] === undefined
+  const segment = legacy ? match[4] : match[2]
   return {
-    dateKey: match[1],
-    segment: match[2] ? Number.parseInt(match[2], 10) : 0,
+    dateKey: legacy ? match[3] : match[1],
+    segment: segment ? Number.parseInt(segment, 10) : 0,
+    legacy,
   }
 }
 

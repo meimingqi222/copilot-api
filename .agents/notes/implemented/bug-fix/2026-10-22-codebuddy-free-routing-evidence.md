@@ -40,13 +40,16 @@ block free models; pricing must explicitly establish the free exemption.
 
 ## Verification
 
+Focused suites: `tests/codebuddy-route-diagnostics.test.ts`.
+
 - `tests/codebuddy-route-diagnostics.test.ts::smart selection keeps zero-balance free primary ahead of funded backup`
 - `tests/codebuddy-route-diagnostics.test.ts::free model trace agrees with routing for chosen and backup candidates`
 - `tests/codebuddy-route-diagnostics.test.ts::free model trace retains model-specific credit refusal`
 - `tests/codebuddy-route-diagnostics.test.ts::repeated exhausted refresh preserves deadline until recovery`
 - `tests/codebuddy-route-diagnostics.test.ts::free trace still reports account verification and rate rests`
 
-Proved: pre-fix runs failed the trace/model rest and repeated refresh assertions
-in `temp/free-diagnostics-red.log`. After the trace fix, selection still chose
-the backup instead of the free primary (`temp/free-selection-red.log`). The
-focused tests passed after both fixes. Logs stay ignored per repository policy.
+Proved: historical pre-fix runs failed the trace/model rest and repeated
+refresh assertions. After the trace fix, selection still chose the funded backup
+instead of the free primary. The focused tests passed after both fixes. The two
+original ignored temporary logs are no longer present; these observed assertion
+differences retain the natural-red summary rather than retrievable raw output.

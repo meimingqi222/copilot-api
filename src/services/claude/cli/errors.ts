@@ -108,6 +108,41 @@ export class ClaudeCliConcurrencyLimitError extends LocalConcurrencyLimitError {
   }
 }
 
+/**
+ * Claude Code 在本地先估算长度，超出它为该账号设定的窗口就直接拒绝，
+ * 根本没问 Anthropic（订阅账号未开 extra usage 时，1M 模型也被压到 200K）。
+ * 这是对话装不下，不是上游故障：按 Anthropic 自己的"too long"给 400，
+ * 客户端才会去压缩对话，而不是当 502 反复重试或换账号。
+ */
+const TOO_LONG_WORDS = /prompt is too long/i
+
+const TOO_LONG_HINT =
+  " (Claude Code's own check, before Anthropic was asked: it holds a conversation to its own limit for the account, 200K once Anthropic has said the account needs extra usage for long context. Compact the conversation, or turn on extra usage for the Claude account.)"
+
+/**
+ * 全机饱和：这台机器上的 Claude Code 进程已到内存允许的上限，也没有空闲
+ * run 可放。换别的 Claude 账号没用（同一台机器），但别的供应商可以：
+ * 作为本地并发错误，failover 不冷却账号，直接试下一个目标。
+ */
+export class ClaudeCliNoRoomError extends LocalConcurrencyLimitError {
+  constructor(limit: number) {
+    const message = `Claude Code is already running ${limit} processes, all this machine's memory allows; retry shortly or use another provider`
+    const body = JSON.stringify({
+      type: "error",
+      error: { type: "overloaded_error", message },
+    })
+    super(
+      message,
+      new Response(body, {
+        status: 503,
+        headers: { "Content-Type": "application/json", "Retry-After": "5" },
+      }),
+      body,
+    )
+    this.name = "ClaudeCliNoRoomError"
+  }
+}
+
 /** 文案是否像"没额度了"。 */
 function looksLikeQuota(text: string): boolean {
   return QUOTA_WORDS.test(text)
@@ -123,22 +158,28 @@ export function toHttpError(error: unknown): HTTPError {
   if (error instanceof HTTPError) return error
   const message =
     error instanceof Error ? error.message : "Claude Code request failed"
+  const quota = error instanceof ClaudeCliQuotaError || looksLikeQuota(message)
+  const tooLong = !quota && TOO_LONG_WORDS.test(message)
   const status =
-    error instanceof ClaudeCliQuotaError ? 429
-    : looksLikeQuota(message) ? 429
+    quota ? 429
+    : tooLong ? 400
     : 502
+  const text = tooLong ? message + TOO_LONG_HINT : message
   return new HTTPError(
-    message,
+    text,
     new Response(
       JSON.stringify({
         type: "error",
         error: {
-          type: status === 429 ? "rate_limit_error" : "api_error",
-          message,
+          type:
+            quota ? "rate_limit_error"
+            : tooLong ? "invalid_request_error"
+            : "api_error",
+          message: text,
         },
       }),
       { status, headers: { "Content-Type": "application/json" } },
     ),
-    message,
+    text,
   )
 }

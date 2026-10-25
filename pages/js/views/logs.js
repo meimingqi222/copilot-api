@@ -2,6 +2,8 @@ function logsView() {
   return {
     ...ViewHelpers,
     loading: false,
+    /** "requests" | "system" | "status"; the last two are systemLogsView's. */
+    logTab: "requests",
     entries: [],
     total: 0,
     selectedLog: null,
@@ -25,6 +27,12 @@ function logsView() {
         this.filters.search = ""
         this.filters.modelMismatch = ""
         this.filters.offset = 0
+        this.load()
+      })
+      // From a system log line: the request it was written while serving.
+      globalThis.addEventListener("admin:inspect-request", (event) => {
+        this.logTab = "requests"
+        this.filters = { ...this.blankFilters(), requestId: event.detail }
         this.load()
       })
       this.$watch("autoRefresh", (enabled) => {
@@ -80,16 +88,21 @@ function logsView() {
       }
     },
 
-    clearFilters() {
-      this.filters = {
+    blankFilters() {
+      return {
         level: "",
         apiKind: "",
         outcome: "",
         search: "",
         modelMismatch: "",
+        requestId: "",
         limit: 50,
         offset: 0,
       }
+    },
+
+    clearFilters() {
+      this.filters = this.blankFilters()
       this.load()
     },
 

@@ -2,886 +2,1682 @@
   x-data="redactionView()"
   x-init="if (currentView === 'redaction') enterRedaction(); $watch('currentView', view => { if (view === 'redaction') enterRedaction(); else leaveRedaction() })"
   @visibilitychange.document="syncLive()"
-  class="redaction-page space-y-6 max-w-5xl pb-12"
+  class="redaction-page space-y-6 w-full pb-16"
 >
-  <header
-    class="page-header flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-  >
+  <!-- ==================== 1. 页面顶部标题与状态栏 (系统规范 Header) ==================== -->
+  <header class="page-header">
     <div class="page-heading">
       <div class="flex items-center gap-3 flex-wrap">
         <h2 class="text-headline" x-text="t('nav.redaction')"></h2>
-        <template x-if="source">
+        <span
+          class="badge inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium"
+          :class="appliedRedaction?.enabled ? 'bg-[rgba(52,199,89,0.12)] text-[var(--apple-green)] border border-[rgba(52,199,89,0.25)]' : 'bg-[var(--apple-gray-6)] text-[var(--apple-text-secondary)] border border-[var(--apple-gray-5)]'"
+        >
           <span
-            class="badge inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium"
-            :class="source === 'webui' ? 'bg-[rgba(52,199,89,0.1)] text-[var(--apple-green)] border border-[rgba(52,199,89,0.2)]' : 'bg-[var(--apple-gray-6)] text-[var(--apple-text-secondary)] border border-[var(--apple-gray-5)]'"
-          >
-            <span
-              class="w-1.5 h-1.5 rounded-full"
-              :class="source === 'webui' ? 'bg-[var(--apple-green)]' : 'bg-[var(--apple-gray)]'"
-            ></span>
-            <span x-text="t('system.source.' + source)"></span>
-          </span>
-        </template>
+            class="w-1.5 h-1.5 rounded-full"
+            :class="appliedRedaction?.enabled ? 'bg-[var(--apple-green)] live-dot' : 'bg-[var(--apple-gray)]'"
+          ></span>
+          <span
+            x-text="appliedRedaction?.enabled ? t('redaction.enabled') : t('redaction.disabled')"
+          ></span>
+        </span>
       </div>
       <p
-        class="page-description mt-1 text-sm text-[var(--apple-text-secondary)]"
+        class="page-description mt-1 text-xs text-[var(--apple-text-secondary)]"
         x-text="t('redaction.subtitle')"
       ></p>
     </div>
-    <button
-      type="button"
-      class="btn btn-secondary"
-      @click="load()"
-      :disabled="loading || saving"
-      x-text="t('refresh')"
-    ></button>
+
+    <!-- 顶部动作控制 -->
+    <div class="page-actions">
+      <button
+        type="button"
+        class="btn btn-secondary text-xs px-3 py-1.5 flex items-center gap-1.5"
+        @click="load()"
+        :disabled="loading || saving"
+      >
+        <svg
+          class="w-3.5 h-3.5 text-[var(--apple-text-secondary)]"
+          :class="{ 'animate-spin': loading }"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+        >
+          <path
+            d="M1.75 8a6.25 6.25 0 0 1 10.6-4.5M14.25 8a6.25 6.25 0 0 1-10.6 4.5M12.5 1.75v3h-3M3.5 14.25v-3h3"
+          />
+        </svg>
+        <span x-text="t('refresh')"></span>
+      </button>
+
+      <div
+        class="flex items-center gap-2.5 px-3 py-1.5 rounded-xl border border-[var(--apple-gray-5)] bg-[var(--apple-bg)] shadow-xs"
+      >
+        <span
+          class="text-xs text-[var(--apple-text-secondary)] font-medium"
+          x-text="t('redaction.status')"
+        ></span>
+        <div
+          class="switch-track"
+          :class="{ 'on': settings?.redaction?.enabled, 'opacity-50 cursor-not-allowed': saving || loading }"
+          @click="toggleMainSwitch()"
+        >
+          <div class="switch-thumb"></div>
+        </div>
+      </div>
+    </div>
   </header>
 
-  <section
-    class="card redaction-flow"
-    :class="{ 'is-off': !appliedRedaction?.enabled }"
-  >
-    <div class="redaction-flow-head">
+  <!-- ==================== 2. 顶级态势看板 (Hero Dashboard & Topology) ==================== -->
+  <section class="redaction-hero">
+    <!-- 左栏：大字统计看板 + 关键指标 + 活跃微条图 -->
+    <div class="flex flex-col justify-between gap-4 min-w-0">
       <div>
-        <h3 x-text="t('redaction.routes.title')"></h3>
-        <p x-text="t('redaction.routes.hint')"></p>
-      </div>
-      <button
-        type="button"
-        class="btn btn-secondary"
-        @click="animationPaused = !animationPaused"
-        :aria-pressed="animationPaused"
-        x-text="t(animationPaused ? 'redaction.flow.play' : 'redaction.flow.pause')"
-      ></button>
-    </div>
-    <div class="redaction-route-map">
-      <template x-for="side in ['client', 'upstream']" :key="side">
-        <div class="redaction-endpoints" :class="'redaction-endpoints-' + side">
-          <h4 x-text="t('redaction.routes.' + side)"></h4>
-          <p
-            x-show="!redactionStats.length"
-            x-text="t('redaction.routes.empty')"
-          ></p>
-          <template
-            x-for="endpoint in routeGroups(side).slice(0, 3)"
-            :key="endpoint.id"
-          >
-            <button
-              type="button"
-              class="redaction-endpoint"
-              @click="filterRoute(side, endpoint.id)"
-              :aria-pressed="(side === 'client' ? clientFilter : upstreamFilter) === endpoint.id"
-            >
-              <span
-                x-text="endpoint.name || t('redaction.routes.unknown')"
-              ></span>
-              <strong x-text="endpoint.count"></strong>
-            </button>
-          </template>
-          <details x-show="routeGroups(side).length > 3">
-            <summary
-              x-text="'+' + Math.max(0, routeGroups(side).length - 3) + ' ' + t('redaction.routes.more')"
-            ></summary>
-            <template
-              x-for="endpoint in routeGroups(side).slice(3)"
-              :key="endpoint.id"
-            >
+        <div class="flex items-center justify-between gap-2">
+          <span
+            class="text-xs font-semibold uppercase tracking-wider text-[var(--apple-text-secondary)]"
+            x-text="t('redaction.history.title', { days: historyDays })"
+          ></span>
+          <div class="flex items-center gap-1 text-[11px]">
+            <template x-for="days in [7, 14, 30]" :key="days">
               <button
                 type="button"
-                class="redaction-endpoint"
-                @click="filterRoute(side, endpoint.id)"
-                :aria-pressed="(side === 'client' ? clientFilter : upstreamFilter) === endpoint.id"
-              >
-                <span
-                  x-text="endpoint.name || t('redaction.routes.unknown')"
-                ></span
-                ><strong x-text="endpoint.count"></strong>
-              </button>
+                class="px-2 py-0.5 rounded-md"
+                :class="historyDays === days ? 'bg-[var(--apple-blue)] text-white' : 'text-[var(--apple-text-secondary)] hover:bg-[var(--apple-gray-6)]'"
+                @click="setHistoryDays(days)"
+                x-text="days + ' 天'"
+              ></button>
             </template>
-          </details>
+          </div>
         </div>
-      </template>
-      <div class="redaction-route-hub">
-        <svg
-          viewBox="0 0 300 100"
-          aria-hidden="true"
-          x-effect="motionPaused || animationPaused || !appliedRedaction?.enabled || !redactionStats.length ? $el.pauseAnimations() : $el.unpauseAnimations()"
+        <div class="flex items-baseline gap-2 mt-1">
+          <span
+            class="msk-num"
+            x-text="(history?.total ?? 0).toLocaleString()"
+          ></span>
+          <span class="text-xs font-medium text-[var(--apple-text-secondary)]"
+            >个替换值</span
+          >
+        </div>
+        <p class="text-xs text-[var(--apple-text-secondary)] mt-1">
+          按天保存在本机数据目录，保留 30
+          天，只记录数量、类型和路由，不记录原值。下方明细和流动图只看内存中最近
+          100 次请求。新记录按请求开始日归档；旧记录沿用原有归档日期。
+        </p>
+        <p
+          class="text-xs text-[var(--apple-red)] mt-1"
+          x-show="historyError"
+          x-text="historyError"
+        ></p>
+      </div>
+
+      <!-- 关键指标现代小药丸卡片 -->
+      <div class="redaction-stats-grid">
+        <div class="redaction-stat-pill">
+          <span class="label">扫描请求 / 有替换的请求</span>
+          <span
+            class="val text-[var(--apple-text)]"
+            x-text="(history?.requests ?? 0) + ' / ' + (history?.replacedRequests ?? 0) + ' 次'"
+          ></span>
+        </div>
+        <div class="redaction-stat-pill">
+          <span class="label">只警告 / 拦截</span>
+          <span
+            class="val text-[var(--apple-orange)]"
+            x-text="(history?.warned ?? 0) + ' 个值 / ' + (history?.blocked ?? 0) + ' 次'"
+          ></span>
+        </div>
+        <div class="redaction-stat-pill">
+          <span class="label" x-text="t('redaction.history.countScope')"></span>
+          <span
+            class="val text-[var(--apple-blue)]"
+            x-text="t('redaction.history.valueScope')"
+          ></span>
+        </div>
+      </div>
+
+      <!-- 每日活跃微条图 (Activity Strip with Background Tracks) -->
+      <div>
+        <div
+          class="flex justify-between items-center text-xs text-[var(--apple-text-secondary)] mb-1.5"
         >
-          <path class="flow-in" d="M0,50 H120"></path>
-          <path class="flow-out" d="M180,50 H300"></path>
-          <g class="flow-particles" x-show="redactionStats.length">
-            <circle r="3">
-              <animateMotion
-                path="M0,50 H120"
-                dur="3s"
-                repeatCount="indefinite"
-              ></animateMotion>
-            </circle>
-            <rect width="6" height="6" x="-3" y="-3">
-              <animateMotion
-                path="M180,50 H300"
-                dur="3s"
-                repeatCount="indefinite"
-              ></animateMotion>
-            </rect>
-          </g>
-          <rect
-            class="flow-hub"
-            x="120"
-            y="20"
-            width="60"
-            height="60"
-            rx="16"
-          ></rect>
-          <path
-            class="flow-shield"
-            d="M150 32 L165 38 V51 Q165 63 150 70 Q135 63 135 51 V38 Z M143 50 L148 55 L158 44"
-          ></path>
-        </svg>
-        <strong x-text="t('redaction.routes.proxy')"></strong>
-        <span
-          x-text="redactionStats.length + ' ' + t('redaction.routes.requests')"
-        ></span>
+          <span x-text="'每日分布（' + historyDays + ' 天）'"></span>
+          <span
+            class="text-[var(--apple-blue)] font-medium"
+            x-text="activityDays.at(-1)?.tooltip || ''"
+          ></span>
+        </div>
+        <div class="redaction-activity-strip">
+          <template x-for="item in activityDays" :key="item.key">
+            <div
+              class="msk-bar-item"
+              :class="{ 'today': item.isToday, 'has-data': item.hasData, 'empty': !item.hasData }"
+              :title="item.tooltip"
+            >
+              <i :style="'height: ' + item.heightPct + '%'"></i>
+            </div>
+          </template>
+        </div>
       </div>
     </div>
-    <div class="redaction-flow-foot">
-      <span x-text="t('redaction.routes.legend')"></span>
+
+    <!-- 右栏：流量脱敏拓扑 / 架构工作流向 -->
+    <div class="redaction-topology-wrapper">
+      <div class="flex items-center justify-between mb-2 text-xs">
+        <span
+          class="font-medium text-[var(--apple-text)]"
+          x-text="t('redaction.flow.title')"
+        ></span>
+        <span
+          class="text-[var(--apple-text-secondary)] flex items-center gap-1.5"
+        >
+          <span
+            class="w-1.5 h-1.5 rounded-full bg-[var(--apple-green)] live-dot"
+          ></span>
+          新路由活动示意
+        </span>
+      </div>
+
+      <div class="redaction-topology-box">
+        <div class="mo-flow">
+          <!-- 左侧：客户端来源列 -->
+          <div class="mo-col">
+            <div
+              class="text-[11px] font-semibold text-[var(--apple-text-secondary)] uppercase tracking-wider text-center mb-0.5"
+              x-text="t('redaction.routes.client')"
+            ></div>
+            <template x-for="item in displayEndpoints.clients" :key="item.id">
+              <button
+                type="button"
+                class="mo-node"
+                :class="{ 'on': clientFilter === item.id }"
+                :aria-pressed="clientFilter === item.id"
+                :data-lane="item.id"
+                :disabled="item.more"
+                @click="filterRoute('client', item.id)"
+                :title="item.more ? '合并显示的其余客户端' : ('筛选 ' + item.name)"
+              >
+                <div class="tx">
+                  <span class="nm" x-text="item.name"></span>
+                  <span class="ct" x-text="item.count"></span>
+                </div>
+                <div class="ic">
+                  <span
+                    class="w-2 h-2 rounded-full"
+                    :class="clientFilter === item.id ? 'bg-white' : 'bg-[var(--apple-text)] opacity-60'"
+                  ></span>
+                </div>
+              </button>
+            </template>
+          </div>
+
+          <!-- 中间：Magpie 实时粒子动态画布 + 激光扫描线 + 发光盾牌 -->
+          <div class="mo-mid" id="redactionMidCanvas">
+            <svg class="mo-svg" preserveAspectRatio="none"></svg>
+            <div class="msk-hub" :title="t('redaction.routes.proxy')">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                <path d="m9 12 2 2 4-4" />
+              </svg>
+            </div>
+          </div>
+
+          <!-- 右侧：上游模型提供商列 -->
+          <div class="mo-col provider">
+            <div
+              class="text-[11px] font-semibold text-[var(--apple-text-secondary)] uppercase tracking-wider text-center mb-0.5"
+              x-text="t('redaction.routes.upstream')"
+            ></div>
+            <template x-for="item in displayEndpoints.upstreams" :key="item.id">
+              <button
+                type="button"
+                class="mo-node"
+                :class="{ 'on': upstreamFilter === item.id }"
+                :aria-pressed="upstreamFilter === item.id"
+                :data-lane="item.id"
+                :disabled="item.more"
+                @click="filterRoute('upstream', item.id)"
+                :title="item.more ? '合并显示的其余上游' : ('筛选 ' + item.name)"
+              >
+                <div class="ic">
+                  <span
+                    class="w-2 h-2 rounded-full"
+                    :class="upstreamFilter === item.id ? 'bg-white' : 'bg-[var(--apple-blue)]'"
+                  ></span>
+                </div>
+                <div class="tx">
+                  <span class="nm" x-text="item.name"></span>
+                  <span class="ct" x-text="item.count"></span>
+                </div>
+              </button>
+            </template>
+          </div>
+        </div>
+
+        <!-- 底部微提示 -->
+        <div
+          class="flex items-center justify-between pt-2 mt-2 border-t border-[var(--apple-gray-5)] text-[11px] text-[var(--apple-text-secondary)]"
+        >
+          <div class="flex items-center gap-1.5">
+            <span
+              class="w-2 h-2 rounded-full bg-[var(--apple-green)] live-dot"
+            ></span>
+            <span x-text="t('redaction.routes.activityHint')"></span>
+          </div>
+          <span
+            class="hidden sm:inline font-mono"
+            :title="t('redaction.routes.legend')"
+            >● 原值 → ■ 占位符 · ○ 未命中</span
+          >
+        </div>
+      </div>
     </div>
   </section>
 
-  <section class="card p-4 sm:p-5 space-y-3">
-    <h3
-      class="font-semibold text-sm"
-      x-text="t('redaction.inspect.title')"
-    ></h3>
-    <p
-      class="text-xs text-[var(--apple-text-secondary)]"
-      x-text="t('redaction.inspect.warning')"
-    ></p>
-    <p
-      class="text-xs"
-      role="status"
-      x-text="t(inspection.enabled ? 'redaction.inspect.active' : 'redaction.inspect.off')"
-    ></p>
-    <p
-      class="text-xs"
-      x-show="inspection.enabled"
-      x-text="inspection.expiresAt ? t('redaction.inspect.expires') + ' ' + formatTime(inspection.expiresAt) : ''"
-    ></p>
-    <div class="flex flex-wrap gap-2">
-      <button
-        type="button"
-        class="btn btn-secondary"
-        @click="changeInspection('enable')"
-        :disabled="inspectionBusy || inspection.enabled"
-        x-text="t('redaction.inspect.enable')"
-      ></button>
-      <button
-        type="button"
-        class="btn btn-secondary"
-        @click="changeInspection('disable')"
-        :disabled="inspectionBusy"
-        x-text="t('redaction.inspect.disable')"
-      ></button>
-      <button
-        type="button"
-        class="btn btn-secondary"
-        @click="changeInspection('clear')"
-        :disabled="inspectionBusy"
-        x-text="t('redaction.inspect.clear')"
-      ></button>
-    </div>
-    <p
-      role="alert"
-      class="text-xs text-red-600"
-      x-show="detailError"
-      x-text="detailError ? t(detailError) : ''"
-    ></p>
-  </section>
+  <!-- ==================== 3. 三大功能域分段导航 (Tabs) ==================== -->
+  <div class="redaction-tabs">
+    <button
+      type="button"
+      @click="tab = 'overview'; clearDetail()"
+      class="redaction-tab-btn"
+      :class="{ 'active': tab === 'overview' }"
+      :aria-pressed="tab === 'overview'"
+    >
+      <svg
+        class="w-4 h-4"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+      >
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <polyline points="14 2 14 8 20 8" />
+        <line x1="16" y1="13" x2="8" y2="13" />
+        <line x1="16" y1="17" x2="8" y2="17" />
+      </svg>
+      <span x-text="t('redaction.tab.overview')"></span>
+      <span
+        class="px-2 py-0.5 rounded-full text-[11px] bg-[rgba(0,113,227,0.1)] text-[var(--apple-blue)] font-mono"
+        x-text="redactionStats.length"
+      ></span>
+    </button>
 
-  <div
-    role="group"
-    :aria-label="t('nav.redaction')"
-    class="flex flex-wrap gap-2"
-  >
-    <template x-for="tabKey in ['rules', 'preview', 'overview']" :key="tabKey">
-      <button
-        type="button"
-        class="btn"
-        :class="tab === tabKey ? 'btn-primary' : 'btn-secondary'"
-        :aria-pressed="tab === tabKey"
-        @click="tab = tabKey; clearDetail()"
-        x-text="t('redaction.tab.' + tabKey)"
-      ></button>
-    </template>
+    <button
+      type="button"
+      @click="tab = 'rules'"
+      class="redaction-tab-btn"
+      :class="{ 'active': tab === 'rules' }"
+      :aria-pressed="tab === 'rules'"
+    >
+      <svg
+        class="w-4 h-4"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+      >
+        <circle cx="12" cy="12" r="3" />
+        <path
+          d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+        />
+      </svg>
+      <span x-text="t('redaction.tab.rules')"></span>
+    </button>
+
+    <button
+      type="button"
+      @click="tab = 'preview'"
+      class="redaction-tab-btn"
+      :class="{ 'active': tab === 'preview' }"
+      :aria-pressed="tab === 'preview'"
+    >
+      <svg
+        class="w-4 h-4"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+      >
+        <path
+          d="M10 2v7.31L4.89 17A2 2 0 0 0 6.55 20h10.9a2 2 0 0 0 1.66-3L14 9.31V2"
+        />
+        <line x1="8.5" y1="2" x2="15.5" y2="2" />
+      </svg>
+      <span x-text="t('redaction.tab.preview')"></span>
+    </button>
   </div>
 
+  <!-- 错误提示 -->
   <p
     role="alert"
     class="text-sm text-red-600 bg-red-50 border border-red-200 p-3 rounded-xl"
     x-show="error"
     x-text="error"
   ></p>
-  <p
-    role="status"
-    class="text-sm text-[var(--apple-text-secondary)]"
-    x-show="loading"
-    x-text="t('system.redaction.loading')"
-  ></p>
 
-  <template x-if="settings">
-    <div class="space-y-6">
-      <div x-show="tab === 'overview'" class="space-y-6">
+  <!-- ========================================================
+       TAB 1: 脱敏观测中心 (Audit Log & 5-Step Inspector)
+       ======================================================== -->
+  <div x-show="tab === 'overview'" class="space-y-6">
+    <section class="card p-4 space-y-2">
+      <h3
+        class="text-sm font-semibold"
+        x-text="t('redaction.inspect.policyTitle')"
+      ></h3>
+      <p class="text-xs" x-text="inspectionSummary"></p>
+      <p
+        class="text-xs text-[var(--apple-text-secondary)]"
+        x-text="t('redaction.inspect.warning')"
+      ></p>
+      <div class="flex flex-wrap gap-2">
+        <button
+          type="button"
+          class="btn btn-secondary text-xs"
+          :disabled="inspectionBusy"
+          x-show="!inspection.enabled || inspection.expiresAt"
+          @click="changeInspection('enable')"
+          x-text="t('redaction.inspect.enable')"
+        ></button>
+        <button
+          type="button"
+          class="btn btn-secondary text-xs"
+          :disabled="inspectionBusy"
+          @click="changeInspection('temporary')"
+          x-text="t('redaction.inspect.temporary')"
+        ></button>
+        <button
+          type="button"
+          class="btn btn-secondary text-xs"
+          :disabled="inspectionBusy"
+          x-show="inspection.enabled"
+          @click="changeInspection('disable')"
+          x-text="t('redaction.inspect.disable')"
+        ></button>
+      </div>
+    </section>
+    <div class="text-xs text-[var(--apple-text-secondary)] space-y-1">
+      <p
+        x-text="t('redaction.records.scope', { count: redactionStats.length, ms: avgMaskingMs })"
+      ></p>
+      <p x-text="t('redaction.records.facetsHint')"></p>
+      <p
+        x-show="redactionStatsLoading"
+        role="status"
+        x-text="t('system.redaction.loading')"
+      ></p>
+      <p
+        x-show="statsUpdatedAt"
+        x-text="t('redaction.records.updated', { time: statsUpdatedAt ? new Date(statsUpdatedAt).toLocaleTimeString() : '' })"
+      ></p>
+      <p
+        x-show="redactionStatsError"
+        role="alert"
+        class="text-[var(--apple-orange)]"
+        x-text="t('redaction.records.stale')"
+      ></p>
+    </div>
+    <!-- 筛选胶囊 (Facets) 与重置 -->
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div class="redaction-facets">
+        <button
+          type="button"
+          @click="kindFilter = 'all'"
+          class="redaction-facet-btn"
+          :class="{ 'active': kindFilter === 'all' }"
+          :aria-pressed="kindFilter === 'all'"
+          x-text="t('redaction.routes.all') + ' (' + routeFilteredRecords.length + ')'"
+        ></button>
+        <button
+          type="button"
+          @click="kindFilter = 'SECRET'"
+          class="redaction-facet-btn secret"
+          :class="{ 'active': kindFilter === 'SECRET' }"
+          :aria-pressed="kindFilter === 'SECRET'"
+        >
+          <span class="w-1.5 h-1.5 rounded-full bg-[var(--apple-red)]"></span>
+          <span
+            x-text="t('system.redaction.SECRET') + ' (' + kindTotal('SECRET') + ')'"
+          ></span>
+        </button>
+        <button
+          type="button"
+          @click="kindFilter = 'HOME'"
+          class="redaction-facet-btn home"
+          :class="{ 'active': kindFilter === 'HOME' }"
+          :aria-pressed="kindFilter === 'HOME'"
+        >
+          <span
+            class="w-1.5 h-1.5 rounded-full bg-[var(--apple-purple)]"
+          ></span>
+          <span
+            x-text="t('system.redaction.HOME') + ' (' + kindTotal('HOME') + ')'"
+          ></span>
+        </button>
+        <button
+          type="button"
+          @click="kindFilter = 'WORD'"
+          class="redaction-facet-btn word"
+          :class="{ 'active': kindFilter === 'WORD' }"
+          :aria-pressed="kindFilter === 'WORD'"
+        >
+          <span class="w-1.5 h-1.5 rounded-full bg-[var(--apple-blue)]"></span>
+          <span
+            x-text="t('system.redaction.WORD') + ' (' + kindTotal('WORD') + ')'"
+          ></span>
+        </button>
+        <button
+          type="button"
+          @click="kindFilter = 'PERSONAL'"
+          class="redaction-facet-btn personal"
+          :class="{ 'active': kindFilter === 'PERSONAL' }"
+          :aria-pressed="kindFilter === 'PERSONAL'"
+        >
+          <span
+            class="w-1.5 h-1.5 rounded-full bg-[var(--apple-orange)]"
+          ></span>
+          <span
+            x-text="t('system.redaction.PERSONAL') + ' (' + kindTotal('PERSONAL') + ')'"
+          ></span>
+        </button>
+      </div>
+
+      <!-- 快捷状态与重置 / 内存缓存控制 -->
+      <div
+        class="flex items-center gap-2 text-xs text-[var(--apple-text-secondary)]"
+      >
+        <span x-show="clientFilter || upstreamFilter || kindFilter !== 'all'">
+          <span
+            x-text="'已筛选: ' + filteredRecords.length + ' / ' + redactionStats.length"
+          ></span>
+        </span>
+        <button
+          type="button"
+          x-show="clientFilter !== null || upstreamFilter !== null || kindFilter !== 'all'"
+          @click="clientFilter = null; upstreamFilter = null; kindFilter = 'all'; clearDetail()"
+          class="btn btn-secondary text-xs px-2.5 py-1"
+          x-text="t('redaction.routes.reset')"
+        ></button>
+        <button
+          type="button"
+          @click="changeInspection('clear')"
+          :disabled="inspectionBusy || !redactionStats.some(e => e.contentAvailable)"
+          class="btn btn-secondary text-xs px-2.5 py-1 text-[var(--apple-text-secondary)] hover:text-[var(--apple-red)] flex items-center gap-1.5 transition-colors"
+          :title="t('redaction.inspect.clear')"
+        >
+          <svg
+            class="w-3.5 h-3.5"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+          >
+            <polyline points="3 6 5 6 21 6" />
+            <path
+              d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+            />
+          </svg>
+          <span x-text="t('redaction.inspect.clear')"></span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 按日期分组的审计时间线 或 优质空状态引导 -->
+    <div class="space-y-4">
+      <!-- 模式 A：暂无任何脱敏请求时的苹果级空状态卡片 -->
+      <div x-show="!redactionStats.length" class="card redaction-empty-card">
+        <div
+          class="w-12 h-12 rounded-2xl bg-[rgba(0,113,227,0.08)] flex items-center justify-center text-[var(--apple-blue)] mb-3"
+        >
+          <svg
+            class="w-6 h-6"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+          >
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            <path d="m9 12 2 2 4-4" />
+          </svg>
+        </div>
+        <h4 class="text-sm font-semibold text-[var(--apple-text)]">
+          暂无脱敏诊断记录
+        </h4>
         <p
-          class="text-xs text-[var(--apple-text-secondary)]"
-          x-text="t('redaction.liveHint')"
-        ></p>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <section class="card p-5 space-y-2">
-            <h3
-              class="text-sm text-[var(--apple-text-secondary)]"
-              x-text="t('system.redaction.requests')"
-            ></h3>
-            <p
-              class="text-2xl font-semibold"
-              x-text="redactionStats.length"
-            ></p>
-          </section>
-          <section class="card p-5 space-y-2">
-            <h3
-              class="text-sm text-[var(--apple-text-secondary)]"
-              x-text="t('system.redaction.total')"
-            ></h3>
-            <p class="text-2xl font-semibold" x-text="redactionStatsTotal"></p>
-          </section>
-          <section class="card p-5 space-y-3">
-            <h3
-              class="text-sm text-[var(--apple-text-secondary)]"
-              x-text="t('redaction.status')"
-            ></h3>
-            <p
-              class="font-semibold"
-              x-text="t(appliedRedaction.enabled ? 'redaction.enabled' : 'redaction.disabled')"
-            ></p>
-            <dl class="space-y-2 text-xs">
-              <template
-                x-for="rule in ['secrets', 'homePaths', 'wordsEnabled']"
-                :key="rule"
+          class="text-xs text-[var(--apple-text-secondary)] mt-1.5 leading-relaxed max-w-sm"
+        >
+          脱敏内核已准备就绪。当客户端通过本机代理向模型发起包含密钥、路径或敏感词的请求时，将在此保留诊断元数据与还原映射。
+        </p>
+        <div class="flex items-center gap-3 mt-4">
+          <button
+            type="button"
+            @click="tab = 'rules'"
+            class="btn btn-secondary text-xs"
+          >
+            配置脱敏规则
+          </button>
+          <button
+            type="button"
+            @click="tab = 'preview'"
+            class="btn btn-primary text-xs"
+          >
+            前往模拟沙箱体验
+          </button>
+        </div>
+      </div>
+
+      <p
+        class="text-[11px] text-[var(--apple-text-secondary)] leading-relaxed"
+        x-text="t('redaction.inspect.warning')"
+      ></p>
+
+      <!-- 模式 B：有历史记录但被当前筛选过滤 -->
+      <div
+        x-show="redactionStats.length && !filteredRecords.length"
+        class="card p-8 text-center text-xs text-[var(--apple-text-secondary)] space-y-2"
+      >
+        <p x-text="t('redaction.routes.noMatches')"></p>
+        <button
+          type="button"
+          @click="clientFilter = null; upstreamFilter = null; kindFilter = 'all'"
+          class="btn btn-secondary text-xs"
+        >
+          重置所有筛选
+        </button>
+      </div>
+
+      <!-- 模式 C：正常显示审计记录列表 -->
+      <template x-for="group in groupedRecords" :key="group.dateLabel">
+        <div class="space-y-2">
+          <div
+            class="flex items-center gap-2 px-1 text-xs font-semibold text-[var(--apple-text-secondary)] uppercase tracking-wider"
+          >
+            <span x-text="group.dateLabel"></span>
+            <span
+              class="text-[11px] font-normal opacity-70"
+              x-text="'(' + group.records.length + ' 条请求)'"
+            ></span>
+          </div>
+
+          <div
+            class="card overflow-hidden divide-y divide-[var(--apple-gray-5)]"
+          >
+            <template x-for="entry in group.records" :key="entry.id">
+              <div
+                @click="loadDetail(entry.id, false)"
+                class="redaction-entry-row"
+                :class="{ 'active': detailId === entry.id }"
               >
-                <div class="flex items-start justify-between gap-3">
-                  <dt x-text="t('system.redaction.' + rule)"></dt>
-                  <dd
-                    x-text="t(appliedRedaction.enabled && appliedRedaction[rule] ? 'redaction.enabled' : 'redaction.disabled')"
-                  ></dd>
+                <!-- 状态与时间 -->
+                <div class="flex items-center gap-2.5 min-w-[90px]">
+                  <span
+                    class="w-2 h-2 rounded-full"
+                    :class="entryStatusClass(entry)"
+                  ></span>
+                  <span
+                    class="text-xs font-mono font-medium text-[var(--apple-text)]"
+                    x-text="formatTimeOnly(entry.timestamp)"
+                  ></span>
+                  <span
+                    class="text-xs text-[var(--apple-text-secondary)]"
+                    x-text="t('redaction.status.' + entry.status)"
+                  ></span>
+                </div>
+
+                <!-- 客户端与上游流向 -->
+                <div class="flex-1 min-w-0 flex items-center gap-2 text-xs">
+                  <span
+                    class="font-semibold text-[var(--apple-text)] truncate max-w-[140px]"
+                    x-text="entry.client || t('redaction.routes.unknown')"
+                  ></span>
+                  <svg
+                    class="w-3.5 h-3.5 text-[var(--apple-text-secondary)] shrink-0"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                    <polyline points="12 5 19 12 12 19" />
+                  </svg>
+                  <span
+                    class="text-[var(--apple-text-secondary)] truncate"
+                    x-text="formatUpstreams(entry)"
+                  ></span>
+                </div>
+
+                <span
+                  class="text-[11px] text-[var(--apple-text-secondary)]"
+                  x-text="entryActionSummary(entry)"
+                ></span>
+                <span
+                  class="text-[11px] text-[var(--apple-text-secondary)]"
+                  x-text="t('redaction.content.' + (entry.contentState || 'not_collected'))"
+                ></span>
+                <!-- 命中的类别胶囊徽章 -->
+                <div class="hidden sm:flex items-center gap-1.5 shrink-0">
+                  <template
+                    x-for="tag in entryKindBadges(entry)"
+                    :key="tag.kind"
+                  >
+                    <span
+                      class="px-2 py-0.5 rounded-full text-[11px] font-medium"
+                      :class="tag.kind === 'SECRET' ? 'bg-[rgba(255,59,48,0.1)] text-[var(--apple-red)]' : (tag.kind === 'HOME' ? 'bg-[rgba(175,82,222,0.1)] text-[var(--apple-purple)]' : (tag.kind === 'PERSONAL' ? 'bg-[rgba(255,149,0,0.12)] text-[var(--apple-orange)]' : 'bg-[rgba(0,113,227,0.1)] text-[var(--apple-blue)]'))"
+                      :title="tag.title"
+                      x-text="tag.label"
+                    ></span>
+                  </template>
+                </div>
+
+                <!-- 耗时与右箭头 -->
+                <div class="flex items-center gap-3 shrink-0 text-xs">
+                  <span
+                    class="font-mono text-[var(--apple-text-secondary)]"
+                    x-text="(entry.maskingMs ? entry.maskingMs.toFixed(1) + 'ms' : '<0.1ms')"
+                  ></span>
+                  <svg
+                    class="w-3.5 h-3.5 text-[var(--apple-gray-4)]"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- 抓包详情与流水线抽屉 (Detail Inspector) -->
+    <div
+      x-show="detailId !== null"
+      class="card p-5 md:p-6 border-2 border-[var(--apple-blue)] shadow-lg space-y-6"
+    >
+      <!-- 悬浮顶栏 -->
+      <div
+        class="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-[var(--apple-gray-5)]"
+      >
+        <div class="flex items-center gap-3">
+          <button
+            type="button"
+            class="btn btn-secondary text-xs px-2.5 py-1 flex items-center gap-1.5"
+            @click="clearDetail()"
+          >
+            <svg
+              class="w-3.5 h-3.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <line x1="19" y1="12" x2="5" y2="12" />
+              <polyline points="12 19 5 12 12 5" />
+            </svg>
+            <span x-text="t('redaction.inspect.close')"></span>
+          </button>
+          <span
+            class="text-xs font-semibold text-[var(--apple-text)]"
+            x-text="t('redaction.inspect.title') + ' #' + detailId"
+          ></span>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            class="btn btn-secondary text-xs flex items-center gap-1.5"
+            x-show="detail && !detailRevealed && detailContentState === 'available' && detail.mappings.length"
+            :disabled="detailLoading"
+            @click="loadDetail(detailId, true)"
+          >
+            <svg
+              class="w-3.5 h-3.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+            >
+              <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+              <circle cx="12" cy="13" r="3" />
+            </svg>
+            <span x-text="t('redaction.inspect.reveal')"></span>
+          </button>
+          <button
+            type="button"
+            class="btn btn-secondary text-xs flex items-center gap-1.5"
+            x-show="detailRevealed"
+            @click="loadDetail(detailId, false)"
+          >
+            <svg
+              class="w-3.5 h-3.5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+            >
+              <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+              <path
+                d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"
+              />
+              <path
+                d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"
+              />
+              <line x1="2" y1="2" x2="22" y2="22" />
+            </svg>
+            <span x-text="t('redaction.inspect.hide')"></span>
+          </button>
+        </div>
+      </div>
+
+      <p
+        class="text-xs"
+        x-show="detailLoading"
+        x-text="t('system.redaction.loading')"
+      ></p>
+      <p
+        class="text-xs text-red-600"
+        role="alert"
+        x-show="detailError"
+        x-text="detailError ? t(detailError) : ''"
+      ></p>
+
+      <template x-if="detail">
+        <div class="space-y-6">
+          <section class="space-y-3">
+            <h3
+              class="text-sm font-semibold"
+              x-text="t('redaction.facts.title')"
+            ></h3>
+            <dl class="redaction-pipeline-grid">
+              <template x-for="fact in detailFacts" :key="fact.label">
+                <div class="redaction-step-card">
+                  <dt
+                    class="text-xs text-[var(--apple-text-secondary)]"
+                    x-text="t(fact.label)"
+                  ></dt>
+                  <dd class="text-xs mt-2" x-text="fact.value"></dd>
                 </div>
               </template>
             </dl>
-          </section>
-        </div>
-        <section class="card p-5 space-y-3">
-          <h3 class="text-sm" x-text="t('redaction.categories')"></h3>
-          <template x-for="kind in ['SECRET', 'HOME', 'WORD']" :key="kind">
-            <div class="redaction-meter">
-              <span x-text="t('system.redaction.' + kind)"></span>
-              <div class="redaction-meter-track">
-                <i
-                  :style="'width: ' + (redactionStatsTotal ? kindTotal(kind) / redactionStatsTotal * 100 : 0) + '%'"
-                ></i>
-              </div>
-              <span x-text="kindTotal(kind)"></span>
-            </div>
-          </template>
-        </section>
-        <section class="card p-4 sm:p-5 space-y-3">
-          <div class="flex items-center justify-between gap-3">
-            <h3
-              class="font-semibold text-sm"
-              x-text="t('system.redaction.recent')"
-            ></h3>
-            <button
-              type="button"
-              class="btn btn-secondary"
-              @click="loadRedactionStats()"
-              :disabled="redactionStatsLoading"
-              x-text="t('refresh')"
-            ></button>
-          </div>
-          <p
-            class="text-xs text-[var(--apple-text-secondary)]"
-            x-text="t('system.redaction.statsHint')"
-          ></p>
-          <p
-            class="text-xs text-[var(--apple-text-secondary)]"
-            x-text="t('system.redaction.countHint')"
-          ></p>
-          <div class="flex flex-wrap items-center gap-2 text-xs">
-            <span
-              x-text="t('redaction.routes.client') + ': ' + (clientFilter === null ? t('redaction.routes.all') : clientFilter || t('redaction.routes.unknown'))"
-            ></span>
-            <span
-              x-text="t('redaction.routes.upstream') + ': ' + (upstreamFilter === null ? t('redaction.routes.all') : upstreamFilter || t('redaction.routes.unknown'))"
-            ></span>
-            <button
-              type="button"
-              class="btn btn-secondary"
-              @click="clientFilter = null; upstreamFilter = null; clearDetail()"
-              x-text="t('redaction.routes.reset')"
-            ></button>
-            <span
-              x-text="filteredRecords.length + ' / ' + redactionStats.length"
-            ></span>
-          </div>
-          <p
-            class="text-xs"
-            x-show="redactionStats.length && !filteredRecords.length"
-            x-text="t('redaction.routes.noMatches')"
-          ></p>
-          <div role="status" class="text-xs">
+            <p class="text-xs" x-text="detailAttemptSummary"></p>
             <p
-              x-show="redactionStatsLoading"
-              x-text="t('system.redaction.loading')"
+              class="text-xs text-[var(--apple-text-secondary)]"
+              x-text="t('redaction.attempt.hint')"
             ></p>
             <p
-              x-show="!redactionStatsLoading && !redactionStatsError && !redactionStats.length"
-              x-text="t('system.redaction.statsEmpty')"
+              class="text-xs text-[var(--apple-orange)]"
+              x-show="detailDiagnostics?.attemptsTruncated || detailDiagnostics?.attempts?.some(a => a.truncated)"
+              x-text="t('redaction.attempt.partial')"
             ></p>
-          </div>
-          <p
-            role="alert"
-            class="text-xs text-red-600"
-            x-show="redactionStatsError"
-            x-text="redactionStatsError ? t(redactionStatsError) : ''"
-          ></p>
-          <div x-show="redactionStats.length" class="overflow-x-auto max-h-96">
-            <table class="w-full text-left text-xs">
-              <thead>
-                <tr class="border-b border-[var(--apple-gray-5)]">
-                  <th
-                    class="p-2"
-                    scope="col"
-                    x-text="t('system.redaction.time')"
-                  ></th>
-                  <th
-                    class="p-2"
-                    scope="col"
-                    x-text="t('system.redaction.hits')"
-                  ></th>
-                  <th
-                    class="p-2"
-                    scope="col"
-                    x-text="t('system.redaction.maskingMs')"
-                  ></th>
-                  <th
-                    class="p-2"
-                    scope="col"
-                    x-text="t('system.redaction.restored')"
-                  ></th>
-                  <th
-                    class="p-2"
-                    scope="col"
-                    x-text="t('redaction.inspect.route')"
-                  ></th>
-                  <th
-                    class="p-2"
-                    scope="col"
-                    x-text="t('redaction.inspect.title')"
-                  ></th>
-                </tr>
-              </thead>
-              <tbody>
-                <template x-for="entry in filteredRecords" :key="entry.id">
-                  <tr
-                    class="redaction-entry border-b border-[var(--apple-gray-5)] align-top"
+            <div class="space-y-2">
+              <template
+                x-for="(attempt, index) in detailDiagnostics?.attempts || []"
+                :key="index"
+              >
+                <div
+                  class="border border-[var(--apple-gray-5)] rounded-lg p-3 text-xs space-y-1"
+                >
+                  <p
+                    x-text="'#' + (index + 1) + ' · ' + (attempt.upstream.name || attempt.upstream.id) + ' · ' + attempt.upstream.model + ' · ' + t('redaction.attempt.' + attempt.status)"
+                  ></p>
+                  <template
+                    x-for="(body, bIndex) in attempt.bodies"
+                    :key="bIndex"
                   >
-                    <td
-                      class="p-2 whitespace-nowrap"
-                      x-text="formatTime(entry.timestamp)"
-                    ></td>
-                    <td class="p-2 min-w-[240px]">
-                      <p x-text="entry.total"></p>
-                      <p
-                        class="text-[var(--apple-text-secondary)]"
-                        x-text="redactionCounts(entry.byKind, 'kind')"
-                      ></p>
-                      <p
-                        class="text-[var(--apple-text-secondary)]"
-                        x-text="redactionCounts(entry.bySource, 'source')"
-                      ></p>
-                    </td>
-                    <td
-                      class="p-2 whitespace-nowrap"
-                      x-text="entry.maskingMs.toFixed(2) + ' ms'"
-                    ></td>
-                    <td class="p-2" x-text="entry.restored"></td>
-                    <td class="p-2 min-w-[180px]">
-                      <button
-                        type="button"
-                        class="redaction-route-link"
-                        @click="filterRoute('client', entry.client)"
-                        x-text="entry.client || t('redaction.routes.unknown')"
-                      ></button>
-                      <template
-                        x-for="(upstream, index) in entry.upstreams"
-                        :key="index"
-                      >
-                        <p>
-                          <span aria-hidden="true">→ </span
-                          ><button
-                            type="button"
-                            class="redaction-route-link"
-                            @click="filterRoute('upstream', upstream.id || '')"
-                            x-text="(upstream.name || upstream.id || t('redaction.routes.unknown')) + ' · ' + upstream.protocol + ' · ' + upstream.model"
-                          ></button>
-                        </p>
-                      </template>
-                      <p
-                        x-show="!entry.upstreams.length"
-                        x-text="'→ ' + t('redaction.routes.unknown')"
-                      ></p>
-                    </td>
-                    <td class="p-2">
-                      <button
-                        type="button"
-                        class="btn btn-secondary"
-                        :disabled="!inspection.enabled || inspectionBusy || !entry.contentAvailable"
-                        @click="loadDetail(entry.id)"
-                        x-text="t('redaction.inspect.open')"
-                      ></button>
-                    </td>
-                  </tr>
-                </template>
-              </tbody>
-            </table>
-          </div>
-        </section>
-        <section
-          class="card p-4 sm:p-5 space-y-3"
-          x-show="detailId !== null || detailError"
-          aria-live="polite"
-        >
-          <div class="flex flex-wrap items-center gap-2">
-            <h3
-              class="font-semibold text-sm"
-              x-text="t('redaction.inspect.title') + (detailId === null ? '' : ' #' + detailId)"
-            ></h3>
-            <button
-              type="button"
-              class="btn btn-secondary"
-              @click="clearDetail()"
-              x-text="t('redaction.inspect.close')"
-            ></button>
-            <button
-              type="button"
-              class="btn btn-secondary"
-              x-show="detail && !detailRevealed"
-              :disabled="detailLoading"
-              @click="loadDetail(detailId, true)"
-              x-text="t('redaction.inspect.reveal')"
-            ></button>
-            <button
-              type="button"
-              class="btn btn-secondary"
-              x-show="detailRevealed"
-              @click="loadDetail(detailId)"
-              x-text="t('redaction.inspect.hide')"
-            ></button>
-          </div>
-          <p
-            class="text-xs"
-            x-show="detailLoading"
-            x-text="t('system.redaction.loading')"
-          ></p>
-          <p
-            class="text-xs text-red-600"
-            role="alert"
-            x-show="detailError"
-            x-text="detailError ? t(detailError) : ''"
-          ></p>
-          <template x-if="detail">
-            <div class="space-y-4 text-xs">
+                    <p
+                      class="text-[var(--apple-text-secondary)]"
+                      x-text="t('redaction.attempt.body', { index: bIndex + 1, places: body.places }) + ' · ' + t('redaction.http.' + body.status) + (body.httpStatus ? ' HTTP ' + body.httpStatus : '')"
+                    ></p>
+                  </template>
+                  <p
+                    x-show="!attempt.bodies.length"
+                    class="text-[var(--apple-text-secondary)]"
+                    x-text="t('redaction.attempt.noHttp')"
+                  ></p>
+                </div>
+              </template>
+            </div>
+            <p
+              role="status"
+              class="text-xs text-[var(--apple-text-secondary)]"
+              x-show="detailContentState !== 'available'"
+              x-text="t('redaction.content.' + detailContentState)"
+            ></p>
+          </section>
+
+          <!-- 双栏对照内容 + 右侧高亮字典侧栏 -->
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            <!-- 内容对比区 -->
+            <div class="lg:col-span-8 space-y-4">
+              <div class="flex items-center justify-between">
+                <span
+                  class="text-xs font-semibold text-[var(--apple-text)]"
+                  x-text="t('redaction.inspect.content')"
+                ></span>
+                <div
+                  x-show="detail.mappings.length > 0"
+                  :aria-busy="detailLoading"
+                  class="flex items-center gap-1 border border-[var(--apple-gray-5)] rounded-lg p-0.5 bg-[var(--apple-gray-6)] text-xs"
+                >
+                  <button
+                    type="button"
+                    :disabled="detailLoading"
+                    @click="selectDetailViewMode('both')"
+                    :aria-pressed="detailViewMode === 'both'"
+                    class="px-2.5 py-0.5 rounded-md font-medium transition"
+                    :class="detailViewMode === 'both' ? 'bg-[var(--apple-bg)] text-[var(--apple-text)] shadow-xs' : 'text-[var(--apple-text-secondary)]'"
+                  >
+                    <span x-text="t('redaction.inspect.compare')"></span>
+                  </button>
+                  <button
+                    type="button"
+                    :disabled="detailLoading"
+                    @click="selectDetailViewMode('vendor')"
+                    :aria-pressed="detailViewMode === 'vendor'"
+                    class="px-2.5 py-0.5 rounded-md font-medium transition"
+                    :class="detailViewMode === 'vendor' ? 'bg-[var(--apple-bg)] text-[var(--apple-text)] shadow-xs' : 'text-[var(--apple-text-secondary)]'"
+                  >
+                    <span x-text="t('redaction.inspect.vendorView')"></span>
+                  </button>
+                  <button
+                    type="button"
+                    :disabled="detailLoading"
+                    @click="selectDetailViewMode('original')"
+                    :aria-pressed="detailViewMode === 'original'"
+                    class="px-2.5 py-0.5 rounded-md font-medium transition"
+                    :class="detailViewMode === 'original' ? 'bg-[var(--apple-bg)] text-[var(--apple-text)] shadow-xs' : 'text-[var(--apple-text-secondary)]'"
+                  >
+                    <span x-text="t('redaction.inspect.originalView')"></span>
+                  </button>
+                </div>
+              </div>
+
               <p
-                x-show="detail.truncated"
-                x-text="t('redaction.inspect.truncated')"
+                class="redaction-content-hint"
+                x-text="t('redaction.inspect.focusHint')"
               ></p>
-              <p x-text="t('redaction.inspect.protocolHint')"></p>
-              <section>
-                <h4
-                  class="font-medium"
-                  x-text="t('redaction.inspect.input')"
-                ></h4>
-                <p
-                  x-show="!detailRevealed"
-                  x-text="t('redaction.inspect.inputHidden')"
-                ></p>
-                <details x-show="detailRevealed">
-                  <summary x-text="t('redaction.inspect.showInput')"></summary>
-                  <pre
-                    class="redaction-body"
-                    x-text="detail.input === null ? t('redaction.inspect.unavailable') : detail.input"
-                  ></pre>
-                </details>
-              </section>
-              <p x-text="t('redaction.inspect.focusHint')"></p>
-              <button
-                type="button"
-                class="btn btn-secondary"
-                x-show="detailRevealed"
-                :aria-pressed="detailComparison"
-                @click="detailComparison = !detailComparison"
-                x-text="t('redaction.inspect.compare')"
-              ></button>
               <p
-                x-show="detailComparison && detailRevealed"
+                class="redaction-content-hint"
                 x-text="t('redaction.inspect.compareHint')"
               ></p>
               <p
-                x-show="!detail.attempts.length"
-                x-text="t('redaction.inspect.noAttempts')"
+                class="redaction-content-hint"
+                x-show="!detailRevealed"
+                x-text="t('redaction.inspect.inputHidden')"
               ></p>
+              <p
+                class="redaction-content-hint"
+                role="status"
+                x-show="detailDiagnostics?.total > 0 && !detail.mappings.length"
+                x-text="t('redaction.inspect.matchesNotRetained')"
+              ></p>
+
+              <!-- Each attempt keeps its own observed stage and truncation boundary. -->
               <template
-                x-for="(attempt, index) in detail.attempts"
-                :key="index"
+                x-for="(attempt, aIndex) in detail.attempts"
+                :key="aIndex"
               >
-                <section class="space-y-2">
-                  <h4
-                    class="font-medium"
-                    x-text="(index + 1) + '. ' + (attempt.upstream.name || attempt.upstream.id || t('redaction.routes.unknown')) + ' · ' + attempt.upstream.protocol + ' · ' + attempt.upstream.model"
-                  ></h4>
+                <div class="space-y-3">
+                  <div
+                    class="text-xs font-medium text-[var(--apple-text-secondary)] flex items-center gap-2"
+                  >
+                    <span
+                      x-text="(attempt.upstream.name || attempt.upstream.id || t('redaction.routes.unknown')) + ' · ' + attempt.upstream.protocol + ' · ' + attempt.upstream.model"
+                    ></span>
+                    <span
+                      x-show="attempt.truncated"
+                      class="text-[var(--apple-orange)]"
+                      x-text="t('redaction.inspect.truncated')"
+                    ></span>
+                  </div>
                   <p
+                    class="text-[11px]"
+                    :class="attempt.stage === 'http' ? 'text-[var(--apple-text-secondary)]' : 'text-[var(--apple-orange)]'"
                     x-text="t(attempt.stage === 'http' ? 'redaction.inspect.http' : 'redaction.inspect.adapter')"
                   ></p>
-                  <p
-                    x-show="attempt.truncated"
-                    x-text="t('redaction.inspect.truncated')"
-                  ></p>
+
                   <template
-                    x-for="(part, partIndex) in attempt.parts"
-                    :key="partIndex"
+                    x-for="(part, pIndex) in attempt.parts"
+                    :key="pIndex"
                   >
-                    <div>
-                      <template x-if="part.changed">
-                        <section
-                          class="redaction-fragment"
-                          x-data="{ whole: false }"
-                        >
-                          <header>
-                            <strong x-text="part.role"></strong
-                            ><code x-text="part.path"></code>
-                          </header>
-                          <div
-                            class="redaction-columns"
-                            :class="{ 'is-comparing': detailComparison && detailRevealed }"
-                          >
-                            <template
-                              x-for="original in (detailComparison && detailRevealed ? [true, false] : [false])"
-                              :key="String(original)"
-                            >
-                              <div>
-                                <h5
-                                  x-text="t(original ? 'redaction.inspect.before' : 'redaction.inspect.after')"
-                                ></h5>
-                                <pre
-                                  class="redaction-excerpt"
-                                ><template x-for="(segment, segmentIndex) in excerptSegments(part.text, whole, original)" :key="segmentIndex"><span :class="segment.kind ? 'redaction-hit redaction-hit-' + segment.kind : ''" x-text="segment.text"></span></template></pre>
-                              </div>
-                            </template>
-                          </div>
-                          <button
-                            type="button"
-                            class="redaction-route-link"
-                            x-show="part.text.length > 600"
-                            :aria-expanded="whole"
-                            @click="whole = !whole"
-                            x-text="t(whole ? 'redaction.inspect.onlyChanges' : 'redaction.inspect.showWhole')"
-                          ></button>
-                        </section>
-                      </template>
+                    <div
+                      x-data="{ open: false, whole: false }"
+                      class="redaction-content-part"
+                    >
                       <template x-if="!part.changed">
-                        <details class="redaction-unchanged">
+                        <details
+                          class="redaction-unchanged"
+                          @toggle="open = $event.target.open"
+                        >
                           <summary
                             x-text="t('redaction.inspect.unchanged', { count: part.leaves.length })"
                           ></summary>
-                          <template
-                            x-for="leaf in part.leaves"
-                            :key="leaf.path"
-                          >
-                            <div>
-                              <code x-text="leaf.path"></code>
-                              <pre
-                                class="redaction-body"
-                                x-text="leaf.text"
-                              ></pre>
+                          <template x-if="open">
+                            <div class="redaction-unchanged-list">
+                              <template
+                                x-for="(leaf, lIndex) in part.leaves.slice(0, 40)"
+                                :key="lIndex"
+                              >
+                                <div class="redaction-unchanged-line">
+                                  <span
+                                    class="redaction-content-path"
+                                    x-text="leaf.path"
+                                  ></span>
+                                  <span
+                                    class="redaction-unchanged-preview"
+                                    x-text="leaf.text.length > 400 ? leaf.text.slice(0, 400) + '…' : leaf.text"
+                                  ></span>
+                                </div>
+                              </template>
+                              <p
+                                x-show="part.leaves.length > 40"
+                                x-text="t('redaction.inspect.moreParts', { count: part.leaves.length - 40 })"
+                              ></p>
                             </div>
                           </template>
                         </details>
                       </template>
+                      <template x-if="part.changed">
+                        <section class="redaction-match-block">
+                          <header class="redaction-content-heading">
+                            <span
+                              x-show="part.excerpt"
+                              x-text="t('redaction.inspect.retainedExcerpt')"
+                            ></span>
+                            <span x-show="part.role" x-text="part.role"></span>
+                            <span
+                              class="redaction-content-path"
+                              x-text="part.path"
+                            ></span>
+                          </header>
+                          <div
+                            class="redaction-diff-container"
+                            :class="{ 'two-col': detailViewMode === 'both' }"
+                          >
+                            <div
+                              class="redaction-snippet-col"
+                              x-show="detailViewMode === 'both' || detailViewMode === 'original'"
+                            >
+                              <div
+                                class="redaction-snippet-label"
+                                x-text="t('redaction.inspect.before')"
+                              ></div>
+                              <div class="redaction-excerpt">
+                                <template
+                                  x-for="(segment, sIndex) in excerptSegments(part.text, whole, true)"
+                                  :key="sIndex"
+                                >
+                                  <span
+                                    class="redaction-segment"
+                                    :class="{ 'msk-ph': !!segment.kind, 'secret': segment.kind === 'SECRET', 'home': segment.kind === 'HOME', 'active': !!segment.placeholder && activePlaceholder === segment.placeholder }"
+                                    :role="segment.placeholder ? 'button' : null"
+                                    :tabindex="segment.placeholder ? 0 : null"
+                                    @click="segment.placeholder && highlightPlaceholder(segment.placeholder)"
+                                    @keydown.enter="segment.placeholder && highlightPlaceholder(segment.placeholder)"
+                                    @keydown.space.prevent="segment.placeholder && highlightPlaceholder(segment.placeholder)"
+                                    x-text="segment.text"
+                                  ></span>
+                                </template>
+                              </div>
+                            </div>
+                            <div
+                              class="redaction-snippet-col"
+                              x-show="detailViewMode === 'both' || detailViewMode === 'vendor'"
+                            >
+                              <div
+                                class="redaction-snippet-label"
+                                x-text="t('redaction.inspect.after')"
+                              ></div>
+                              <div class="redaction-excerpt">
+                                <template
+                                  x-for="(segment, sIndex) in excerptSegments(part.text, whole)"
+                                  :key="sIndex"
+                                >
+                                  <span
+                                    class="redaction-segment"
+                                    :class="{ 'msk-ph': !!segment.kind, 'secret': segment.kind === 'SECRET', 'home': segment.kind === 'HOME', 'active': !!segment.placeholder && activePlaceholder === segment.placeholder }"
+                                    :role="segment.placeholder ? 'button' : null"
+                                    :tabindex="segment.placeholder ? 0 : null"
+                                    @click="segment.placeholder && highlightPlaceholder(segment.placeholder)"
+                                    @keydown.enter="segment.placeholder && highlightPlaceholder(segment.placeholder)"
+                                    @keydown.space.prevent="segment.placeholder && highlightPlaceholder(segment.placeholder)"
+                                    x-text="segment.text"
+                                  ></span>
+                                </template>
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            class="redaction-content-toggle"
+                            x-show="part.text.length > 600"
+                            @click="whole = !whole"
+                            :aria-expanded="whole"
+                            x-text="t(whole ? 'redaction.inspect.onlyChanges' : 'redaction.inspect.showWhole')"
+                          ></button>
+                        </section>
+                      </template>
                     </div>
                   </template>
-                  <details class="redaction-unchanged">
+                  <details
+                    class="redaction-raw-body"
+                    x-data="{ open: false }"
+                    @toggle="open = $event.target.open"
+                  >
                     <summary x-text="t('redaction.inspect.rawBody')"></summary>
-                    <pre class="redaction-body" x-text="attempt.body"></pre>
+                    <template x-if="open">
+                      <pre x-text="attempt.body"></pre>
+                    </template>
                   </details>
-                </section>
+                </div>
               </template>
-              <section class="space-y-2">
-                <h4
-                  class="font-medium"
-                  x-text="t('redaction.inspect.mappings')"
-                ></h4>
-                <template
-                  x-for="(mapping, index) in detail.mappings"
-                  :key="index"
-                >
-                  <div class="redaction-mapping">
-                    <code x-text="mapping.placeholder"></code>
-                    <span x-text="mapping.kind + ' · ' + mapping.source"></span>
-                    <pre x-show="detailRevealed" x-text="mapping.value"></pre>
-                  </div>
-                </template>
-              </section>
-            </div>
-          </template>
-        </section>
-      </div>
-
-      <form
-        x-show="tab === 'rules'"
-        @submit.prevent="save()"
-        @input="saved = false"
-        class="space-y-6"
-      >
-        <section class="card p-0 overflow-hidden">
-          <div class="p-4 sm:p-5 flex items-start justify-between gap-4">
-            <div class="space-y-1 max-w-xl">
-              <h3
-                class="font-semibold text-sm"
-                x-text="t('system.upstreamRedaction')"
-              ></h3>
               <p
-                id="upstream-redaction-hint"
-                class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
-                x-text="t('system.upstreamRedactionHint')"
+                class="text-xs text-[var(--apple-text-secondary)]"
+                x-show="!detail.attempts.length"
+                x-text="t('redaction.inspect.noAttempts')"
               ></p>
             </div>
+
+            <!-- 右侧：“怎么遮的”交互字典侧边栏 -->
             <div
-              class="redaction-segment"
-              role="group"
-              :aria-label="t('system.upstreamRedaction')"
+              class="lg:col-span-4 border border-[var(--apple-gray-5)] rounded-xl p-4 bg-[var(--apple-gray-6)] space-y-3"
             >
-              <template x-for="on in [false, true]" :key="String(on)">
-                <button
-                  type="button"
-                  :aria-pressed="settings.redaction.enabled === on"
-                  :disabled="saving"
-                  @click="settings.redaction.enabled = on; saved = false"
-                  x-text="t(on ? 'redaction.on' : 'redaction.off')"
-                ></button>
-              </template>
-            </div>
-          </div>
-          <div
-            class="divide-y divide-[var(--apple-gray-5)] border-t border-[var(--apple-gray-5)]"
-          >
-            <template
-              x-for="rule in ['secrets', 'homePaths', 'wordsEnabled']"
-              :key="rule"
-            >
-              <div class="p-4 sm:px-5 space-y-3">
-                <div
-                  class="flex items-start justify-between gap-4"
-                  :class="{ 'opacity-50': !settings.redaction.enabled }"
+              <div class="flex items-center justify-between">
+                <span
+                  class="text-xs font-semibold text-[var(--apple-text)]"
+                  x-text="t('redaction.inspect.mappings')"
+                ></span>
+                <span class="text-[11px] text-[var(--apple-text-secondary)]"
+                  >点击条目联动高亮</span
                 >
-                  <div class="space-y-1 max-w-xl">
-                    <span
-                      class="text-sm font-medium"
-                      x-text="t('system.redaction.' + rule)"
-                    ></span>
-                    <p
-                      class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
-                      x-text="t('system.redaction.' + rule + 'Hint')"
-                    ></p>
-                  </div>
-                  <div
-                    class="redaction-segment"
-                    role="group"
-                    :aria-label="t('system.redaction.' + rule)"
+              </div>
+
+              <!-- 命中 0 处时的安全空状态卡片 -->
+              <div
+                x-show="!detail.mappings?.length"
+                class="py-8 px-4 text-center space-y-2.5 bg-[var(--apple-bg)] rounded-xl border border-dashed border-[var(--apple-gray-5)]"
+              >
+                <div
+                  class="w-10 h-10 rounded-full bg-[var(--apple-gray-6)] text-[var(--apple-text-secondary)] flex items-center justify-center mx-auto"
+                >
+                  <svg
+                    class="w-5 h-5"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
                   >
-                    <template x-for="on in [false, true]" :key="String(on)">
-                      <button
-                        type="button"
-                        :aria-pressed="settings.redaction[rule] === on"
-                        :disabled="saving || !settings.redaction.enabled"
-                        @click="settings.redaction[rule] = on; saved = false"
-                        x-text="t(on ? 'redaction.on' : 'redaction.off')"
-                      ></button>
-                    </template>
-                  </div>
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                    <path d="m9 12 2 2 4-4" />
+                  </svg>
                 </div>
-                <template x-if="rule === 'homePaths'">
-                  <label class="block space-y-2">
-                    <span
-                      class="block text-xs font-medium"
-                      x-text="t('system.redaction.homePrefixes')"
-                    ></span>
-                    <textarea
-                      rows="2"
-                      class="input w-full min-h-[70px] font-mono text-xs resize-y"
-                      style="padding: 8px 12px"
-                      x-model="redactionHomePrefixesText"
-                      :disabled="saving"
-                      spellcheck="false"
-                      :placeholder="t('system.redaction.homePrefixesPlaceholder')"
-                    ></textarea>
-                    <span
-                      class="block text-xs text-[var(--apple-text-tertiary)]"
-                      x-text="t('system.redaction.listHint')"
-                    ></span>
-                  </label>
-                </template>
-                <template x-if="rule === 'wordsEnabled'">
-                  <label class="block space-y-2">
-                    <span
-                      class="block text-xs font-medium"
-                      x-text="t('system.redaction.words')"
-                    ></span>
-                    <textarea
-                      rows="2"
-                      class="input w-full min-h-[70px] font-mono text-xs resize-y"
-                      style="padding: 8px 12px"
-                      x-model="redactionWordsText"
-                      :disabled="saving"
-                      spellcheck="false"
-                      :placeholder="t('system.redaction.wordsPlaceholder')"
-                    ></textarea>
-                    <span
-                      class="block text-xs text-[var(--apple-text-tertiary)]"
-                      x-text="t('system.redaction.listHint')"
-                    ></span>
-                  </label>
+                <div class="text-xs font-semibold text-[var(--apple-text)]">
+                  暂无可展示的原值映射
+                </div>
+                <p
+                  class="text-[11px] text-[var(--apple-text-secondary)] leading-relaxed"
+                >
+                  映射可能尚未生成、已过期，或命中位置未被截断内容保留。没有映射不代表没有脱敏，请以上方请求统计为准。
+                </p>
+              </div>
+
+              <div class="space-y-2" x-show="detail.mappings?.length">
+                <template
+                  x-for="mapping in detail.mappings"
+                  :key="mapping.placeholder"
+                >
+                  <div
+                    @click="highlightPlaceholder(mapping.placeholder)"
+                    class="p-2.5 rounded-lg border bg-[var(--apple-bg)] transition cursor-pointer"
+                    :class="activePlaceholder === mapping.placeholder ? 'border-[var(--apple-blue)] ring-1 ring-[var(--apple-blue)]' : 'border-[var(--apple-gray-5)] hover:border-[var(--apple-gray-4)]'"
+                  >
+                    <div class="flex items-center justify-between text-xs">
+                      <span
+                        class="font-semibold flex items-center gap-1.5"
+                        :class="mapping.kind === 'SECRET' ? 'text-[var(--apple-red)]' : (mapping.kind === 'HOME' ? 'text-[var(--apple-purple)]' : (mapping.kind === 'PERSONAL' ? 'text-[var(--apple-orange)]' : 'text-[var(--apple-blue)]'))"
+                      >
+                        <span
+                          class="w-1.5 h-1.5 rounded-full"
+                          :class="mapping.kind === 'SECRET' ? 'bg-[var(--apple-red)]' : (mapping.kind === 'HOME' ? 'bg-[var(--apple-purple)]' : (mapping.kind === 'PERSONAL' ? 'bg-[var(--apple-orange)]' : 'bg-[var(--apple-blue)]'))"
+                        ></span>
+                        <span
+                          x-text="(mapping.label || mapping.kind) + ' · ' + mapping.source"
+                        ></span>
+                      </span>
+                    </div>
+
+                    <div
+                      class="text-xs font-mono mt-1 text-[var(--apple-text)] break-all"
+                    >
+                      <span class="text-[var(--apple-text-secondary)]"
+                        >占位:
+                      </span>
+                      <span x-text="mapping.placeholder"></span>
+                    </div>
+
+                    <div
+                      class="text-xs font-mono mt-1 text-[var(--apple-green)] break-all"
+                      x-show="detailRevealed && mapping.value"
+                    >
+                      <span class="text-[var(--apple-text-secondary)]"
+                        >真值:
+                      </span>
+                      <span x-text="mapping.value"></span>
+                      <span
+                        class="text-xs text-[var(--apple-orange)]"
+                        x-show="mapping.truncated"
+                        x-text="t('redaction.inspect.mappingTruncated')"
+                      ></span>
+                    </div>
+                  </div>
                 </template>
               </div>
-            </template>
+
+              <p
+                class="text-[11px] text-[var(--apple-text-tertiary)] leading-relaxed"
+              >
+                * 敏感原值仅在内存映射中临时保存，不会落盘到任何日志文件中。
+              </p>
+            </div>
           </div>
-        </section>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ========================================================
+       TAB 2: 规则策略配置 (Rules Config)
+       ======================================================== -->
+  <form
+    x-show="tab === 'rules' && settings"
+    @submit.prevent="save()"
+    @input="saved = false"
+    class="space-y-6"
+  >
+    <div class="card p-6 space-y-6 shadow-xs">
+      <div>
+        <h3
+          class="text-sm font-semibold text-[var(--apple-text)]"
+          x-text="t('system.upstreamRedaction')"
+        ></h3>
+        <p
+          class="text-xs text-[var(--apple-text-secondary)] mt-1"
+          x-text="t('system.upstreamRedactionHint')"
+        ></p>
+      </div>
+
+      <!-- 规则总开关卡片 (即时生效) -->
+      <div
+        class="p-4 rounded-xl border border-[var(--apple-gray-5)] bg-[var(--apple-bg)] flex items-start justify-between gap-4 shadow-2xs"
+      >
+        <div class="space-y-1">
+          <div class="flex items-center gap-2">
+            <span
+              class="w-2.5 h-2.5 rounded-full"
+              :class="settings?.redaction?.enabled ? 'bg-[var(--apple-green)] live-dot' : 'bg-[var(--apple-gray)]'"
+            ></span>
+            <span class="text-sm font-semibold text-[var(--apple-text)]"
+              >脱敏保护总开关</span
+            >
+            <span
+              class="px-2 py-0.5 rounded-full text-[11px] font-medium"
+              :class="settings?.redaction?.enabled ? 'bg-[rgba(52,199,89,0.12)] text-[var(--apple-green)]' : 'bg-[var(--apple-gray-6)] text-[var(--apple-text-secondary)]'"
+              x-text="settings?.redaction?.enabled ? '运行中' : '已关闭'"
+            ></span>
+          </div>
+          <p class="text-xs text-[var(--apple-text-secondary)] leading-relaxed">
+            控制本地脱敏网关的全局总开关。开启后，发往上游模型的流量将自动匹配并替换以下敏感项。
+          </p>
+        </div>
         <div
-          class="redaction-save p-4 sm:p-5 flex flex-wrap items-center gap-3"
+          class="switch-track"
+          :class="{ 'on': settings?.redaction?.enabled, 'opacity-50 cursor-not-allowed': saving || loading }"
+          @click="toggleMainSwitch()"
         >
+          <div class="switch-thumb"></div>
+        </div>
+      </div>
+
+      <!-- 分类卡片 1: 凭据与密钥 (SECRET) -->
+      <div
+        class="p-4 rounded-xl border border-[var(--apple-gray-5)] bg-[var(--apple-gray-6)] flex items-start justify-between gap-4"
+      >
+        <div class="space-y-1">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-[var(--apple-red)]"></span>
+            <span
+              class="text-sm font-semibold text-[var(--apple-text)]"
+              x-text="t('system.redaction.secrets')"
+            ></span>
+          </div>
+          <p
+            class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+            x-text="t('system.redaction.secretsHint')"
+          ></p>
+        </div>
+        <div
+          class="switch-track"
+          :class="{ 'on': settings?.redaction?.secrets }"
+          @click="if (settings?.redaction) { settings.redaction.secrets = !settings.redaction.secrets; saved = false; }"
+        >
+          <div class="switch-thumb"></div>
+        </div>
+      </div>
+
+      <!-- 分类卡片 2: 系统家目录路径 (HOME) -->
+      <div
+        class="p-4 rounded-xl border border-[var(--apple-gray-5)] bg-[var(--apple-gray-6)] space-y-3"
+      >
+        <div class="flex items-start justify-between gap-4">
+          <div class="space-y-1">
+            <div class="flex items-center gap-2">
+              <span
+                class="w-2 h-2 rounded-full bg-[var(--apple-purple)]"
+              ></span>
+              <span
+                class="text-sm font-semibold text-[var(--apple-text)]"
+                x-text="t('system.redaction.homePaths')"
+              ></span>
+            </div>
+            <p
+              class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+              x-text="t('system.redaction.homePathsHint')"
+            ></p>
+          </div>
+          <div
+            class="switch-track"
+            :class="{ 'on': settings?.redaction?.homePaths }"
+            @click="if (settings?.redaction) { settings.redaction.homePaths = !settings.redaction.homePaths; saved = false; }"
+          >
+            <div class="switch-thumb"></div>
+          </div>
+        </div>
+
+        <!-- 额外前缀 Tag 胶囊 -->
+        <div class="pt-2 border-t border-[var(--apple-gray-5)]">
+          <label
+            class="block text-xs font-medium text-[var(--apple-text)] mb-2"
+            x-text="t('system.redaction.homePrefixes')"
+          ></label>
+          <div
+            class="flex flex-wrap items-center gap-2 p-2 rounded-lg border border-[var(--apple-gray-5)] bg-[var(--apple-bg)]"
+          >
+            <template
+              x-for="(prefix, index) in settings?.redaction?.homePrefixes"
+              :key="index"
+            >
+              <span class="tag-chip">
+                <span x-text="prefix"></span>
+                <button type="button" @click="removeHomePrefix(index)">
+                  ×
+                </button>
+              </span>
+            </template>
+            <input
+              type="text"
+              x-model="newPrefixInput"
+              @keydown.enter.prevent="addHomePrefix()"
+              :placeholder="t('system.redaction.homePrefixesPlaceholder')"
+              class="text-xs bg-transparent outline-none flex-1 min-w-[160px] text-[var(--apple-text)] font-mono"
+            />
+            <button
+              type="button"
+              class="btn btn-secondary text-xs px-2 py-0.5"
+              @click="addHomePrefix()"
+              x-show="newPrefixInput.trim()"
+            >
+              添加
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 分类卡片 3: 自定义脱敏词库 (WORD) -->
+      <div
+        class="p-4 rounded-xl border border-[var(--apple-gray-5)] bg-[var(--apple-gray-6)] space-y-3"
+      >
+        <div class="flex items-start justify-between gap-4">
+          <div class="space-y-1">
+            <div class="flex items-center gap-2">
+              <span class="w-2 h-2 rounded-full bg-[var(--apple-blue)]"></span>
+              <span
+                class="text-sm font-semibold text-[var(--apple-text)]"
+                x-text="t('system.redaction.wordsEnabled')"
+              ></span>
+            </div>
+            <p
+              class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+              x-text="t('system.redaction.wordsEnabledHint')"
+            ></p>
+          </div>
+          <div
+            class="switch-track"
+            :class="{ 'on': settings?.redaction?.wordsEnabled }"
+            @click="if (settings?.redaction) { settings.redaction.wordsEnabled = !settings.redaction.wordsEnabled; saved = false; }"
+          >
+            <div class="switch-thumb"></div>
+          </div>
+        </div>
+
+        <!-- 词库 Tag 胶囊 -->
+        <div class="pt-2 border-t border-[var(--apple-gray-5)]">
+          <label
+            class="block text-xs font-medium text-[var(--apple-text)] mb-2"
+            x-text="t('system.redaction.words')"
+          ></label>
+          <div
+            class="flex flex-wrap items-center gap-2 p-2 rounded-lg border border-[var(--apple-gray-5)] bg-[var(--apple-bg)]"
+          >
+            <template
+              x-for="(word, index) in settings?.redaction?.words"
+              :key="index"
+            >
+              <span class="tag-chip">
+                <span x-text="word"></span>
+                <button type="button" @click="removeWord(index)">×</button>
+              </span>
+            </template>
+            <input
+              type="text"
+              x-model="newWordInput"
+              @keydown.enter.prevent="addWord()"
+              :placeholder="t('system.redaction.wordsPlaceholder')"
+              class="text-xs bg-transparent outline-none flex-1 min-w-[160px] text-[var(--apple-text)] font-mono"
+            />
+            <button
+              type="button"
+              class="btn btn-secondary text-xs px-2 py-0.5"
+              @click="addWord()"
+              x-show="newWordInput.trim()"
+            >
+              添加
+            </button>
+          </div>
+          <label
+            class="mt-2 flex items-center gap-2 text-xs text-[var(--apple-text)] cursor-pointer"
+          >
+            <input
+              type="checkbox"
+              :checked="settings?.redaction?.wordsAnyCase"
+              @change="if (settings?.redaction) { settings.redaction.wordsAnyCase = $event.target.checked; saved = false; }"
+            />
+            <span>忽略大小写（Nightjar 也会遮蔽 NIGHTJAR）</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- 分类卡片 4: 个人数据 (PERSONAL) -->
+      <div
+        class="p-4 rounded-xl border border-[var(--apple-gray-5)] bg-[var(--apple-gray-6)] space-y-3"
+      >
+        <div class="flex items-start justify-between gap-4">
+          <div class="space-y-1">
+            <div class="flex items-center gap-2">
+              <span
+                class="w-2 h-2 rounded-full bg-[var(--apple-orange)]"
+              ></span>
+              <span class="text-sm font-semibold text-[var(--apple-text)]"
+                >个人数据</span
+              >
+            </div>
+            <p
+              class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+            >
+              邮箱、大陆手机号、身份证号（校验位）、银行卡号（Luhn 校验）。公网
+              IP 几乎每个请求都有，默认不遮蔽；内网 IP 从不算个人数据。
+            </p>
+          </div>
+          <div
+            class="switch-track"
+            :class="{ 'on': settings?.redaction?.personal }"
+            @click="if (settings?.redaction) { settings.redaction.personal = !settings.redaction.personal; saved = false; }"
+          >
+            <div class="switch-thumb"></div>
+          </div>
+        </div>
+        <div
+          class="pt-2 border-t border-[var(--apple-gray-5)] flex flex-wrap gap-x-4 gap-y-2"
+          :class="{ 'opacity-50': !settings?.redaction?.personal }"
+        >
+          <template x-for="kind in personalKinds" :key="kind.id">
+            <label
+              class="flex items-center gap-1.5 text-xs text-[var(--apple-text)] cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                :disabled="!settings?.redaction?.personal"
+                :checked="settings?.redaction?.personalKinds?.[kind.id]"
+                @change="settings.redaction.personalKinds[kind.id] = $event.target.checked; saved = false"
+              />
+              <span x-text="kind.name"></span>
+            </label>
+          </template>
+        </div>
+      </div>
+
+      <!-- 发现敏感值后的处理方式 -->
+      <div
+        class="p-4 rounded-xl border border-[var(--apple-gray-5)] bg-[var(--apple-gray-6)] space-y-3"
+      >
+        <div class="space-y-1">
+          <span class="text-sm font-semibold text-[var(--apple-text)]"
+            >发现后怎么处理</span
+          >
+          <p class="text-xs text-[var(--apple-text-secondary)] leading-relaxed">
+            脱敏：换成占位符发出，回复里还原。只警告：原样发出，但计入统计。拦截：整个请求不发出，返回
+            400，错误信息只写类型和长度，不含原值。
+          </p>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <template x-for="kind in redactionCategories" :key="kind.id">
+            <label class="space-y-1">
+              <span
+                class="block text-xs text-[var(--apple-text-secondary)]"
+                x-text="kind.name"
+              ></span>
+              <select
+                class="input text-xs py-1 w-full"
+                :value="settings?.redaction?.actions?.[kind.id] || 'mask'"
+                @change="settings.redaction.actions[kind.id] = $event.target.value; saved = false"
+              >
+                <option value="mask">脱敏</option>
+                <option value="warn">只警告</option>
+                <option value="block">拦截</option>
+              </select>
+            </label>
+          </template>
+        </div>
+      </div>
+
+      <!-- 永不脱敏白名单 -->
+      <div
+        class="p-4 rounded-xl border border-[var(--apple-gray-5)] bg-[var(--apple-gray-6)] space-y-2"
+      >
+        <span class="text-sm font-semibold text-[var(--apple-text)]"
+          >永不脱敏</span
+        >
+        <p class="text-xs text-[var(--apple-text-secondary)] leading-relaxed">
+          任务需要原样使用的值（团队邮箱、测试密钥等），每行一个。只在完整出现时放行。
+        </p>
+        <textarea
+          class="input w-full min-h-[72px] font-mono text-xs resize-y"
+          rows="3"
+          x-model="allowText"
+          @input="saved = false"
+          spellcheck="false"
+          autocomplete="off"
+          placeholder="team@example.com"
+        ></textarea>
+      </div>
+
+      <!-- 底部保存操作栏 -->
+      <div
+        class="flex items-center justify-between pt-4 border-t border-[var(--apple-gray-5)]"
+      >
+        <span
+          class="text-xs text-[var(--apple-text-secondary)]"
+          x-text="t('redaction.saveHint')"
+        ></span>
+        <div class="flex items-center gap-3">
+          <span
+            role="status"
+            class="text-xs text-[var(--apple-green)] font-medium flex items-center gap-1"
+            x-show="saved"
+          >
+            <svg
+              class="w-3.5 h-3.5 text-[var(--apple-green)]"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+            <span x-text="t('system.saved')"></span>
+          </span>
           <button
             type="submit"
             class="btn btn-primary"
             :disabled="saving || loading"
             x-text="t('system.save')"
           ></button>
-          <span
-            class="text-xs text-[var(--apple-text-secondary)]"
-            x-text="t('redaction.saveHint')"
-          ></span>
-          <span
-            role="status"
-            class="text-xs text-[var(--apple-green)] font-medium"
-            x-show="saved"
-            x-text="t('system.saved')"
-          ></span>
         </div>
-      </form>
+      </div>
+    </div>
+  </form>
 
-      <section x-show="tab === 'preview'" class="card p-4 sm:p-5 space-y-3">
-        <h3
-          class="font-semibold text-sm"
-          x-text="t('system.redaction.preview')"
-        ></h3>
-        <p
-          class="text-xs text-[var(--apple-text-secondary)]"
-          id="redaction-preview-hint"
-          x-text="t('system.redaction.previewHint')"
-        ></p>
-        <label class="block text-xs space-y-2">
-          <span x-text="t('system.redaction.format')"></span>
-          <select class="input" x-model="previewFormat">
+  <!-- ========================================================
+       TAB 3: 即时演练沙盒 (Live Playground)
+       ======================================================== -->
+  <div x-show="tab === 'preview'" class="space-y-6">
+    <div class="card p-6 space-y-6 shadow-xs">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3
+            class="text-sm font-semibold text-[var(--apple-text)]"
+            x-text="t('system.redaction.preview')"
+          ></h3>
+          <p
+            id="redaction-preview-hint"
+            class="text-xs text-[var(--apple-text-secondary)] mt-1"
+            x-text="t('system.redaction.previewHint')"
+          ></p>
+        </div>
+        <div class="flex items-center gap-2">
+          <select class="input text-xs py-1" x-model="previewFormat">
             <option value="text" x-text="t('system.redaction.text')"></option>
             <option value="json">JSON</option>
           </select>
-        </label>
-        <label class="block text-xs space-y-2">
-          <span x-text="t('system.redaction.input')"></span>
-          <textarea
-            class="input w-full min-h-[110px] font-mono text-xs resize-y"
-            style="padding: 8px 12px"
-            rows="5"
-            x-model="previewText"
-            maxlength="65536"
-            aria-describedby="redaction-preview-hint"
-            spellcheck="false"
-            autocomplete="off"
-          ></textarea>
-        </label>
-        <div class="flex flex-wrap gap-2">
           <button
             type="button"
-            class="btn btn-secondary"
-            @click="runRedactionPreview()"
-            :disabled="previewLoading || !previewText || loading || saving"
-            x-text="t('system.redaction.preview')"
-          ></button>
-          <button
-            type="button"
-            class="btn btn-secondary"
-            @click="clearPreview()"
-            x-text="t('system.redaction.clear')"
-          ></button>
-          <button
-            type="button"
-            class="btn btn-secondary"
+            class="btn btn-secondary text-xs"
             @click="samplePreview()"
             x-text="t('system.redaction.sample')"
           ></button>
+          <button
+            type="button"
+            class="btn btn-secondary text-xs"
+            @click="clearPreview()"
+            x-text="t('system.redaction.clear')"
+          ></button>
         </div>
-        <p
-          role="status"
-          class="text-xs text-amber-700"
-          x-show="!settings.redaction.enabled || previewResult?.enabled === false"
-          x-text="t('system.redaction.disabled')"
-        ></p>
-        <div aria-live="polite" class="text-xs space-y-2">
-          <p x-show="previewLoading" x-text="t('system.redaction.loading')"></p>
-          <p x-show="previewStale" x-text="t('system.redaction.stale')"></p>
-          <p
-            x-show="!previewResult && !previewLoading && !previewError && !previewStale"
-            x-text="t('system.redaction.empty')"
-          ></p>
-          <p
-            role="alert"
-            class="text-red-600"
-            x-show="previewError"
-            x-text="previewError ? t(previewError) : ''"
-          ></p>
+      </div>
+
+      <!-- 左右分栏对比 -->
+      <div class="redaction-sandbox-grid">
+        <!-- 输入 -->
+        <div class="space-y-2">
+          <div
+            class="text-xs font-medium text-[var(--apple-text)]"
+            x-text="t('system.redaction.input')"
+          ></div>
+          <textarea
+            class="input w-full min-h-[220px] font-mono text-xs resize-y"
+            rows="9"
+            x-model="previewText"
+            aria-describedby="redaction-preview-hint"
+            :aria-label="t('system.redaction.input')"
+            maxlength="65536"
+            spellcheck="false"
+            autocomplete="off"
+            placeholder="输入要测试脱敏的文本、代码或 JSON..."
+          ></textarea>
         </div>
-        <template x-if="previewResult">
-          <div class="space-y-2 text-xs">
-            <h4 class="font-medium" x-text="t('system.redaction.output')"></h4>
-            <pre
-              class="p-3 rounded-lg bg-[var(--apple-gray-6)] whitespace-pre-wrap break-all max-h-80 overflow-auto"
-              x-text="previewResult.output"
-            ></pre>
-            <p>
-              <span x-text="t('system.redaction.total')"></span>:
-              <span x-text="previewResult.diagnostics.total"></span> ·
-              <span x-text="t('system.redaction.maskingMs')"></span>:
-              <span
-                x-text="previewResult.diagnostics.maskingMs.toFixed(2) + ' ms'"
-              ></span>
-              · <span x-text="t('system.redaction.restored')"></span>:
-              <span x-text="previewResult.diagnostics.restored"></span>
-            </p>
-            <p
-              x-text="redactionCounts(previewResult.diagnostics.byKind, 'kind')"
-            ></p>
-            <p
-              x-text="redactionCounts(previewResult.diagnostics.bySource, 'source')"
-            ></p>
+
+        <!-- 输出 -->
+        <div class="space-y-2">
+          <div
+            class="flex items-center justify-between text-xs font-medium text-[var(--apple-text)]"
+          >
+            <span x-text="t('system.redaction.output')"></span>
+            <span
+              x-show="previewResult"
+              class="text-[var(--apple-blue)] font-mono text-[11px]"
+              x-text="'耗时: ' + (previewResult?.diagnostics?.maskingMs ? previewResult.diagnostics.maskingMs.toFixed(2) + ' ms' : '0.00 ms')"
+            ></span>
           </div>
-        </template>
-      </section>
+          <div
+            class="w-full min-h-[220px] p-3.5 rounded-xl border border-[var(--apple-gray-5)] bg-[var(--apple-gray-6)] text-xs font-mono leading-relaxed overflow-y-auto whitespace-pre-wrap break-all text-[var(--apple-text)]"
+          >
+            <span
+              x-show="!previewResult && !previewLoading"
+              class="text-[var(--apple-text-secondary)]"
+              x-text="t('system.redaction.empty')"
+            ></span>
+            <span
+              x-show="previewLoading"
+              class="text-[var(--apple-text-secondary)]"
+              x-text="t('system.redaction.loading')"
+            ></span>
+            <span x-show="previewResult" x-text="previewResult?.output"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 诊断与操作 -->
+      <div
+        class="p-3.5 rounded-xl bg-[var(--apple-gray-6)] border border-[var(--apple-gray-5)] flex flex-wrap items-center justify-between text-xs gap-3"
+      >
+        <div class="flex items-center gap-4 flex-wrap">
+          <span class="font-medium text-[var(--apple-text)]"
+            >演练结果统计:</span
+          >
+          <span
+            x-show="previewResult"
+            x-text="previewResult ? ('替换 ' + previewResult.diagnostics.total + ' 个值') : ''"
+          ></span>
+          <span
+            x-show="previewResult"
+            class="text-[var(--apple-text-secondary)]"
+            x-text="previewResult ? redactionCounts(previewResult.diagnostics.byKind, 'kind') : ''"
+          ></span>
+          <span
+            x-show="previewResult?.diagnostics?.warned"
+            class="text-[var(--apple-orange)]"
+            x-text="'只警告 ' + (previewResult?.diagnostics?.warned || 0) + ' 个值（原样发出）'"
+          ></span>
+          <span
+            x-show="previewResult?.diagnostics?.blocked?.length"
+            class="text-[var(--apple-red)] font-medium"
+            x-text="'会被拦截：' + (previewResult?.diagnostics?.blocked || []).map((b) => b.label + '（' + b.hint + '）').join('、')"
+          ></span>
+        </div>
+        <button
+          type="button"
+          class="btn btn-primary text-xs"
+          @click="runRedactionPreview()"
+          :disabled="previewLoading || !previewText"
+          x-text="t('system.redaction.preview')"
+        ></button>
+      </div>
     </div>
-  </template>
+  </div>
 </div>

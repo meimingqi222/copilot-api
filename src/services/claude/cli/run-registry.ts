@@ -55,13 +55,20 @@ export class RunRegistry {
   private readonly idle = new Map<string, BridgeRun>()
   private readonly starting = new Map<string, number>()
 
+  /**
+   * 为一个新 run 占位。先满足本 connection 的上限，再满足全机上限
+   * （`total`）；超了就先放掉一个空闲 run 腾位置。占位与计数之间没有
+   * await，所以并发请求不会一起越过上限。
+   */
   reserveConnection(
     connectionId: string,
     limit: number,
-  ): (() => void) | undefined {
+    total = Number.POSITIVE_INFINITY,
+  ): (() => void) | "connection" | "machine" {
     if (this.countForConnection(connectionId) >= limit)
       this.evictIdle(connectionId)
-    if (this.countForConnection(connectionId) >= limit) return undefined
+    if (this.countForConnection(connectionId) >= limit) return "connection"
+    while (this.countAll() >= total) if (!this.evictIdle()) return "machine"
     this.starting.set(connectionId, (this.starting.get(connectionId) ?? 0) + 1)
     return () => {
       const count = (this.starting.get(connectionId) ?? 1) - 1
@@ -188,6 +195,13 @@ export class RunRegistry {
     for (const run of this.byToken.values()) {
       if (run.connectionId === connectionId) count += 1
     }
+    return count
+  }
+
+  /** 全机活着的 run（含正在启动的）。 */
+  countAll(): number {
+    let count = this.byToken.size
+    for (const starting of this.starting.values()) count += starting
     return count
   }
 

@@ -5,12 +5,15 @@ import path from "node:path"
 
 import {
   configureLoggerForTest,
+  createLogger,
   formatLogLine,
   initLogger,
   resetLoggerForTest,
   shouldWriteToFile,
   writeTestLogLine,
+  logger,
 } from "~/lib/logger"
+import { runWithLogContext, setLogConnection } from "~/lib/log-context"
 
 function tempLogFile(): string {
   return path.join(
@@ -21,6 +24,46 @@ function tempLogFile(): string {
 
 afterEach(() => {
   resetLoggerForTest()
+})
+
+test("repeated logs keep every request and subsystem without leaking into a later job", () => {
+  const file = tempLogFile()
+  configureLoggerForTest({ logFilePath: file, resetReporter: true })
+  const auth = createLogger("auth")
+  for (let i = 0; i < 12; i++) {
+    runWithLogContext({ req: `repeat-${i}` }, () => auth.warn("repeat failure"))
+  }
+  runWithLogContext({ job: "next-job", run: "next-run" }, () => {
+    logger.warn("next job failure")
+  })
+  const entries = fs
+    .readFileSync(file, "utf8")
+    .trim()
+    .split("\n")
+    .map(
+      (line) =>
+        JSON.parse(line) as {
+          msg: string
+          req?: string
+          job?: string
+          sub: string
+        },
+    )
+  const repeated = entries.filter((entry) =>
+    entry.msg.startsWith("repeat failure"),
+  )
+  expect(repeated).toHaveLength(12)
+  expect(repeated.map((entry) => entry.req)).toEqual(
+    Array.from({ length: 12 }, (_, i) => `repeat-${i}`),
+  )
+  expect(repeated.every((entry) => entry.sub === "auth" && !entry.job)).toBe(
+    true,
+  )
+  expect(entries.at(-1)).toMatchObject({
+    msg: "next job failure",
+    job: "next-job",
+    sub: "app",
+  })
 })
 
 describe("shouldWriteToFile", () => {
@@ -53,9 +96,81 @@ describe("formatLogLine", () => {
       "info",
     )
 
-    expect(line).toBe(
-      '2026-06-27T14:57:37.244Z [INFO] [windsurf] cloud-direct request {"conversationKey":"conv-1","hasTools":true}\n',
+    expect(line?.endsWith("\n")).toBe(true)
+    expect(JSON.parse(line!)).toMatchObject({
+      ts: Date.parse("2026-06-27T14:57:37.244Z"),
+      level: "info",
+      sub: "windsurf",
+      msg: "cloud-direct request",
+      ctx: { conversationKey: "conv-1", hasTools: true },
+    })
+  })
+
+  test("keeps an error's stack, status and body start, not just its message", () => {
+    const error = Object.assign(new Error("upstream reset"), {
+      response: { status: 502 },
+      responseBody: '{"error":"bad gateway"}',
+    })
+    const entry = JSON.parse(
+      formatLogLine(
+        {
+          type: "warn",
+          date: new Date(),
+          args: ["Background quota refresh failed:", error],
+        },
+        "info",
+      )!,
     )
+    expect(entry.msg).toBe("Background quota refresh failed: upstream reset")
+    expect(entry.err).toMatchObject({
+      name: "Error",
+      message: "upstream reset",
+      status: 502,
+      body: '{"error":"bad gateway"}',
+    })
+    expect(entry.err.stack).toContain("logger.test.ts")
+  })
+
+  test("masks secrets inside values, messages and stacks", () => {
+    const error = new Error("401 for Bearer abcdefghijklmnop")
+    const line = formatLogLine(
+      {
+        type: "error",
+        date: new Date(),
+        args: [
+          "fetch https://x.test/v1?key=SECRET123&model=m failed with sk-logtest1234567890abcd",
+          error,
+          { url: "https://u:hunter2@x.test/p?access_token=tok123" },
+        ],
+      },
+      "info",
+    )!
+    for (const secret of [
+      "SECRET123",
+      "sk-logtest1234567890abcd",
+      "abcdefghijklmnop",
+      "hunter2",
+      "tok123",
+    ])
+      expect(line).not.toContain(secret)
+    expect(line).toContain("model=m")
+  })
+
+  test("carries the ambient request, connection and job", () => {
+    const entry = runWithLogContext({ req: "req-1", job: "quota" }, () => {
+      setLogConnection("conn-9")
+      return JSON.parse(
+        formatLogLine(
+          { type: "info", date: new Date(), args: ["inside"] },
+          "info",
+        )!,
+      )
+    })
+    expect(entry).toMatchObject({ req: "req-1", conn: "conn-9", job: "quota" })
+    const outside = JSON.parse(
+      formatLogLine({ type: "info", date: new Date(), args: ["out"] }, "info")!,
+    )
+    expect(outside.req).toBeUndefined()
   })
 
   test("redacts sensitive meta fields", () => {
@@ -170,10 +285,23 @@ describe("file reporter", () => {
     })
 
     const content = fs.readFileSync(logFile, "utf8")
-    expect(content).toContain("[INFO]")
+    expect(content).toContain('"level":"info"')
     expect(content).toContain("startup complete")
     expect(content).toContain('"port":4141')
 
+    fs.unlinkSync(logFile)
+  })
+
+  test("a tagged logger made before the file reporter still writes to the file", () => {
+    // Modules make their tagged loggers at import, before initLogger runs.
+    resetLoggerForTest()
+    const early = createLogger("quota")
+    const logFile = tempLogFile()
+    configureLoggerForTest({ logFilePath: logFile, resetReporter: true })
+    early.warn("tagged after init")
+    const content = fs.readFileSync(logFile, "utf8")
+    expect(content).toContain('"sub":"quota"')
+    expect(content).toContain("tagged after init")
     fs.unlinkSync(logFile)
   })
 
@@ -206,7 +334,7 @@ describe("file reporter", () => {
     })
 
     const content = fs.readFileSync(logFile, "utf8")
-    expect(content).toContain("[DEBUG]")
+    expect(content).toContain(`"level":"debug"`)
     expect(content).toContain("usage frame incoming")
 
     fs.unlinkSync(logFile)

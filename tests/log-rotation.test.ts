@@ -31,26 +31,35 @@ afterEach(() => {
 })
 
 describe("parseRotatedLogFileName", () => {
-  test("parses daily and segmented files", () => {
-    expect(parseRotatedLogFileName("server-2026-06-27.log")).toEqual({
+  test("parses daily and segmented files, and the legacy text logs", () => {
+    expect(parseRotatedLogFileName("system-2026-06-27.jsonl")).toEqual({
       dateKey: "2026-06-27",
       segment: 0,
+      legacy: false,
     })
+    expect(parseRotatedLogFileName("system-2026-06-27.2.jsonl")).toEqual({
+      dateKey: "2026-06-27",
+      segment: 2,
+      legacy: false,
+    })
+    // Written by earlier versions; still expired by retention.
     expect(parseRotatedLogFileName("server-2026-06-27.2.log")).toEqual({
       dateKey: "2026-06-27",
       segment: 2,
+      legacy: true,
     })
     expect(parseRotatedLogFileName("server.log")).toBeNull()
+    expect(parseRotatedLogFileName("system-2026-06-27.log")).toBeNull()
   })
 })
 
 describe("buildRotatedLogFileName", () => {
   test("builds expected names", () => {
     expect(buildRotatedLogFileName("2026-06-27", 0)).toBe(
-      "server-2026-06-27.log",
+      "system-2026-06-27.jsonl",
     )
     expect(buildRotatedLogFileName("2026-06-27", 1)).toBe(
-      "server-2026-06-27.1.log",
+      "system-2026-06-27.1.jsonl",
     )
   })
 })
@@ -193,7 +202,7 @@ describe("RotatingLogFileSink", () => {
 
     sink.append("line-1\n", now)
 
-    const active = path.join(logDir, "server-2026-06-27.log")
+    const active = path.join(logDir, "system-2026-06-27.jsonl")
     expect(sink.getActivePath()).toBe(active)
     expect(fs.readFileSync(active, "utf8")).toBe("line-1\n")
 
@@ -211,8 +220,8 @@ describe("RotatingLogFileSink", () => {
     sink.append("123456789012345\n", now)
     sink.append("overflow\n", now)
 
-    const first = path.join(logDir, "server-2026-06-27.log")
-    const second = path.join(logDir, "server-2026-06-27.1.log")
+    const first = path.join(logDir, "system-2026-06-27.jsonl")
+    const second = path.join(logDir, "system-2026-06-27.1.jsonl")
     expect(fs.existsSync(first)).toBe(true)
     expect(fs.existsSync(second)).toBe(true)
     expect(fs.readFileSync(second, "utf8")).toBe("overflow\n")
@@ -234,10 +243,10 @@ describe("RotatingLogFileSink", () => {
     sink.append("day-two\n", dayTwo)
 
     expect(
-      fs.readFileSync(path.join(logDir, "server-2026-06-27.log"), "utf8"),
+      fs.readFileSync(path.join(logDir, "system-2026-06-27.jsonl"), "utf8"),
     ).toBe("day-one\n")
     expect(
-      fs.readFileSync(path.join(logDir, "server-2026-06-28.log"), "utf8"),
+      fs.readFileSync(path.join(logDir, "system-2026-06-28.jsonl"), "utf8"),
     ).toBe("day-two\n")
 
     rmDir(logDir)

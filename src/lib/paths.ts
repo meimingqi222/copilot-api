@@ -60,10 +60,14 @@ export const PATHS = {
   get MODELS_DEV_CACHE_PATH(): string {
     return pathUnderApp("models-dev.json")
   },
+  /** Per-day redaction metadata (`YYYY-MM-DD.jsonl`); never original values. */
+  get REDACTION_DIR(): string {
+    return pathUnderApp("redaction")
+  },
   get CACHE_DIR(): string {
     return pathUnderApp("cache")
   },
-  /** Rotated diagnostic logs: `server-YYYY-MM-DD.log` (+ optional `.N` segments). */
+  /** Rotated system logs: `system-YYYY-MM-DD.jsonl` (+ optional `.N` segments); legacy `server-*.log` until retention removes them. */
   get LOG_DIR(): string {
     return pathUnderApp("logs")
   },

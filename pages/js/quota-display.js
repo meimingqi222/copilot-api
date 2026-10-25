@@ -84,6 +84,8 @@ const QuotaDisplay = {
     return new Intl.NumberFormat(undefined, {
       style: "currency",
       currency: "USD",
+      // "$" in every locale; zh-CN would otherwise print "US$".
+      currencyDisplay: "narrowSymbol",
     }).format(cents / 100)
   },
 
@@ -103,6 +105,8 @@ const QuotaDisplay = {
     return new Intl.NumberFormat(undefined, {
       style: "currency",
       currency: "USD",
+      // "$" in every locale; zh-CN would otherwise print "US$".
+      currencyDisplay: "narrowSymbol",
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     }).format(cost)

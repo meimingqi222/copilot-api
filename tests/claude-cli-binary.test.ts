@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import os from "node:os"
 import path from "node:path"
 
 import {
@@ -6,6 +7,7 @@ import {
   claudeVersion,
   findClaudeBinary,
   parseClaudeVersion,
+  parseCmdShim,
   setClaudeCliTestHooks,
 } from "~/services/claude/cli/binary"
 
@@ -105,5 +107,44 @@ describe("claudeHome", () => {
       expect(path.basename(resolved)).not.toBe(".")
       expect(path.basename(resolved)).not.toBe("")
     }
+  })
+})
+
+describe("parseCmdShim", () => {
+  // The last line of the shim `npm install -g` writes for claude.cmd.
+  const npmShim = [
+    "@ECHO off",
+    "GOTO start",
+    ":find_dp0",
+    "SET dp0=%~dp0",
+    "EXIT /b",
+    ":start",
+    "SETLOCAL",
+    "CALL :find_dp0",
+    String.raw`endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\node_modules\@anthropic-ai\claude-code\cli.js" %*`,
+  ].join("\r\n")
+
+  test.skipIf(process.platform !== "win32")(
+    "runs the npm shim's script directly, so JSON arguments skip cmd.exe",
+    () => {
+      const dir = path.join(os.tmpdir(), "no-such-npm-prefix")
+      expect(parseCmdShim(npmShim, dir)).toEqual([
+        "node",
+        path.normalize(
+          path.join(dir, "node_modules/@anthropic-ai/claude-code/cli.js"),
+        ),
+      ])
+    },
+  )
+
+  test("keeps absolute launchers and gives up on unknown variables", () => {
+    const dir = path.join(os.tmpdir(), "launcher")
+    const bun = path.join(dir, "bun.exe")
+    const script = path.join(dir, "fake.ts")
+    expect(
+      parseCmdShim(`@echo off\r\n"${bun}" "${script}" %*\r\n`, dir),
+    ).toEqual([bun, script])
+    expect(parseCmdShim('"%APPDATA%/claude.exe" %*', dir)).toBeUndefined()
+    expect(parseCmdShim("@echo off\r\nclaude.exe\r\n", dir)).toBeUndefined()
   })
 })

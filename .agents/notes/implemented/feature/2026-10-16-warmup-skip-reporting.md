@@ -43,6 +43,23 @@ No gate was relaxed and no extra request is ever sent, so quota spend is
 unchanged. `resetWarmupReportingForTest` exists because the per-slot dedupe is
 process state (same pattern as `resetLoggerForTest`).
 
+## Alternatives considered
+
+Logging only thrown errors leaves ordinary eligibility skips invisible. Logging
+every scheduler tick would repeat the same reason throughout the catch-up
+window. Persisting only an in-memory reason would lose the diagnostic state on
+restart. Per-slot log deduplication plus durable lastSkip metadata addresses
+these cases without changing eligibility.
+
+## Consequences
+
+Operators can distinguish a scheduler that did not reach a slot from one that
+evaluated and skipped a connection. Repeated ticks do not repeat identical skip
+reports, while the next slot can report again. Skip metadata survives restarts;
+the reporting change itself does not add upstream requests or quota spending.
+The eligibility and payload corrections described below remain separate from
+this reporting behavior.
+
 ## Verification
 
 - `bun run typecheck` clean.

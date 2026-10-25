@@ -7,7 +7,7 @@
  * - 判断 credential / connection 是否可参与调度。
  */
 
-import { logger } from "~/lib/logger"
+import { createLogger } from "~/lib/logger"
 import { isCodebuddyModelFree } from "~/lib/codebuddy-model-pricing"
 import { getRemainingCooldownSeconds } from "~/lib/rate-limit"
 import { parseRetryAfterMs } from "~/lib/retry-after"
@@ -25,6 +25,8 @@ import {
   setConnectionQuotaState,
 } from "./connection-metadata"
 import { DEFAULTS } from "./types"
+
+const logger = createLogger("connection")
 
 /**
  * 把过期的 cooldown / 长期 quota_exhausted 自动恢复为 ready。

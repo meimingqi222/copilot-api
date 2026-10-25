@@ -15,7 +15,12 @@ import {
   setRedactionInspection,
   clearRedactionInspection,
   getRedactionInspectionState,
+  subscribeRedactionDiagnostics,
 } from "~/lib/redaction/diagnostics"
+import {
+  flushRedactionHistory,
+  summarizeRedactionHistory,
+} from "~/lib/redaction/history"
 import { restoreRedactionStream } from "~/lib/redaction/stream"
 import { initializeSystemConfig, updateSystemConfig } from "~/lib/system-config"
 import {
@@ -27,6 +32,68 @@ const config = redactionConfigSchema.parse({ enabled: true })
 const createScope = () => new RedactionScope(config, randomUUID())
 const sign = (text: string) =>
   createHmac("sha256", "test-issuer").update(text).digest("hex")
+
+test("tool results mask Windows homes inside JSON text and restore the exact output", () => {
+  const home = ["C:", "Users", "ToolResultFixture"].join("\\")
+  const path = `${home}\\.codex\\config.toml`
+  for (const output of [path, JSON.stringify({ output: path })]) {
+    const scope = createScope()
+    const input = {
+      input: [
+        { type: "function_call_output", call_id: "call_fixture", output },
+      ],
+    }
+    const masked = scope.mask(input)
+    expect(masked.input[0].output).not.toContain("ToolResultFixture")
+    expect(masked.input[0].output).toContain("{{HOME_")
+    expect(scope.diagnostics().byKind.HOME).toBe(1)
+    expect(scope.restore(masked, "fixture")).toEqual(input)
+    if (output.startsWith("{"))
+      expect(() => JSON.parse(masked.input[0].output)).not.toThrow()
+  }
+})
+
+test("Windows home paths mask forward slashes and case variants before dispatch", () => {
+  for (const home of [
+    "C:/Users/Synthetic",
+    "c:/users/Synthetic",
+    "C:\\USERS\\Synthetic",
+    "C:\\Users\\Synthetic",
+  ]) {
+    const scope = createScope()
+    const input = {
+      messages: [{ role: "user", content: `Read ${home}/project/file.ts` }],
+    }
+    const masked = scope.mask(input)
+    expect(masked.messages[0].content).not.toContain(home)
+    expect(masked.messages[0].content).toContain("{{HOME_")
+    expect(masked.messages[0].content).toStartWith("Read {{HOME_")
+    expect(scope.restore(masked, "fixture")).toEqual(input)
+    const jsonScope = createScope()
+    const tool = {
+      messages: [
+        {
+          role: "assistant",
+          tool_calls: [
+            {
+              id: "call-fixture",
+              type: "function",
+              function: {
+                name: "read_file",
+                arguments: JSON.stringify({ path: `${home}/project/file.ts` }),
+              },
+            },
+          ],
+        },
+      ],
+    }
+    const maskedTool = jsonScope.mask(tool)
+    expect(maskedTool.messages[0].tool_calls[0].function.arguments).toContain(
+      "{{HOME_",
+    )
+    expect(jsonScope.restore(maskedTool, "fixture")).toEqual(tool)
+  }
+})
 
 afterEach(() => {
   setRedactionInspection(false)
@@ -256,7 +323,7 @@ test("recent diagnostics count unique values, finish streams once and retain onl
   const first = getRedactionDiagnostics().entries[0]
   expect(first.id).toBe(startId + 1)
   expect(first.total).toBe(1)
-  expect(first.byKind).toEqual({ SECRET: 1, HOME: 0, WORD: 0 })
+  expect(first.byKind).toEqual({ SECRET: 1, HOME: 0, WORD: 0, PERSONAL: 0 })
   expect(first.bySource).toEqual({
     builtin: 1,
     word: 0,
@@ -276,10 +343,11 @@ test("recent diagnostics count unique values, finish streams once and retain onl
       })(),
     }),
   )
-  expect(getRedactionDiagnostics().entries[0].id).toBe(first.id)
+  expect(getRedactionDiagnostics().entries[0].id).toBe(first.id + 1)
+  expect(getRedactionDiagnostics().entries[0].status).toBe("in_progress")
   const iterator = streamed.response[Symbol.asyncIterator]()
   await iterator.next()
-  expect(getRedactionDiagnostics().entries[0].id).toBe(first.id)
+  expect(getRedactionDiagnostics().entries[0].id).toBe(first.id + 1)
   await iterator.return?.()
   expect(getRedactionDiagnostics().entries[0].id).toBe(first.id + 1)
   await iterator.return?.()
@@ -304,12 +372,25 @@ test("recent diagnostics count unique values, finish streams once and retain onl
       "timestamp",
       "total",
       "byKind",
+      "byLabel",
       "bySource",
+      "warned",
+      "blocked",
       "maskingMs",
       "restored",
       "client",
       "upstreams",
       "contentAvailable",
+      "contentState",
+      "contentVersion",
+      "detected",
+      "detectedByKind",
+      "warnedByKind",
+      "blockedByKind",
+      "blockedCount",
+      "attempts",
+      "attemptsTruncated",
+      "status",
     ].sort(),
   )
   const serialized = JSON.stringify(history)
@@ -317,6 +398,191 @@ test("recent diagnostics count unique values, finish streams once and retain onl
   expect(serialized).not.toContain("{{SECRET_")
   history.entries[0].byKind.SECRET = -1
   expect(getRedactionDiagnostics().entries[0].byKind.SECRET).toBe(1)
+})
+
+test("live diagnostics publish before upstream resolves and commit history once after completion", async () => {
+  process.env.UPSTREAM_REDACTION = '{"enabled":true}'
+  initializeSystemConfig({ save: () => {}, onChange: () => {} })
+  await flushRedactionHistory()
+  const before = (await summarizeRedactionHistory(7)).requests
+  const statuses: string[] = []
+  const unsubscribe = subscribeRedactionDiagnostics(() => {
+    statuses.push(getRedactionDiagnostics().entries[0].status)
+  })
+  let finish!: () => void
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve
+  })
+  const upstream = {
+    id: "slow-live",
+    name: "Slow fixture",
+    protocol: "openai-compatible",
+    model: "fixture",
+  }
+  try {
+    const pending = runRedactedCall(
+      { text: "DB_PASSWORD=SyntheticLivePass123" },
+      undefined,
+      (prepared) =>
+        withRedactionUpstream(upstream, prepared, async () => {
+          await gate
+          return { response: prepared }
+        }),
+    )
+    const started = getRedactionDiagnostics().entries[0]
+    expect(started.status).toBe("in_progress")
+    expect(started.upstreams).toEqual([upstream])
+    expect(started.total).toBe(1)
+    await flushRedactionHistory()
+    expect((await summarizeRedactionHistory(7)).requests).toBe(before)
+    finish()
+    await pending
+    const ended = getRedactionDiagnostics().entries[0]
+    expect(ended.id).toBe(started.id)
+    expect(ended.timestamp).toBe(started.timestamp)
+    expect(ended.status).toBe("completed")
+    expect(ended.restored).toBe(1)
+    await flushRedactionHistory()
+    expect((await summarizeRedactionHistory(7)).requests).toBe(before + 1)
+    expect(statuses).toEqual([
+      "in_progress",
+      "in_progress",
+      "in_progress",
+      "completed",
+    ])
+  } finally {
+    finish()
+    unsubscribe()
+  }
+})
+
+test("stream failure and cancellation update the original live record only once", async () => {
+  process.env.UPSTREAM_REDACTION = '{"enabled":true}'
+  initializeSystemConfig({ save: () => {}, onChange: () => {} })
+  for (const fail of [false, true]) {
+    const result = await runRedactedCall(
+      { text: "hello" },
+      undefined,
+      async () => ({
+        response: (async function* () {
+          yield { choices: [{ index: 0, delta: { content: "first" } }] }
+          if (fail) throw new Error("fixture stream failure")
+        })(),
+      }),
+    )
+    const id = getRedactionDiagnostics().entries[0].id
+    const iterator = result.response[Symbol.asyncIterator]()
+    await iterator.next()
+    if (fail)
+      await expect(iterator.next()).rejects.toThrow("fixture stream failure")
+    else await iterator.return?.()
+    await iterator.return?.()
+    expect(getRedactionDiagnostics().entries[0]).toMatchObject({
+      id,
+      status: fail ? "failed" : "cancelled",
+    })
+  }
+})
+
+test("a home path beyond the inspection prefix retains independent match evidence", async () => {
+  process.env.UPSTREAM_REDACTION = '{"enabled":true}'
+  initializeSystemConfig({ save: () => {}, onChange: () => {} })
+  setRedactionInspection(true)
+  const home = "c:/users/LongPromptFixture"
+  const payload = {
+    messages: [
+      { role: "system", content: "Long system text. ".repeat(2000) },
+      { role: "user", content: `Read ${home}/project` },
+    ],
+  }
+  await runRedactedCall(payload, undefined, (prepared) =>
+    withRedactionUpstream(
+      {
+        id: "codebuddy-fixture",
+        name: "CodeBuddy fixture",
+        protocol: "codebuddy-native",
+        model: "fixture",
+      },
+      prepared,
+      async () => {
+        expect(prepared.messages[1].content).not.toContain(home)
+        expect(prepared.messages[1].content).toStartWith("Read {{HOME_")
+        return { response: { text: "ok" } }
+      },
+    ),
+  )
+  const record = getRedactionDiagnostics().entries[0]
+  expect(record.total).toBe(1)
+  expect(record.byKind.HOME).toBe(1)
+  const detail = getRedactionInspection(record.id)!
+  expect(detail.truncated).toBe(true)
+  expect(detail.mappings).toHaveLength(1)
+  expect(detail.attempts[0].body).not.toContain("{{HOME_")
+  expect(JSON.stringify(detail.attempts[0].excerpts)).toContain("{{HOME_")
+})
+
+test("long Codex requests retain tool-output match evidence from the final HTTP body", async () => {
+  process.env.UPSTREAM_REDACTION = '{"enabled":true}'
+  initializeSystemConfig({ save: () => {}, onChange: () => {} })
+  setRedactionInspection(true)
+  const home = ["C:", "Users", "ToolEvidenceFixture"].join("\\")
+  const output = JSON.stringify({ output: `${home}\\.codex\\config.toml` })
+  let received = ""
+  const receiver = Bun.serve({
+    port: 0,
+    fetch: async (request) => {
+      received = await request.text()
+      return Response.json({ text: "ok" })
+    },
+  })
+  try {
+    await runRedactedCall(
+      {
+        instructions: "Long agent instructions. ".repeat(4000),
+        input: [{ type: "function_call_output", call_id: "fixture", output }],
+      },
+      undefined,
+      (prepared) =>
+        withRedactionUpstream(
+          {
+            id: "fixture",
+            name: "Fixture",
+            protocol: "codex-native",
+            model: "fixture",
+          },
+          prepared,
+          async () => ({
+            response: await (
+              await performanceFetch(receiver.url, {
+                method: "POST",
+                body: serializeUpstreamBody(prepared),
+              })
+            ).json(),
+          }),
+        ),
+    )
+    expect(received).not.toContain("ToolEvidenceFixture")
+    expect(received).toContain("{{HOME_")
+    const entry = getRedactionDiagnostics().entries[0]
+    expect(entry.byKind.HOME).toBe(1)
+    const detail = getRedactionInspection(entry.id)!
+    expect(detail.mappings).toHaveLength(1)
+    expect(detail.attempts[0].stage).toBe("http")
+    expect(detail.attempts[0].body).not.toContain("{{HOME_")
+    expect(JSON.stringify(detail.attempts[0].excerpts)).toContain("{{HOME_")
+    expect(JSON.stringify(detail)).not.toContain("ToolEvidenceFixture")
+    expect(JSON.stringify(getRedactionInspection(entry.id, true))).toContain(
+      "ToolEvidenceFixture",
+    )
+    expect(getRedactionDiagnostics().inspection.bytes).toBeLessThanOrEqual(
+      getRedactionDiagnostics().inspection.maxEntryBytes,
+    )
+    clearRedactionInspection()
+    expect(getRedactionInspection(entry.id, true)).toBeUndefined()
+    expect(getRedactionDiagnostics().inspection.bytes).toBe(0)
+  } finally {
+    receiver.stop(true)
+  }
 })
 
 test("opt-in inspection distinguishes final HTTP bodies, multiple attempts and explicit original reveal", async () => {
@@ -387,7 +653,7 @@ test("opt-in inspection distinguishes final HTTP bodies, multiple attempts and e
     expect(JSON.stringify(detail)).not.toContain("not-generation")
     expect(detail.mappings).toHaveLength(1)
     const revealed = getRedactionInspection(entry.id, true)!
-    expect(JSON.parse(revealed.input!).input).toBe(original)
+    expect(revealed.input).toBeNull()
     expect(revealed.mappings[0]).toMatchObject({
       value: original.split("/").slice(0, 3).join("/"),
       source: "builtin",
@@ -408,7 +674,7 @@ test("clear, disable and expiry revoke in-flight inspection without breaking res
   }
   const original = ["", "home", "pending-fixture", "project"].join("/")
   for (const action of ["clear", "disable", "expire"]) {
-    setRedactionInspection(true)
+    setRedactionInspection(true, "temporary")
     let finish!: () => void
     const pending = new Promise<void>((resolve) => {
       finish = resolve
@@ -482,9 +748,9 @@ test("inspection retains bounded payloads and evicts old records under memory pr
   const detail = getRedactionInspection(stats.entries[0].id, true)!
   expect(detail.truncated).toBe(true)
   expect(detail.attempts[0].stage).toBe("adapter")
-  expect(
-    detail.input!.length * 2 + detail.attempts[0].body.length * 2,
-  ).toBeLessThanOrEqual(stats.inspection.maxEntryBytes)
+  expect(detail.attempts[0].body.length * 2).toBeLessThanOrEqual(
+    stats.inspection.maxEntryBytes,
+  )
 })
 
 test("unresolved placeholders are rejected in tool inputs but preserved in ordinary text and tool outputs", async () => {

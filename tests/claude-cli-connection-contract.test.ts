@@ -145,6 +145,9 @@ describe("Claude CLI connection contract", () => {
         timer.mockRestore()
         run.abort()
         await waiting
+        // abort() gives a CLI its exit grace; this stand-in never exits on
+        // its own, so end it here rather than wait the grace out.
+        proc.kill()
         await proc.exited
         if (previous === undefined)
           delete process.env.COPILOT_API_CLAUDE_MCP_PATIENCE_MS

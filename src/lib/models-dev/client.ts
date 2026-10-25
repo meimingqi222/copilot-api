@@ -3,6 +3,7 @@ import path from "node:path"
 
 import type { ModelsDevCatalog } from "~/lib/models-dev/types"
 
+import { everyMs, runJob } from "~/lib/jobs"
 import { logger } from "~/lib/logger"
 import { initDevinPricing, refreshDevinPricing } from "~/lib/devin-pricing"
 import {
@@ -172,14 +173,23 @@ export function initModelsDevPricing(): void {
     setCatalog(cached)
   }
 
-  void refreshModelsDevCatalog(false)
+  const info = {
+    label: "models.dev pricing",
+    schedule: everyMs(REFRESH_INTERVAL_MS),
+  }
+  void runJob("models-dev", () => refreshModelsDevCatalog(false), info).catch(
+    () => {},
+  )
 
   if (refreshTimer) {
     clearInterval(refreshTimer)
   }
   refreshTimer = setInterval(() => {
-    void refreshDevinPricing()
-    void refreshModelsDevCatalog(true)
+    void runJob(
+      "models-dev",
+      () => Promise.all([refreshDevinPricing(), refreshModelsDevCatalog(true)]),
+      info,
+    ).catch(() => {})
   }, REFRESH_INTERVAL_MS)
   if (typeof refreshTimer.unref === "function") {
     refreshTimer.unref()

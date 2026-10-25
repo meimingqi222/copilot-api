@@ -15,7 +15,8 @@ import type {
   ProviderConnection,
 } from "~/lib/provider-connections/types"
 
-import { logger } from "~/lib/logger"
+import { runJob } from "~/lib/jobs"
+import { createLogger } from "~/lib/logger"
 import {
   listProviderConnections,
   persistProviderConnections,
@@ -24,6 +25,8 @@ import { getMutableProviderConnection } from "~/lib/provider-connections/state"
 import { parseJwtPayload } from "~/services/oauth/jwt"
 import { connectionFetchInit } from "~/services/protocols/shared"
 import { lobsteraiClientVersion, lobsteraiServerRoot } from "./config"
+
+const logger = createLogger("auth")
 
 const REFRESH_LEAD_MS = 5 * 60 * 1000
 const DEFAULT_KEYFROM = "official"
@@ -260,7 +263,10 @@ export function scheduleLobsteraiRefresh(conn: ProviderConnection): void {
         return
       }
 
-      await refreshOnce(mutable)
+      await runJob(`lobsterai-token:${conn.id}`, () => refreshOnce(mutable), {
+        label: `LobsterAI token refresh · ${mutable.name}`,
+        connectionId: conn.id,
+      }).catch(() => {})
       // A transient failure must not permanently stop automatic refresh.
       scheduleLobsteraiRefresh(mutable)
     },

@@ -10,7 +10,7 @@ import {
   LocalUnavailableError,
   UpstreamModelUnavailableError,
 } from "~/lib/error"
-import { logger } from "~/lib/logger"
+import { createLogger } from "~/lib/logger"
 import {
   DEFAULTS,
   classifyUpstreamError,
@@ -42,6 +42,8 @@ import {
 import { affinityAuthKey, invalidateSessionAffinityAuth } from "~/lib/routing"
 import { getProtocolAdapter } from "~/services/protocols"
 import { WindsurfUpstreamError } from "~/services/windsurf/error-classifier"
+
+const logger = createLogger("dispatch")
 
 interface AttemptFailureClassification {
   status?: number

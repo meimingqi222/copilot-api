@@ -1,3 +1,4 @@
+import { everyMs, runJob } from "~/lib/jobs"
 import { logger } from "~/lib/logger"
 import { globalTimers } from "~/lib/timer-registry"
 
@@ -45,8 +46,11 @@ export async function refreshXaiClientVersion(): Promise<void> {
 export function startXaiVersionUpdater(): void {
   if (updaterStarted) return
   updaterStarted = true
-  void refreshXaiClientVersion()
-  globalTimers.interval(() => {
-    void refreshXaiClientVersion()
-  }, REFRESH_INTERVAL_MS)
+  const refresh = () =>
+    void runJob("xai-client-version", refreshXaiClientVersion, {
+      label: "xAI client version",
+      schedule: everyMs(REFRESH_INTERVAL_MS),
+    }).catch(() => {})
+  refresh()
+  globalTimers.interval(refresh, REFRESH_INTERVAL_MS)
 }

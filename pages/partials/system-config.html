@@ -49,18 +49,6 @@
 
   <template x-if="settings">
     <form @submit.prevent="save()" class="space-y-6" @input="saved = false">
-      <section class="card p-5 space-y-3">
-        <p
-          class="text-sm text-[var(--apple-text-secondary)]"
-          x-text="t('redaction.movedHint')"
-        ></p>
-        <a
-          href="#redaction"
-          class="btn btn-secondary"
-          x-text="t('redaction.open')"
-        ></a>
-      </section>
-
       <section class="card p-5 space-y-4">
         <h3
           class="font-semibold text-sm"

@@ -1,5 +1,11 @@
-import { expect, test } from "bun:test"
-import { createWaaRuntime } from "~/services/aistudio/waa"
+import { afterEach, beforeEach, expect, test } from "bun:test"
+import {
+  createWaaRuntime,
+  setWaaSettleMsForTest,
+} from "~/services/aistudio/waa"
+
+beforeEach(() => setWaaSettleMsForTest(0))
+afterEach(() => setWaaSettleMsForTest(3000))
 
 test("WAA supports unqualified Window getters through the vm context receiver", async () => {
   const runtime = createWaaRuntime({

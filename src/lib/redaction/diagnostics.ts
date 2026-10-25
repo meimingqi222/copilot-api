@@ -1,34 +1,105 @@
+import { appendRedactionHistory } from "~/lib/redaction/history"
+import {
+  redactionExcerpts,
+  type RedactionExcerpt,
+} from "~/lib/redaction/excerpts"
 import type { RedactionMatch } from "~/lib/redaction/rules"
+import { tokenPattern } from "~/lib/redaction/token"
 
-interface RedactionDiagnostics {
+export interface RedactionDiagnostics {
+  detected: number
+  detectedByKind: Record<RedactionMatch["kind"], number>
+  warnedByKind: Record<RedactionMatch["kind"], number>
+  blockedByKind: Record<RedactionMatch["kind"], number>
+  blockedCount: number
+  /** Distinct values replaced by a placeholder. */
   total: number
   byKind: Record<RedactionMatch["kind"], number>
+  byLabel: Partial<Record<RedactionMatch["label"], number>>
   bySource: Record<RedactionMatch["source"], number>
+  /** Distinct values a `warn` action sent as written. */
+  warned: number
+  /** Values a `block` action refused, by kind and hint; never the value. */
+  blocked: Array<{ label: RedactionMatch["label"]; hint: string }>
   maskingMs: number
   restored: number
 }
 
 export function emptyRedactionDiagnostics(): RedactionDiagnostics {
   return {
+    detected: 0,
+    detectedByKind: { SECRET: 0, HOME: 0, WORD: 0, PERSONAL: 0 },
+    warnedByKind: { SECRET: 0, HOME: 0, WORD: 0, PERSONAL: 0 },
+    blockedByKind: { SECRET: 0, HOME: 0, WORD: 0, PERSONAL: 0 },
+    blockedCount: 0,
     total: 0,
-    byKind: { SECRET: 0, HOME: 0, WORD: 0 },
+    byKind: { SECRET: 0, HOME: 0, WORD: 0, PERSONAL: 0 },
+    byLabel: {},
     bySource: { builtin: 0, word: 0, homePrefix: 0, field: 0, known: 0 },
+    warned: 0,
+    blocked: [],
     maskingMs: 0,
     restored: 0,
   }
 }
 
 interface RecentRedaction extends RedactionDiagnostics {
+  status: RedactionRecordStatus
   id: number
   timestamp: number
   client: string
   upstreams: Array<RedactionUpstream>
   captureId?: number
+  attempts: Array<RedactionAttempt>
+  attemptsTruncated: boolean
+}
+
+export interface RedactionAttempt {
+  upstream: RedactionUpstream
+  status: "running" | "returned" | "failed"
+  bodies: Array<{
+    places: number
+    status: "prepared" | "response" | "failed"
+    httpStatus?: number
+  }>
+  truncated: boolean
 }
 
 const LIMIT = 100
 let sequence = 0
 const recent: Array<RecentRedaction> = []
+export type RedactionRecordStatus =
+  | "in_progress"
+  | "completed"
+  | "failed"
+  | "cancelled"
+type RedactionRoute = {
+  client: string
+  upstreams: Array<RedactionUpstream>
+  attempts?: Array<RedactionAttempt>
+  attemptsTruncated?: boolean
+  startedAt?: number
+}
+const listeners = new Set<() => void>()
+
+export function subscribeRedactionDiagnostics(
+  listener: () => void,
+): () => void {
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
+}
+
+function notifyDiagnostics(): void {
+  for (const listener of listeners) {
+    try {
+      listener()
+    } catch {
+      /* Diagnostics must not interrupt a request. */
+    }
+  }
+}
 
 export interface RedactionUpstream {
   id: string
@@ -40,19 +111,24 @@ export interface RedactionUpstream {
 interface InspectionMapping {
   placeholder: string
   kind: RedactionMatch["kind"]
+  label: RedactionMatch["label"]
   source: RedactionMatch["source"]
   value: string
+  truncated?: boolean
+  originalLength?: number
 }
 
 interface InspectionAttempt {
   upstream: RedactionUpstream
   stage: "http" | "adapter"
   body: string
+  excerpts: Array<RedactionExcerpt>
   truncated: boolean
 }
 
 interface InspectionCapture {
-  input: string
+  version: number
+  mappingBytes: number
   attempts: Array<InspectionAttempt>
   mappings: Array<InspectionMapping>
   truncated: boolean
@@ -62,41 +138,75 @@ interface InspectionCapture {
 const TTL_MS = 5 * 60_000
 const MAX_BYTES = 8 * 1024 * 1024
 const MAX_ENTRY_BYTES = 128 * 1024
+const MAX_MAPPING_BYTES = 32 * 1024
+const MAX_CONTENT_BYTES = MAX_ENTRY_BYTES - MAX_MAPPING_BYTES
 const captures = new Map<number, InspectionCapture>()
+type ContentState =
+  | "available"
+  | "not_collected"
+  | "cleared"
+  | "disabled"
+  | "expired"
+  | "evicted"
+const captureReasons = new Map<number, ContentState>()
 let captureSequence = 0
-let inspectionExpiresAt = 0
+let inspectionEnabled = true
+let inspectionExpiresAt: number | null = null
 let inspectionTimer: ReturnType<typeof setTimeout> | undefined
 let captureBytes = 0
 
-export function clearRedactionInspection(): void {
+export function clearRedactionInspection(
+  reason: ContentState = "cleared",
+): void {
+  for (const id of captures.keys()) rememberCaptureReason(id, reason)
   captures.clear()
   captureBytes = 0
+  notifyDiagnostics()
+}
+
+function rememberCaptureReason(id: number, reason: ContentState): void {
+  captureReasons.set(id, reason)
+  while (captureReasons.size > LIMIT * 2)
+    captureReasons.delete(captureReasons.keys().next().value!)
 }
 
 export function getRedactionInspectionState() {
-  if (inspectionExpiresAt <= Date.now()) {
-    inspectionExpiresAt = 0
-    clearRedactionInspection()
+  if (inspectionExpiresAt !== null && inspectionExpiresAt <= Date.now()) {
+    inspectionExpiresAt = null
+    inspectionEnabled = false
+    clearRedactionInspection("expired")
   }
   return {
-    enabled: inspectionExpiresAt > 0,
-    expiresAt: inspectionExpiresAt || null,
+    enabled: inspectionEnabled,
+    expiresAt: inspectionExpiresAt,
     ttlMs: TTL_MS,
     maxBytes: MAX_BYTES,
     maxEntryBytes: MAX_ENTRY_BYTES,
     bytes: captureBytes,
+    mode:
+      !inspectionEnabled ? "off"
+      : inspectionExpiresAt === null ? "continuous"
+      : "temporary",
+    retainsClientInput: false,
+    retainsMappingValues: true,
   }
 }
 
-/** Explicit, temporary opt-in. Revocation also invalidates captures still in flight. */
-export function setRedactionInspection(enabled: boolean) {
+/** Continuous bounded evidence is the default; temporary collection is explicit. */
+export function setRedactionInspection(
+  enabled: boolean,
+  mode: "continuous" | "temporary" = "continuous",
+) {
   clearTimeout(inspectionTimer)
-  clearRedactionInspection()
-  inspectionExpiresAt = enabled ? Date.now() + TTL_MS : 0
-  if (enabled)
+  clearRedactionInspection(enabled ? "cleared" : "disabled")
+  inspectionEnabled = enabled
+  inspectionExpiresAt =
+    enabled && mode === "temporary" ? Date.now() + TTL_MS : null
+  if (inspectionExpiresAt !== null)
     inspectionTimer = setTimeout(() => {
-      inspectionExpiresAt = 0
-      clearRedactionInspection()
+      inspectionExpiresAt = null
+      inspectionEnabled = false
+      clearRedactionInspection("expired")
     }, TTL_MS).unref()
   return getRedactionInspectionState()
 }
@@ -105,6 +215,7 @@ function dropCapture(id: number): void {
   const capture = captures.get(id)
   if (capture) captureBytes -= capture.bytes
   captures.delete(id)
+  rememberCaptureReason(id, "evicted")
 }
 
 function chargeText(capture: InspectionCapture, bytes: number): void {
@@ -129,6 +240,29 @@ function keepFields(
   }
   chargeText(capture, bytes)
   return true
+}
+
+/** Prefer hit evidence to old body prefixes within the existing entry budget. */
+function keepContentFields(
+  capture: InspectionCapture,
+  fields: Array<string>,
+): boolean {
+  const needed = fields.reduce((sum, text) => sum + text.length * 2, 0)
+  while (MAX_CONTENT_BYTES - (capture.bytes - capture.mappingBytes) < needed) {
+    const old = capture.attempts.find((attempt) => attempt.body.length > 0)
+    if (!old) {
+      capture.truncated = true
+      return false
+    }
+    const bytes = old.body.length * 2
+    capture.bytes -= bytes
+    captureBytes -= bytes
+    old.body = ""
+    old.truncated = true
+    capture.truncated = true
+    capture.version++
+  }
+  return keepFields(capture, fields)
 }
 
 function keepText(capture: InspectionCapture, text: string, limit: number) {
@@ -192,21 +326,48 @@ function inspectionJson(value: unknown): { text: string; truncated: boolean } {
   return { text: JSON.stringify(visit(value, 0)) ?? "null", truncated }
 }
 
-export function beginRedactionInspection(input: unknown): number | undefined {
+function captureAttemptText(
+  capture: InspectionCapture,
+  value: unknown,
+  rendered: { text: string; truncated: boolean },
+  limit: number,
+) {
+  const excerpts: Array<RedactionExcerpt> = []
+  const selected = redactionExcerpts(value)
+  capture.truncated ||= selected.truncated
+  for (const excerpt of selected.items) {
+    if (!keepContentFields(capture, [excerpt.path, excerpt.text])) break
+    excerpts.push(excerpt)
+  }
+  const kept = keepText(
+    capture,
+    rendered.text,
+    Math.max(
+      0,
+      Math.min(
+        limit,
+        MAX_CONTENT_BYTES - (capture.bytes - capture.mappingBytes),
+      ),
+    ),
+  )
+  const truncated = kept.truncated || rendered.truncated
+  capture.truncated ||= truncated
+  return { body: kept.value, excerpts, truncated }
+}
+
+export function beginRedactionInspection(_input?: unknown): number | undefined {
   if (!getRedactionInspectionState().enabled) return undefined
   while (captures.size >= LIMIT) dropCapture(captures.keys().next().value!)
   const id = ++captureSequence
   const capture: InspectionCapture = {
-    input: "",
+    version: 1,
+    mappingBytes: 0,
     attempts: [],
     mappings: [],
     truncated: false,
     bytes: 0,
   }
   captures.set(id, capture)
-  const rendered = inspectionJson(input)
-  capture.input = keepText(capture, rendered.text, 32 * 1024).value
-  capture.truncated ||= rendered.truncated
   return id
 }
 
@@ -222,16 +383,15 @@ export function captureRedactionAttempt(
     capture.truncated = true
     return undefined
   }
-  if (!keepFields(capture, [...Object.values(upstream), "adapter"]))
+  if (!keepContentFields(capture, [...Object.values(upstream), "adapter"]))
     return undefined
   const rendered = inspectionJson(payload)
-  const text = keepText(capture, rendered.text, 32 * 1024)
   capture.attempts.push({
     upstream,
     stage: "adapter",
-    body: text.value,
-    truncated: text.truncated || rendered.truncated,
+    ...captureAttemptText(capture, payload, rendered, 32 * 1024),
   })
+  capture.version++
   return capture.attempts.length - 1
 }
 
@@ -244,28 +404,48 @@ export function captureRedactionHttp(
   const capture = id === undefined ? undefined : captures.get(id)
   const attempt = index === undefined ? undefined : capture?.attempts[index]
   if (!capture || !attempt) return
+  capture.version++
   if (attempt.stage === "http") {
     if (capture.attempts.length >= 8) {
       capture.truncated = true
       return
     }
-    if (!keepFields(capture, [...Object.values(attempt.upstream), "http"]))
+    if (
+      !keepContentFields(capture, [...Object.values(attempt.upstream), "http"])
+    )
       return
-    const text = keepText(capture, body, 64 * 1024)
     capture.attempts.push({
       upstream: attempt.upstream,
       stage: "http",
-      body: text.value,
-      truncated: text.truncated,
+      ...captureAttemptText(
+        capture,
+        body,
+        { text: body, truncated: false },
+        64 * 1024,
+      ),
     })
   } else {
-    capture.bytes -= attempt.body.length * 2
-    captureBytes -= attempt.body.length * 2
-    const text = keepText(capture, body, 64 * 1024)
+    const bytes =
+      2
+      * (attempt.body.length
+        + attempt.stage.length
+        - "http".length
+        + attempt.excerpts.reduce(
+          (sum, excerpt) => sum + excerpt.path.length + excerpt.text.length,
+          0,
+        ))
+    capture.bytes -= bytes
+    captureBytes -= bytes
+    attempt.body = ""
+    attempt.excerpts = []
     Object.assign(attempt, {
       stage: "http",
-      body: text.value,
-      truncated: text.truncated,
+      ...captureAttemptText(
+        capture,
+        body,
+        { text: body, truncated: false },
+        64 * 1024,
+      ),
     })
   }
 }
@@ -279,10 +459,11 @@ export function redactionInspectionTokens(
     ...new Set(
       capture.attempts.flatMap((attempt) =>
         [
-          ...attempt.body.matchAll(
-            /\{\{(?:SECRET|HOME|WORD)_[a-f0-9]{32}\}\}/g,
-          ),
-        ].map((match) => match[0]),
+          attempt.body,
+          ...attempt.excerpts.map((excerpt) => excerpt.text),
+        ].flatMap((text) =>
+          [...text.matchAll(tokenPattern())].map((match) => match[0]),
+        ),
       ),
     ),
   ].slice(0, 100)
@@ -295,14 +476,68 @@ export function finishRedactionInspection(
   if (!getRedactionInspectionState().enabled) return
   const capture = id === undefined ? undefined : captures.get(id)
   if (!capture) return
+  if (
+    mappings.length === capture.mappings.length
+    && mappings.every((mapping, index) => {
+      const kept = capture.mappings[index]
+      return (
+        mapping.placeholder === kept.placeholder
+        && mapping.source === kept.source
+        && mapping.value.length === kept.originalLength
+        && mapping.value.startsWith(kept.value)
+      )
+    })
+  )
+    return
+  const previousBytes = capture.mappingBytes
+  capture.bytes -= previousBytes
+  captureBytes -= previousBytes
+  capture.mappings = []
+  capture.mappingBytes = 0
+  capture.version++
+  const before = capture.bytes
+  let metadataRemaining = mappings.reduce(
+    (sum, mapping) =>
+      sum
+      + 2
+        * (mapping.placeholder.length
+          + mapping.kind.length
+          + mapping.label.length
+          + mapping.source.length),
+    0,
+  )
   for (const mapping of mappings) {
     if (
-      !keepFields(capture, [mapping.placeholder, mapping.kind, mapping.source])
+      !keepFields(capture, [
+        mapping.placeholder,
+        mapping.kind,
+        mapping.label,
+        mapping.source,
+      ])
     )
       break
-    const text = keepText(capture, mapping.value, 4096)
-    capture.mappings.push({ ...mapping, value: text.value })
+    metadataRemaining -=
+      2
+      * (mapping.placeholder.length
+        + mapping.kind.length
+        + mapping.label.length
+        + mapping.source.length)
+    const limit = Math.max(
+      0,
+      Math.min(
+        4096,
+        MAX_MAPPING_BYTES - (capture.bytes - before) - metadataRemaining,
+      ),
+    )
+    const text = keepText(capture, mapping.value, limit)
+    capture.mappings.push({
+      ...mapping,
+      value: text.value,
+      truncated: text.truncated,
+      originalLength: mapping.value.length,
+    })
   }
+  capture.mappingBytes = capture.bytes - before
 }
 
 export function getRedactionInspection(id: number, reveal = false) {
@@ -313,7 +548,8 @@ export function getRedactionInspection(id: number, reveal = false) {
   if (!capture) return undefined
   return {
     id,
-    input: reveal ? capture.input : null,
+    version: capture.version,
+    input: null,
     attempts: structuredClone(capture.attempts),
     mappings: capture.mappings.map(({ value, ...mapping }) =>
       reveal ? { ...mapping, value } : mapping,
@@ -325,23 +561,54 @@ export function getRedactionInspection(id: number, reveal = false) {
 /** Lists contain only routing metadata and counters. Content requires a separate explicit read. */
 export function recordRedactionDiagnostics(
   value: RedactionDiagnostics,
-  route: { client: string; upstreams: Array<RedactionUpstream> } = {
+  route: RedactionRoute = {
     client: "Unknown client",
     upstreams: [],
   },
   captureId?: number,
-): void {
+  status: RedactionRecordStatus = "completed",
+): number {
+  const timestamp = route.startedAt ?? Date.now()
+  if (status !== "in_progress") appendRedactionHistory(value, route, timestamp)
+  const id = ++sequence
   recent.unshift({
     ...structuredClone(value),
-    id: ++sequence,
-    timestamp: Date.now(),
-    ...structuredClone(route),
+    id,
+    status,
+    timestamp,
+    client: route.client,
+    upstreams: structuredClone(route.upstreams),
+    attempts: structuredClone(route.attempts ?? []),
+    attemptsTruncated: route.attemptsTruncated ?? false,
     captureId,
   })
   if (recent.length > LIMIT) {
     const expired = recent.pop()!
     if (expired.captureId !== undefined) dropCapture(expired.captureId)
   }
+  notifyDiagnostics()
+  return id
+}
+
+/** Update the same live record; only terminal updates enter durable history. */
+export function updateRedactionDiagnostics(
+  id: number,
+  value: RedactionDiagnostics,
+  route: RedactionRoute,
+  status: RedactionRecordStatus = "in_progress",
+): void {
+  const entry = recent.find((item) => item.id === id)
+  if (entry)
+    Object.assign(entry, structuredClone(value), {
+      client: route.client,
+      upstreams: structuredClone(route.upstreams),
+      attempts: structuredClone(route.attempts ?? []),
+      attemptsTruncated: route.attemptsTruncated ?? false,
+      status,
+    })
+  if (status !== "in_progress")
+    appendRedactionHistory(value, route, route.startedAt ?? entry?.timestamp)
+  notifyDiagnostics()
 }
 
 export function getRedactionDiagnostics() {
@@ -352,6 +619,12 @@ export function getRedactionDiagnostics() {
     entries: recent.map(({ captureId, ...entry }) => ({
       ...structuredClone(entry),
       contentAvailable: captureId !== undefined && captures.has(captureId),
+      contentVersion:
+        captureId === undefined ? 0 : (captures.get(captureId)?.version ?? 0),
+      contentState:
+        captureId === undefined ? "not_collected"
+        : captures.has(captureId) ? "available"
+        : (captureReasons.get(captureId) ?? "evicted"),
     })),
   }
 }

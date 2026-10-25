@@ -23,6 +23,7 @@ import type {
 } from "~/services/protocols/anthropic/types"
 
 import { stripMcpToolPrefix } from "~/services/claude/cli/mcp-names"
+import type { ClaudeRateLimitInfo } from "~/services/claude/limit-headers"
 import {
   parseStreamJsonLine,
   type ClaudeCliUsage,
@@ -34,6 +35,18 @@ interface ClaudeStreamTranslationOptions {
   model: string
   /** MCP 服务器名（剥工具名前缀用）。 */
   mcpServerName?: string
+  /** 交给 Claude Code 的工具名 → 调用方声明的名字（见 `bridgeToolNames`）。 */
+  toolNames?: ReadonlyMap<string, string>
+  /** Claude Code 报的订阅额度（`rate_limit_event`）。 */
+  onRateLimit?: (info: ClaudeRateLimitInfo | undefined) => void
+}
+
+/** Claude Code 用的工具名换回调用方声明的名字；不认识的原样返回。 */
+function declaredName(
+  name: string,
+  names: ReadonlyMap<string, string> | undefined,
+): string {
+  return names?.get(name) ?? name
 }
 
 /**
@@ -110,6 +123,10 @@ export async function* translateClaudeStreamJson(
     const parsed = parseStreamJsonLine(line)
     if (!parsed) continue
 
+    if (parsed.type === "rate_limit_event") {
+      options.onRateLimit?.(parsed.rate_limit_info)
+      continue
+    }
     if (parsed.type === "result") {
       // 终局信封。usage 已经在 message_delta 里给过，这里只关心错误。
       if (parsed.is_error) {
@@ -161,7 +178,10 @@ export async function* translateClaudeStreamJson(
             content_block: {
               type: "tool_use",
               id: block.id ?? "",
-              name: stripMcpToolPrefix(block.name ?? "", options.mcpServerName),
+              name: declaredName(
+                stripMcpToolPrefix(block.name ?? "", options.mcpServerName),
+                options.toolNames,
+              ),
               input: {},
             },
           }

@@ -6,7 +6,7 @@ import type { QuotaSnapshot } from "~/lib/quota/types"
 import type { AntigravityQuotaSummaryPayload } from "~/lib/quota/parsers"
 
 import { HTTPError } from "~/lib/error"
-import { logger } from "~/lib/logger"
+import { createLogger } from "~/lib/logger"
 import {
   getMutableProviderConnection,
   isCredentialAvailable,
@@ -29,6 +29,8 @@ import { createClaudeMessagesOnce } from "~/services/claude/create-messages-once
 import { createCodexResponsesOnce } from "~/services/codex/create-responses-once"
 import { lowestCodexReasoningEffort } from "~/services/codex/client-models"
 import { createAntigravityChatCompletionsOnce } from "~/services/antigravity/create-chat-completions-once"
+
+const logger = createLogger("quota")
 
 let running = false
 const GRACE_MINUTES = 5

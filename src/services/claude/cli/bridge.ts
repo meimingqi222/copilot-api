@@ -21,7 +21,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 
-import { logger } from "~/lib/logger"
+import { createLogger } from "~/lib/logger"
 import { getConnectionProxyUrl } from "~/lib/provider-connections"
 import type {
   ApiCredential,
@@ -37,12 +37,14 @@ import { claudeCliArgs } from "~/services/claude/cli/args"
 import {
   claudeConfigDir,
   claudeHome,
+  claudeLaunchCommand,
   findClaudeBinary,
 } from "~/services/claude/cli/binary"
 import { cleanClaudeEnv } from "~/services/claude/cli/env"
 import {
   ClaudeCliConcurrencyLimitError,
   ClaudeCliError,
+  ClaudeCliNoRoomError,
   ClaudeCliUnavailableError,
   toHttpError,
 } from "~/services/claude/cli/errors"
@@ -54,6 +56,8 @@ import {
 } from "~/services/claude/cli/mcp-names"
 import { renderClaudePrompt } from "~/services/claude/cli/prompt"
 import { terminateClaudeProcess } from "~/services/claude/cli/process"
+import { maxClaudeProcesses } from "~/services/claude/cli/room"
+import { recordClaudeRateLimit } from "~/services/claude/limit-headers"
 import {
   continuation,
   sessionKey,
@@ -78,6 +82,7 @@ import { claudeCallbackBaseUrl } from "~/services/claude/cli/server-address"
 import { readStreamJsonLines } from "~/services/claude/cli/stream-json"
 import {
   bridgeTools,
+  declaredToolNames,
   toolResultIds,
   toolResults,
   type BridgeToolResult,
@@ -87,6 +92,8 @@ import {
   collectAnthropicResponse,
   translateClaudeStreamJson,
 } from "~/services/claude/cli/translate"
+
+const logger = createLogger("cli")
 
 /** 一个 run 最多活 30 分钟，然后连进程一起清掉。 */
 const RUN_TIMEOUT_MS = 30 * 60_000
@@ -492,7 +499,13 @@ export class ClaudeCliRun implements BridgeRun {
           normalizeClaudeTurns(this.outputLines(), {
             structured: this.structured,
           }),
-          { model, mcpServerName: CLAUDE_MCP_SERVER_NAME },
+          {
+            model,
+            mcpServerName: CLAUDE_MCP_SERVER_NAME,
+            toolNames: declaredToolNames(this.payload),
+            onRateLimit: (info) =>
+              recordClaudeRateLimit(this.connectionId, this.credentialId, info),
+          },
         )) {
           produced = true
           this.queue.push(event)
@@ -903,11 +916,15 @@ async function startRun(
       "Claude Code is not installed; install it and run `claude auth login`",
     )
   }
+  const total = maxClaudeProcesses()
   const release = runRegistry.reserveConnection(
     context.connection.id,
     maxRunsPerConnection(),
+    total,
   )
-  if (!release) throw new ClaudeCliConcurrencyLimitError(context.connection.id)
+  if (release === "connection")
+    throw new ClaudeCliConcurrencyLimitError(context.connection.id)
+  if (release === "machine") throw new ClaudeCliNoRoomError(total)
   try {
     return await spawnRun(context, payload, binary)
   } finally {
@@ -958,7 +975,7 @@ async function spawnRun(
     context.signal?.throwIfAborted()
     const proc = Bun.spawn(
       [
-        binary,
+        ...claudeLaunchCommand(binary),
         ...claudeCliArgs({
           model: context.model,
           mcpConfigPath,

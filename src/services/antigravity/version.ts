@@ -9,6 +9,9 @@
  * 版本必须保持在或高于该下限。
  */
 
+import { everyMs, runJob } from "~/lib/jobs"
+import { logger } from "~/lib/logger"
+
 const ANTIGRAVITY_FALLBACK_VERSION = "2.9.1"
 const ANTIGRAVITY_HUB_PLATFORM = "darwin/arm64"
 const ANTIGRAVITY_VERSION_CACHE_TTL = 6 * 60 * 60 * 1000 // 6 小时
@@ -52,18 +55,26 @@ async function fetchLatestVersion(): Promise<string> {
 }
 
 function refreshVersion(): void {
-  fetchLatestVersion()
-    .then((version) => {
-      cachedVersion = version
-      versionExpiry = Date.now() + ANTIGRAVITY_VERSION_CACHE_TTL
-    })
-    .catch(() => {
-      // 拉取失败时：如果缓存已过期则回退到 fallback，否则保留旧值
-      if (Date.now() >= versionExpiry) {
-        cachedVersion = ANTIGRAVITY_FALLBACK_VERSION
+  void runJob(
+    "antigravity-version",
+    async () => {
+      try {
+        cachedVersion = await fetchLatestVersion()
         versionExpiry = Date.now() + ANTIGRAVITY_VERSION_CACHE_TTL
+      } catch (error) {
+        logger.warn("Antigravity version check failed:", error)
+        // 拉取失败时：如果缓存已过期则回退到 fallback，否则保留旧值
+        if (Date.now() >= versionExpiry) {
+          cachedVersion = ANTIGRAVITY_FALLBACK_VERSION
+          versionExpiry = Date.now() + ANTIGRAVITY_VERSION_CACHE_TTL
+        }
       }
-    })
+    },
+    {
+      label: "Antigravity version",
+      schedule: everyMs(ANTIGRAVITY_VERSION_CACHE_TTL / 2),
+    },
+  )
 }
 
 /**

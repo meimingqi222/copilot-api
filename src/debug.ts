@@ -4,7 +4,18 @@ import { defineCommand } from "citty"
 import fs from "node:fs/promises"
 import os from "node:os"
 
+import path from "node:path"
+
+import {
+  buildDiagnosticBundle,
+  bundleFileName,
+  compressBundle,
+} from "~/lib/diagnostics/bundle"
 import { initLogger, logger } from "~/lib/logger"
+import { upsertProviderConnection } from "~/lib/provider-connections"
+import { loadProviderConnections } from "~/lib/provider-connections/store"
+import { statsStore } from "~/lib/stats-store"
+import { SYSTEM_CONFIG_KEY, initializeSystemConfig } from "~/lib/system-config"
 
 import { PATHS, ensurePaths } from "./lib/paths"
 
@@ -26,6 +37,8 @@ interface DebugInfo {
 
 interface RunDebugOptions {
   json: boolean
+  bundle?: boolean
+  since?: string
 }
 
 async function getPackageVersion(): Promise<string> {
@@ -101,9 +114,57 @@ function printDebugInfoJson(info: DebugInfo): void {
   console.log(JSON.stringify(info, null, 2))
 }
 
+/** "24h", "90m", "7d" in milliseconds; plain numbers are hours. */
+export function parseSince(value: string): number {
+  const match = /^(\d+(?:\.\d+)?)\s*([mhd]?)$/i.exec(value.trim())
+  if (!match)
+    throw new Error(`Invalid --since "${value}"; use e.g. 90m, 24h, 7d`)
+  const unit = { m: 60_000, h: 3_600_000, d: 86_400_000 }[
+    (match[2] || "h").toLowerCase() as "m" | "h" | "d"
+  ]
+  return Number(match[1]) * unit
+}
+
+/**
+ * The same bundle the admin page exports, read from disk: it works when the
+ * server will not start. Settings come from the stats store when it opens,
+ * else from the environment, as the server would fall back to.
+ */
+async function writeBundle(since: string): Promise<void> {
+  const sinceMs = parseSince(since)
+  try {
+    statsStore.init()
+    initializeSystemConfig({
+      value: statsStore.getConfig(SYSTEM_CONFIG_KEY),
+      save: () => {},
+      onChange: () => {},
+    })
+  } catch (error) {
+    logger.warn(
+      "Could not read saved settings; using the environment's:",
+      error,
+    )
+  }
+  try {
+    for (const connection of await loadProviderConnections())
+      upsertProviderConnection(connection)
+  } catch (error) {
+    logger.warn("Could not read provider connections:", error)
+  }
+  const bundle = await buildDiagnosticBundle({ sinceMs })
+  const file = path.resolve(bundleFileName())
+  await fs.writeFile(file, new Uint8Array(compressBundle(bundle)))
+  logger.success(
+    `Wrote ${file} (${Object.entries(bundle.manifest.counts)
+      .map(([name, count]) => `${count} ${name}`)
+      .join(", ")}; ${bundle.manifest.redactions} values masked)`,
+  )
+}
+
 async function runDebug(options: RunDebugOptions): Promise<void> {
   await ensurePaths()
   initLogger()
+  if (options.bundle) return writeBundle(options.since ?? "24h")
   const debugInfo = await getDebugInfo()
 
   if (options.json) {
@@ -124,10 +185,23 @@ export const debug = defineCommand({
       default: false,
       description: "Output debug information as JSON",
     },
+    bundle: {
+      type: "boolean",
+      default: false,
+      description:
+        "Write a redacted diagnostic bundle (.json.gz) to the current directory",
+    },
+    since: {
+      type: "string",
+      default: "24h",
+      description: "How far back the bundle's logs go (e.g. 90m, 24h, 7d)",
+    },
   },
   run({ args }) {
     return runDebug({
       json: args.json,
+      bundle: args.bundle,
+      since: args.since,
     })
   },
 })

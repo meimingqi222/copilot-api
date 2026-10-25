@@ -1,6 +1,8 @@
 import { afterEach, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { runInNewContext } from "node:vm"
+import type { z } from "zod"
+import type { redactionConfigSchema } from "~/lib/redaction/rules"
 import { getSystemConfig, initializeSystemConfig } from "~/lib/system-config"
 import { systemConfigApiRoutes } from "~/routes/admin/api/system-config"
 
@@ -402,9 +404,8 @@ test("system settings render translated labels and titles in English", () => {
   )
 })
 
-type RedactionDraft = ReturnType<
-  typeof getSystemConfig
->["settings"]["redaction"]
+// The page sends a draft; the server schema fills fields it leaves out.
+type RedactionDraft = z.input<typeof redactionConfigSchema>
 interface PreviewOptions<
   Body = { text: string; format: string; config: RedactionDraft },
 > {
@@ -421,6 +422,8 @@ const previewDiagnostics = {
   restored: 0,
 }
 interface RedactionPreviewView {
+  detailDetectionSummary: string
+  detailMaskingSummary: string
   settings: { redaction: RedactionDraft }
   redactionWordsText: string
   redactionHomePrefixesText: string
@@ -446,6 +449,7 @@ interface RedactionPreviewView {
         model: string
       }>
       contentAvailable: boolean
+      status?: string
     }
   >
   redactionStatsTotal: number
@@ -462,17 +466,24 @@ interface RedactionPreviewView {
   detail: {
     id: number
     input: string | null
-    attempts: Array<{ body: string; stage: string; truncated: boolean }>
+    attempts: Array<{
+      body: string
+      stage: string
+      truncated: boolean
+      parts?: Array<{ changed: boolean; text?: string; excerpt?: boolean }>
+    }>
     mappings: Array<{ placeholder: string; value?: string }>
     truncated: boolean
   } | null
   detailRevealed: boolean
-  detailComparison: boolean
+  detailViewMode: string
   contentParts(
     body: string,
     mappings: Array<{ placeholder: string }>,
+    excerpts?: Array<{ path: string; text: string }>,
   ): Array<{
     changed: boolean
+    excerpt?: boolean
     path?: string
     role?: string
     text?: string
@@ -502,6 +513,9 @@ interface RedactionPreviewView {
   loadRedactionStats(background?: boolean): Promise<void>
   draftRedactionConfig(): RedactionDraft
   redactionCounts(counts: Record<string, number>, group: string): string
+  formatUpstreams(entry: {
+    upstreams: Array<{ id: string; name: string }>
+  }): string
 }
 
 function redactionView(
@@ -513,7 +527,14 @@ function redactionView(
     readFileSync("pages/js/views/redaction.js", "utf8") + "\nredactionView()",
     {
       AbortController,
-      API: { request },
+      API: {
+        // The day-strip history is its own endpoint; tests here count the
+        // stats, preview and inspection calls, so answer it out of band.
+        request: (path: string, options: PreviewOptions) =>
+          path.startsWith("/system-config/redaction-history") ?
+            Promise.resolve({ days: [], requests: 0, total: 0 })
+          : request(path, options),
+      },
       I18n: { t: (key: string) => key },
       setTimeout: () => 1,
       clearTimeout: () => {},
@@ -521,10 +542,13 @@ function redactionView(
     },
   ) as RedactionPreviewView & {
     $watch: (key: string, callback: () => void) => void
+    $nextTick: (callback: () => void) => void
   }
   view.$watch = (key, callback) => {
     watchers.set(key, callback)
   }
+  // Alpine supplies $nextTick; the flow map it schedules needs a DOM.
+  view.$nextTick = () => {}
   view.settings = {
     redaction: structuredClone(getSystemConfig().settings.redaction),
   }
@@ -560,21 +584,25 @@ test("redaction preview submits unsaved complete rules only explicitly, supports
   view.redactionWordsText = " draft.word \r\n\nsecond.word\n"
   view.redactionHomePrefixesText = " /srv/synthetic \n"
   view.previewFormat = "json"
+  // The sample button is an explicit action and its text is synthetic, so it
+  // previews at once; typed text still waits for the Preview button.
   view.samplePreview()
   expect(JSON.parse(view.previewText).password).toBe(
     ["synthetic", "demo", "password123"].join("-"),
   )
-  expect(calls).toHaveLength(0)
+  expect(calls).toHaveLength(1)
+  expect(calls[0].options.body?.text).toBe(view.previewText)
   await view.runRedactionPreview()
-  expect(calls[0].path).toBe("/system-config/redaction-preview")
-  expect(calls[0].options.method).toBe("POST")
-  expect(calls[0].options.body?.config).toEqual({
+  expect(calls[1].path).toBe("/system-config/redaction-preview")
+  expect(calls[1].options.method).toBe("POST")
+  expect(calls[1].options.body?.config).toEqual({
     enabled: false,
     secrets: false,
     homePaths: true,
     wordsEnabled: true,
     words: ["draft.word", "second.word"],
     homePrefixes: ["/srv/synthetic"],
+    allow: [],
   })
   expect(view.previewResult?.enabled).toBe(false)
   expect(view.previewResult?.output).toBe(view.previewText)
@@ -586,7 +614,7 @@ test("redaction preview submits unsaved complete rules only explicitly, supports
   expect(view.previewStale).toBe(false)
   expect(JSON.stringify(view.settings)).toBe(original)
   expect(view.redactionWordsText).toContain("draft.word")
-  expect(calls).toHaveLength(1)
+  expect(calls).toHaveLength(2)
 })
 
 test("preview errors never echo server text and oversized or empty input never submits", async () => {
@@ -793,9 +821,157 @@ test("live redaction diagnostics keep the last snapshot on failures and stop whi
   expect(timers.size).toBe(0)
 })
 
+test("live redaction events coalesce refreshes, retain in-flight changes and close on hide or leave", async () => {
+  const document = { hidden: false }
+  const timers = new Map<
+    number,
+    { callback: () => Promise<void>; delay: number }
+  >()
+  const sources: FakeSource[] = []
+  let timerId = 0
+  let finish!: (value: unknown) => void
+  let calls = 0
+  class FakeSource {
+    closed = false
+    change = () => {}
+    url: string
+    constructor(url: string) {
+      this.url = url
+      sources.push(this)
+    }
+    addEventListener(event: string, callback: () => void) {
+      expect(event).toBe("change")
+      this.change = callback
+    }
+    close() {
+      this.closed = true
+    }
+  }
+  const { view } = redactionView(
+    () => {
+      calls++
+      return new Promise((resolve) => {
+        finish = resolve
+      })
+    },
+    {
+      document,
+      EventSource: FakeSource,
+      setTimeout: (callback: () => Promise<void>, delay: number) => {
+        timers.set(++timerId, { callback, delay })
+        return timerId
+      },
+      clearTimeout: (id: number) => timers.delete(id),
+    },
+  )
+  view.liveActive = true
+  view.syncLive()
+  expect(sources).toHaveLength(1)
+  expect(sources[0].url).toEndWith("/system-config/redaction-events")
+  sources[0].change()
+  sources[0].change()
+  expect(
+    [...timers.values()].filter((timer) => timer.delay === 50),
+  ).toHaveLength(1)
+  const [id, timer] = [...timers].find(([, item]) => item.delay === 50)!
+  timers.delete(id)
+  const pending = timer.callback()
+  expect(calls).toBe(1)
+  sources[0].change()
+  finish({
+    entries: [
+      { ...previewDiagnostics, id: 1, timestamp: 100, status: "in_progress" },
+    ],
+  })
+  await pending
+  expect([...timers.values()].filter((item) => item.delay === 50)).toHaveLength(
+    1,
+  )
+  document.hidden = true
+  view.syncLive()
+  expect(sources[0].closed).toBe(true)
+  expect(timers.size).toBe(0)
+  sources[0].change()
+  expect(timers.size).toBe(0)
+  document.hidden = false
+  view.syncLive()
+  expect(sources).toHaveLength(2)
+  view.leaveRedaction()
+  expect(sources[1].closed).toBe(true)
+  expect(timers.size).toBe(0)
+})
+
+test("redaction flow animates delayed routes and failover once without replaying completed history", () => {
+  type FlowEntry = {
+    id: number
+    status: string
+    upstreams: Array<{ id: string }>
+  }
+  const document = { hidden: false }
+  const view = runInNewContext(
+    readFileSync("pages/js/views/redaction.js", "utf8") + "\nredactionView()",
+    {
+      document,
+      window: { matchMedia: () => ({ matches: false }) },
+    },
+  ) as {
+    redactionStats: FlowEntry[]
+    emitFlow(): void
+    playRecordFlow(entry: FlowEntry): void
+  }
+  const played: FlowEntry[] = []
+  view.playRecordFlow = (entry) => {
+    played.push(entry)
+  }
+  const history: FlowEntry = {
+    id: 1,
+    status: "completed",
+    upstreams: [{ id: "old" }],
+  }
+  view.redactionStats = [history]
+  view.emitFlow()
+  expect(played).toHaveLength(0)
+  const slow: FlowEntry = { id: 2, status: "in_progress", upstreams: [] }
+  view.redactionStats = [slow, history]
+  view.emitFlow()
+  expect(played).toHaveLength(0)
+  const newer: FlowEntry = {
+    id: 3,
+    status: "in_progress",
+    upstreams: [{ id: "fast" }],
+  }
+  view.redactionStats = [newer, slow, history]
+  view.emitFlow()
+  slow.upstreams.push({ id: "slow" })
+  view.emitFlow()
+  slow.status = "completed"
+  view.emitFlow()
+  expect(played.map((entry) => entry.id)).toEqual([3, 2])
+  newer.upstreams.push({ id: "retry" })
+  view.emitFlow()
+  expect(played.at(-1)?.upstreams).toEqual([{ id: "retry" }])
+  view.emitFlow()
+  expect(played).toHaveLength(3)
+})
+
+test("recent redaction rows render actual upstream names with a safe empty fallback", () => {
+  const { view } = redactionView(async () => ({}))
+  expect(
+    view.formatUpstreams({
+      upstreams: [
+        { id: "a", name: "Provider A" },
+        { id: "b", name: "" },
+      ],
+    }),
+  ).toBe("Provider A、b")
+  expect(view.formatUpstreams({ upstreams: [] })).toBe(
+    "redaction.routes.unknown",
+  )
+})
+
 test("preview markup renders output as text, is labeled, and exposes translated privacy and count semantics", () => {
   const page = readFileSync("pages/partials/redaction.html", "utf8")
-  expect(page).toContain('x-text="previewResult.output"')
+  expect(page).toContain('x-text="previewResult?.output"')
   expect(page).not.toContain("x-html")
   expect(page).toContain('aria-describedby="redaction-preview-hint"')
   expect(page).toContain("else leaveRedaction()")
@@ -836,7 +1012,6 @@ test("redaction has its own authenticated navigation and lazy page, not a second
   expect(html).toContain("initialized && visitedViews['redaction']")
   expect(html).toContain('data-partial="partials/redaction.html?v=')
   const settings = readFileSync("pages/partials/system-config.html", "utf8")
-  expect(settings).toContain('href="#redaction"')
   expect(settings).not.toContain('x-model="settings.redaction.enabled"')
   expect(settings).not.toContain('x-model="previewText"')
 })
@@ -965,7 +1140,7 @@ test("content is explicitly fetched without cache; masked view never keeps origi
   await view.loadDetail(1, true)
   expect(calls[2].path).toBe("/system-config/redaction-records/1?reveal=1")
   expect(view.detailRevealed).toBe(true)
-  expect(view.detail?.input).toBe("original secret")
+  expect(view.detail?.input).toBeNull()
   expect(view.detail?.mappings[0].value).toBe("original secret")
   await view.loadDetail(1)
   expect(JSON.stringify(view.detail)).not.toContain("original secret")
@@ -1175,13 +1350,16 @@ test("request excerpts focus known matches, merge nearby windows and reveal only
   expect(view.excerptSegments(a, false, true)[0].text).toBe(a)
   expect(calls).toHaveLength(1)
   await view.loadDetail(1, true)
-  expect(view.detailComparison).toBe(true)
+  expect(view.detailRevealed).toBe(true)
+  expect(view.detailViewMode).toBe("both")
   expect(view.excerptSegments(a, false, true)[0].text).toBe(
     "<img src=x onerror=alert(1)>",
   )
   expect(calls[1]).toEndWith("?reveal=1")
   view.clearDetail()
-  expect(view.detailComparison).toBe(false)
+  // Closing forgets the reveal: reopening shows placeholders only.
+  expect(view.detailRevealed).toBe(false)
+  expect(view.excerptSegments(a, false, true)[0].text).toBe(a)
   expect(view.excerptSegments(a).some((x) => x.kind)).toBe(false)
 })
 
@@ -1223,16 +1401,81 @@ test("request content keeps JSON locations and roles, folds unchanged parts and 
   expect(view.contentParts(token, []).every((part) => !part.changed)).toBe(true)
 })
 
+test("detail loads independent match excerpts when the retained wire prefix has no matches", async () => {
+  const token = `{{HOME_${"a".repeat(32)}}}`
+  const { view } = redactionView(async () => ({
+    id: 1,
+    input: null,
+    truncated: true,
+    mappings: [
+      { placeholder: token, kind: "HOME", label: "HOME", source: "builtin" },
+    ],
+    attempts: [
+      {
+        upstream: {
+          id: "fixture",
+          name: "Fixture",
+          protocol: "codex-native",
+          model: "fixture",
+        },
+        stage: "http",
+        body: "retained instructions prefix",
+        truncated: true,
+        excerpts: [
+          { path: "$", text: `…config: ${token}/.codex/config.toml…` },
+        ],
+      },
+    ],
+  }))
+  view.inspection = { enabled: true, expiresAt: null }
+  view.redactionStats = [
+    {
+      ...previewDiagnostics,
+      id: 1,
+      timestamp: Date.now(),
+      client: "Codex",
+      upstreams: [],
+      contentAvailable: true,
+    },
+  ]
+  await view.loadDetail(1)
+  const attempt = view.detail!.attempts[0]
+  expect(attempt.body).toBe("retained instructions prefix")
+  expect(attempt.parts!.filter((part) => part.changed)).toMatchObject([
+    { excerpt: true, text: `…config: ${token}/.codex/config.toml…` },
+  ])
+  expect(view.detailRevealed).toBe(false)
+  expect(
+    view
+      .contentParts(
+        token,
+        [{ placeholder: token }],
+        [{ path: "$", text: token }],
+      )
+      .filter((part) => part.changed),
+  ).toHaveLength(1)
+})
+
 test("route and inspection markup is text-only, accessible, translated and honest about observed bodies", () => {
   const page = readFileSync("pages/partials/redaction.html", "utf8")
   expect(page).not.toContain("x-html")
-  expect(page).not.toMatch(/<svg\b[\s\S]*?<template[^>]*x-for[\s\S]*?<\/svg>/)
-  expect(page).toContain('x-text="attempt.body"')
+  // Alpine cannot render a <template> inside an SVG element; check each one
+  // on its own so the pattern never spans from one element to the next.
+  for (const svg of page.matchAll(/<svg\b(?:(?!<\/svg>)[\s\S])*?<\/svg>/g))
+    expect(svg[0]).not.toMatch(/<template[^>]*x-for/)
+  // Bodies render as text tokens, and only an http-stage body is labeled as
+  // what the upstream received.
+  expect(page).toContain('x-for="(part, pIndex) in attempt.parts"')
+  expect(page).toContain(
+    "attempt.stage === 'http' ? 'redaction.inspect.http' : 'redaction.inspect.adapter'",
+  )
   expect(page).toContain('x-text="mapping.value"')
-  expect(page).toContain('x-for="entry in filteredRecords"')
-  expect(page).toContain("routeGroups(side).slice(0, 3)")
-  expect(page).toContain("routeGroups(side).slice(3)")
+  expect(page).toContain('x-for="group in groupedRecords"')
+  expect(page).toContain('x-for="item in displayEndpoints.clients"')
+  expect(page).toContain('x-for="item in displayEndpoints.upstreams"')
   expect(page).toContain(":aria-pressed=")
+  expect(page).toContain("t('redaction.inspect.warning')")
+  expect(page).toContain("t('redaction.routes.legend')")
   const translations = runInNewContext(
     readFileSync("pages/js/i18n.js", "utf8") + "\ni18n.translations",
     {
@@ -1253,4 +1496,96 @@ test("route and inspection markup is text-only, accessible, translated and hones
     "undetected secrets",
   )
   expect(translations.en["redaction.routes.legend"]).toContain("User-Agent")
+})
+
+test("redaction detail wires focused excerpts, closed unchanged groups and explicit full text into the rendered view", () => {
+  const page = readFileSync("pages/partials/redaction.html", "utf8")
+  expect(page).not.toContain("partChunks(part)")
+  expect(page).toContain("excerptSegments(part.text, whole, true)")
+  expect(page).toContain("excerptSegments(part.text, whole)")
+  expect(page).toContain('x-if="open"')
+  expect(page).toContain("part.leaves.slice(0, 40)")
+  expect(page).toContain("leaf.text.slice(0, 400)")
+  expect(page).toContain("redaction.inspect.focusHint")
+  expect(page).toContain("redaction.inspect.compareHint")
+  expect(page).toContain("redaction.inspect.showWhole")
+  expect(page).toContain("redaction.inspect.rawBody")
+  expect(page).not.toContain("客户端输入视角 (Client Input)")
+})
+
+test("detail counters use request diagnostics when truncated captures have no mappings", () => {
+  const { view } = redactionView(async () => ({}))
+  view.detailId = 1
+  view.detail = {
+    id: 1,
+    input: null,
+    attempts: [],
+    mappings: [],
+    truncated: true,
+  }
+  view.redactionStats = [
+    {
+      ...capturedEntry(),
+      total: 2,
+      byKind: { ...previewDiagnostics.byKind, HOME: 2 },
+      status: "completed",
+    },
+  ]
+  expect(view.detailDetectionSummary).toBe("redaction.inspect.detected")
+  expect(view.detailMaskingSummary).toBe("redaction.inspect.maskedCount")
+  view.redactionStats[0].status = "in_progress"
+  expect(view.detailDetectionSummary).toBe("redaction.inspect.detected")
+  view.redactionStats = []
+  expect(view.detailDetectionSummary).toBe("redaction.inspect.countUnknown")
+  const page = readFileSync("pages/partials/redaction.html", "utf8")
+  expect(page).toContain('x-for="fact in detailFacts"')
+  expect(page).not.toContain("规则扫描完毕 · 0 处命中")
+  expect(page).not.toContain("未触发替换 (原文通行)")
+})
+
+test("truncated JSON detail shows match context instead of the long prompt prefix and keeps full text opt-in", async () => {
+  const token = `{{HOME_${"a".repeat(32)}}}`
+  const body =
+    '{"messages":[{"role":"user","content":"'
+    + "unrelated prompt ".repeat(300)
+    + `Read ${token}/project and continue`
+    + " tail".repeat(300)
+  const { view } = redactionView(async () => ({
+    ...capturedDetail(),
+    attempts: [{ upstream, stage: "adapter", body, truncated: true }],
+    mappings: [
+      {
+        placeholder: token,
+        kind: "HOME",
+        source: "builtin",
+        value: "/home/fixture-user",
+      },
+    ],
+  }))
+  view.redactionStats = [capturedEntry()]
+  view.acceptInspection(inspectionState())
+  await view.loadDetail(1)
+  const [part] = view.contentParts(body, [{ placeholder: token }])
+  expect(part.changed).toBe(true)
+  const excerpt = view
+    .excerptSegments(part.text!)
+    .map((segment) => segment.text)
+    .join("")
+  expect(excerpt.length).toBeLessThan(400)
+  expect(excerpt).toContain(`Read ${token}/project`)
+  expect(excerpt).not.toContain('{"messages"')
+  expect(excerpt).not.toContain("/home/fixture-user")
+  expect(
+    view
+      .excerptSegments(body, true)
+      .map((segment) => segment.text)
+      .join(""),
+  ).toBe(body)
+  await view.loadDetail(1, true)
+  expect(
+    view
+      .excerptSegments(body, false, true)
+      .map((segment) => segment.text)
+      .join(""),
+  ).toContain("Read /home/fixture-user/project")
 })

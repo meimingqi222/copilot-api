@@ -15,13 +15,16 @@ import type {
   ProviderConnection,
 } from "~/lib/provider-connections/types"
 
-import { logger } from "~/lib/logger"
+import { runJob } from "~/lib/jobs"
+import { createLogger } from "~/lib/logger"
 import {
   getMutableProviderConnection,
   listProviderConnections,
   persistProviderConnections,
 } from "~/lib/provider-connections/state"
 import { connectionFetchInit, getHeader } from "~/services/protocols/shared"
+
+const logger = createLogger("auth")
 
 const CODEBUDDY_DEFAULT_BASE_URL = "https://copilot.tencent.com/v2"
 const CODEBUDDY_DEFAULT_DOMAIN = "www.codebuddy.cn"
@@ -347,11 +350,18 @@ export function scheduleCodebuddyRefresh(conn: ProviderConnection): void {
       }
 
       try {
-        await refreshCodebuddyTokenForConnection(mutable)
+        await runJob(
+          `codebuddy-token:${conn.id}`,
+          () => refreshCodebuddyTokenForConnection(mutable),
+          {
+            label: `CodeBuddy token refresh · ${mutable.name}`,
+            connectionId: conn.id,
+          },
+        )
       } catch (error: unknown) {
         logger.error(
           `[codebuddy] failed to persist refreshed token for "${mutable.name}":`,
-          error instanceof Error ? error.message : error,
+          error,
         )
       } finally {
         const current = getMutableProviderConnection(conn.id)

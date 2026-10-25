@@ -77,4 +77,20 @@ describe("Claude effort arguments", () => {
       expect(args[args.indexOf("--effort") + 1]).toBe(effort)
     },
   )
+
+  test("drops the root $schema Claude Code cannot resolve, keeping nested ones", () => {
+    const args = claudeCliArgs({
+      model: "m",
+      mcpConfigPath: "/tmp/m.json",
+      jsonSchema: {
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        properties: { nested: { $schema: "kept", type: "string" } },
+      },
+    })
+    expect(JSON.parse(args[args.indexOf("--json-schema") + 1])).toEqual({
+      type: "object",
+      properties: { nested: { $schema: "kept", type: "string" } },
+    })
+  })
 })

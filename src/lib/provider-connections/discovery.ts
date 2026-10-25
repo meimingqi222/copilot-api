@@ -5,7 +5,8 @@
  * 并按 mode (merge / replace / manual-only) 合并到 connection.models。
  */
 
-import { logger } from "~/lib/logger"
+import { createLogger } from "~/lib/logger"
+import { everyMs, runJob } from "~/lib/jobs"
 import { globalTimers } from "~/lib/timer-registry"
 import { getProtocolAdapter } from "~/services/protocols/registry"
 
@@ -16,6 +17,8 @@ import {
   persistProviderConnections,
 } from "./state"
 import { DEFAULTS, type ModelMapping, type ProviderConnection } from "./types"
+
+const logger = createLogger("connection")
 
 const DEFAULT_CHECK_INTERVAL_MS = 60 * 1000 // 每分钟扫描一次,看哪些 connection 需要刷新
 
@@ -161,28 +164,43 @@ async function refreshAllConnectionModels(signal?: AbortSignal): Promise<void> {
 /** 启动周期性扫描;每次扫描挑选到期的 connection 触发刷新。 */
 export function scheduleConnectionModelDiscovery(): void {
   if (intervalHandle) return
+  const info = {
+    label: "Connection model discovery",
+    schedule: everyMs(DEFAULT_CHECK_INTERVAL_MS),
+  }
   // 启动时执行一次
-  void refreshAllConnectionModels().catch((err: unknown) => {
-    logger.debug(
-      `Failed to refresh all connection models on startup: ${(err as Error).message}`,
-    )
+  void runJob(
+    "model-discovery",
+    () => refreshAllConnectionModels(),
+    info,
+  ).catch((err: unknown) => {
+    logger.warn("Failed to refresh all connection models on startup:", err)
   })
 
   intervalHandle = globalTimers.interval(() => {
-    const now = Date.now()
-    for (const connection of listProviderConnections()) {
-      const cfg = connection.modelDiscovery
-      if (!cfg?.enabled) continue
-      if (cfg.mode === "manual-only") continue
-      const interval = cfg.intervalMs ?? DEFAULTS.MODEL_DISCOVERY_INTERVAL_MS
-      const last = connection.lastModelDiscoveryAt ?? 0
-      if (now - last >= interval) {
-        void refreshConnectionModels(connection).catch((err: unknown) => {
-          logger.debug(
-            `Failed to refresh connection models: ${(err as Error).message}`,
-          )
+    void runJob(
+      "model-discovery",
+      async () => {
+        const now = Date.now()
+        const due = listProviderConnections().filter((connection) => {
+          const cfg = connection.modelDiscovery
+          if (!cfg?.enabled || cfg.mode === "manual-only") return false
+          const interval =
+            cfg.intervalMs ?? DEFAULTS.MODEL_DISCOVERY_INTERVAL_MS
+          return now - (connection.lastModelDiscoveryAt ?? 0) >= interval
         })
-      }
-    }
+        await Promise.all(
+          due.map((connection) =>
+            refreshConnectionModels(connection).catch((err: unknown) => {
+              logger.warn(
+                `Failed to refresh models of "${connection.name}":`,
+                err,
+              )
+            }),
+          ),
+        )
+      },
+      info,
+    )
   }, DEFAULT_CHECK_INTERVAL_MS)
 }
