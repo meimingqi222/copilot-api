@@ -80,8 +80,3 @@ function cgroupLimits(): Array<number> {
   read("/sys/fs/cgroup/memory/memory.limit_in_bytes")
   return limits
 }
-
-/** 测试用：清掉按内存算出的缓存。 */
-export function resetClaudeRoomForTest(): void {
-  cached = undefined
-}

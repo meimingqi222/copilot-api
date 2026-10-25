@@ -145,7 +145,7 @@ interface HttpErrorLike {
 }
 
 /** An error as the log keeps it: its stack, and an HTTP failure's status and body start. */
-export function serializeLogError(error: Error): SystemLogError {
+function serializeLogError(error: Error): SystemLogError {
   const http = error as Error & HttpErrorLike
   const out: SystemLogError = {
     name: error.name,
@@ -205,7 +205,7 @@ type FileLogInput = Pick<LogObject, "args" | "date" | "type"> & {
 }
 
 /** The structured entry for one consola call, or null below the file level. */
-export function toSystemLogEntry(
+function toSystemLogEntry(
   logObj: FileLogInput,
   minLevel: FileLogLevel = fileMinLevel,
 ): SystemLogEntry | null {

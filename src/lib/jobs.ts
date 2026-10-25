@@ -17,9 +17,9 @@ import { randomBytes } from "node:crypto"
 import { runWithLogContext } from "~/lib/log-context"
 import { subscribeSystemLogs } from "~/lib/system-log-bus"
 
-export type JobOutcome = "ok" | "warn" | "error"
+type JobOutcome = "ok" | "warn" | "error"
 
-export interface JobStatus {
+interface JobStatus {
   name: string
   /** What it is, for the status page ("Copilot token refresh"). */
   label?: string

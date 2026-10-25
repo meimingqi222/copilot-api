@@ -7,7 +7,7 @@
 /** Category: what the settings switch on/off and what stats are grouped by. */
 export type RedactionKind = "SECRET" | "HOME" | "WORD" | "PERSONAL"
 
-export const PERSONAL_LABELS = [
+const PERSONAL_LABELS = [
   "EMAIL",
   "PHONE",
   "ID_CARD",
@@ -16,7 +16,7 @@ export const PERSONAL_LABELS = [
 ] as const
 export type PersonalLabel = (typeof PERSONAL_LABELS)[number]
 
-export const REDACTION_LABELS = [
+const REDACTION_LABELS = [
   "SECRET",
   "API_KEY",
   "PRIVATE_KEY",

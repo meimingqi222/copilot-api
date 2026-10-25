@@ -35,16 +35,6 @@ export function redactText(text: string): string {
   return out
 }
 
-/** How many credential-shaped values `redactText` would mask. */
-export function countRedactions(text: string): number {
-  let count = 0
-  for (const pattern of [SECRET_QUERY, BEARER, HEADER_VALUE, URL_PASSWORD])
-    count += [...text.matchAll(pattern)].length
-  for (const [pattern] of SECRET_PATTERNS)
-    count += [...text.matchAll(pattern)].length
-  return count
-}
-
 // Not "credential": credentialId and a connection's credentials list are ids
 // and statuses, and must stay readable.
 const KEY_RE =

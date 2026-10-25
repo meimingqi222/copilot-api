@@ -55,7 +55,7 @@ interface LogFile {
   legacy: boolean
 }
 
-export function listSystemLogFiles(dir = PATHS.LOG_DIR): Array<LogFile> {
+function listSystemLogFiles(dir = PATHS.LOG_DIR): Array<LogFile> {
   let names: Array<string>
   try {
     names = fs.readdirSync(dir)
@@ -88,7 +88,7 @@ const LEGACY_LEVEL: Record<string, SystemLogLevel> = {
 }
 
 /** `2026-06-27T14:57:37.244Z [WARN] [tag] message {"meta":1}` as an entry. */
-export function parseLegacyLogLine(
+function parseLegacyLogLine(
   line: string,
   id: number,
 ): SystemLogEntry | undefined {

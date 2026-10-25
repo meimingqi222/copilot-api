@@ -115,7 +115,7 @@ function printDebugInfoJson(info: DebugInfo): void {
 }
 
 /** "24h", "90m", "7d" in milliseconds; plain numbers are hours. */
-export function parseSince(value: string): number {
+function parseSince(value: string): number {
   const match = /^(\d+(?:\.\d+)?)\s*([mhd]?)$/i.exec(value.trim())
   if (!match)
     throw new Error(`Invalid --since "${value}"; use e.g. 90m, 24h, 7d`)

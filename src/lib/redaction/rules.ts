@@ -7,7 +7,6 @@ import type {
 } from "~/lib/redaction/token"
 
 const actionSchema = z.enum(["mask", "warn", "block"])
-export type RedactionAction = z.infer<typeof actionSchema>
 
 export const redactionConfigSchema = z
   .object({

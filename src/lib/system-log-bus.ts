@@ -66,9 +66,3 @@ export function subscribeSystemLogs(
   subscribers.add(subscriber)
   return () => subscribers.delete(subscriber)
 }
-
-export function clearSystemLogBusForTest(): void {
-  ring.length = 0
-  subscribers.clear()
-  sequence = 0
-}

@@ -335,7 +335,7 @@ interface UpstreamResponsesWireDump {
   upstreamErrorBody: string
 }
 
-export interface FailureWire {
+interface FailureWire {
   requestId: string
   timestamp: number
   connectionId: string
@@ -488,7 +488,7 @@ function capSizedField(
   }
 }
 
-export interface DumpedIncomingRequest {
+interface DumpedIncomingRequest {
   timestamp: number
   requestId: string
   method?: string
@@ -499,7 +499,7 @@ export interface DumpedIncomingRequest {
   truncated?: boolean
 }
 
-export interface DumpedUpstreamRequest {
+interface DumpedUpstreamRequest {
   timestamp: number
   connectionId?: string
   model?: string
@@ -513,7 +513,7 @@ export interface DumpedUpstreamRequest {
   errorBodyTruncated?: boolean
 }
 
-export interface DumpedRequestBodies {
+interface DumpedRequestBodies {
   incoming?: DumpedIncomingRequest
   upstream?: DumpedUpstreamRequest
 }

@@ -17,7 +17,7 @@ import { safeOrigin } from "~/lib/utils"
 const startedAt = Date.now()
 
 /** A path as it may leave this machine: the home directory as `~`. */
-export function shareablePath(value: string): string {
+function shareablePath(value: string): string {
   const home = os.homedir()
   return home && value.startsWith(home) ? `~${value.slice(home.length)}` : value
 }

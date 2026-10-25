@@ -6,7 +6,7 @@ import { logger } from "~/lib/logger"
  * the OAuth refresh lock leaves it behind for every later run to fail on
  * ("another Claude Code process is refreshing it").
  */
-export const CLAUDE_EXIT_GRACE_MS = 5_000
+const CLAUDE_EXIT_GRACE_MS = 5_000
 
 /**
  * Asks the CLI to exit, then kills it if it has not within `graceMs`.

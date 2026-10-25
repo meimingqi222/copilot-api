@@ -7,7 +7,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks"
 
-export interface LogContext {
+interface LogContext {
   /** Request id, as in `X-Request-Id` and the request log. */
   req?: string
   /** Connection the request was routed to, once dispatch chose one. */

@@ -31,9 +31,9 @@ export const BUNDLE_SECTIONS = [
   "systemLogs",
   "requests",
 ] as const
-export type BundleSection = (typeof BUNDLE_SECTIONS)[number]
+type BundleSection = (typeof BUNDLE_SECTIONS)[number]
 
-export interface BundleOptions {
+interface BundleOptions {
   /** How far back logs go, in milliseconds. */
   sinceMs: number
   sections?: ReadonlyArray<BundleSection>
@@ -132,7 +132,7 @@ function scrub(value: unknown): { value: unknown; masked: number } {
   return { value: walk(value, true), masked }
 }
 
-export interface DiagnosticBundle {
+interface DiagnosticBundle {
   manifest: {
     tool: "copilot-api"
     generatedAt: string
