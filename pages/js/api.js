@@ -451,6 +451,9 @@ const API = {
       return API.request(`/logs${query ? "?" + query : ""}`)
     },
     getRecent: (limit = 10) => API.request(`/logs?limit=${limit}`),
+    /** Bodies are fetched on demand; the log list never carries them. */
+    bodies: (requestId) =>
+      API.request(`/logs/${encodeURIComponent(requestId)}/bodies`),
     exportLogs: async (filters = {}) => {
       const params = new URLSearchParams()
       if (filters.level) params.set("level", filters.level)

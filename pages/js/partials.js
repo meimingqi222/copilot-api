@@ -8,6 +8,8 @@
  * 加载失败时显示静态错误(不依赖 i18n/Alpine)并可一键重试。
  */
 async function loadPartial(el) {
+  if (!el || el.dataset.partialLoading === "1") return
+  el.dataset.partialLoading = "1"
   const url = `/admin/static/${el.dataset.partial}`
   try {
     const response = await fetch(url, { credentials: "same-origin" })
@@ -18,11 +20,17 @@ async function loadPartial(el) {
     refreshAdminIcons(el)
   } catch (error) {
     console.error(`Failed to load partial ${url}:`, error)
+    // Retry in place: a full page reload used to be the only way out, and it
+    // threw away the user's current view and filters.
     el.innerHTML =
       '<div class="empty-state py-20">'
-      + '<p class="text-body text-[var(--apple-text-secondary)]">Failed to load this section. Please reload. / 该板块加载失败,请刷新重试。</p>'
-      + '<button class="btn btn-secondary mt-4" onclick="location.reload()">Reload / 刷新</button>'
-      + "</div>"
+      + '<p class="text-body text-[var(--apple-text-secondary)]">Failed to load this section. / 该板块加载失败。</p>'
+      + '<div class="flex items-center justify-center gap-2 mt-4">'
+      + '<button class="btn btn-primary" onclick="loadPartial(this.closest(\'[data-partial]\'))">Retry / 重试</button>'
+      + '<button class="btn btn-secondary" onclick="location.reload()">Reload / 刷新</button>'
+      + "</div></div>"
+  } finally {
+    el.dataset.partialLoading = ""
   }
 }
 

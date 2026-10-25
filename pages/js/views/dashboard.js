@@ -3,11 +3,14 @@ function dashboardView() {
     ...ViewHelpers,
     loading: false,
     loadInFlight: false,
+    reloadRequested: false,
     autoRefresh: true,
     lastRefresh: null,
     refreshInterval: null,
+    visibilityHandler: null,
     chartRenderToken: 0,
     trafficChart: null,
+    trafficChartTrend: [],
 
     data: {
       activeAccounts: 0,
@@ -81,21 +84,33 @@ function dashboardView() {
     startAutoRefresh() {
       this.stopAutoRefresh()
       if (!this.autoRefresh) return
-      // 每 15 秒静默轮询一次
+      // 每 15 秒静默轮询一次；标签页在后台时不取数，回到前台立即补一次。
       this.refreshInterval = globalThis.setInterval(() => {
         const app = document.querySelector("[x-data^=adminApp]")
         const isCurrent =
           app ? Alpine.$data(app).currentView === "dashboard" : true
-        if (isCurrent && this.autoRefresh) {
+        if (isCurrent && this.autoRefresh && !document.hidden) {
           this.load(true)
         }
       }, 15000)
+      this.visibilityHandler = () => {
+        if (document.hidden) return
+        const app = document.querySelector("[x-data^=adminApp]")
+        const isCurrent =
+          app ? Alpine.$data(app).currentView === "dashboard" : true
+        if (isCurrent && this.autoRefresh) this.load(true)
+      }
+      document.addEventListener("visibilitychange", this.visibilityHandler)
     },
 
     stopAutoRefresh() {
       if (this.refreshInterval) {
         globalThis.clearInterval(this.refreshInterval)
         this.refreshInterval = null
+      }
+      if (this.visibilityHandler) {
+        document.removeEventListener("visibilitychange", this.visibilityHandler)
+        this.visibilityHandler = null
       }
     },
 
@@ -112,6 +127,26 @@ function dashboardView() {
       return (this.data.alerts || []).some((a) => a.actionable)
     },
 
+    /**
+     * The API ships English text plus i18n keys; render the keys so the
+     * dashboard speaks the reader's language instead of the server's.
+     */
+    alertTitle(alert) {
+      if (alert?.titleKey) return this.t(alert.titleKey, alert.messageParams)
+      return alert?.title || ""
+    },
+
+    alertMessage(alert) {
+      if (alert?.messageKey)
+        return this.t(alert.messageKey, alert.messageParams)
+      return alert?.message || ""
+    },
+
+    fleetStatusText(item) {
+      if (item?.statusKey) return this.t(item.statusKey, item.statusParams)
+      return item?.statusMessage || ""
+    },
+
     actionableAlertsCount() {
       return (this.data.alerts || []).filter((a) => a.actionable).length
     },
@@ -122,7 +157,12 @@ function dashboardView() {
     },
 
     async load(silent = false) {
-      if (this.loadInFlight) return
+      if (this.loadInFlight) {
+        // A manual refresh (or a view return) must not vanish behind the poll
+        // that happened to be in flight; replay it once the current one lands.
+        if (!silent) this.reloadRequested = true
+        return
+      }
       this.loadInFlight = true
       if (!silent) this.loading = true
       try {
@@ -164,6 +204,10 @@ function dashboardView() {
       } finally {
         this.loadInFlight = false
         if (!silent) this.loading = false
+        if (this.reloadRequested) {
+          this.reloadRequested = false
+          this.load(true)
+        }
       }
     },
 
@@ -207,6 +251,17 @@ function dashboardView() {
 
         const labels = trend.map((d) => d.hour)
         const reqData = trend.map((d) => d.requests)
+        this.trafficChartTrend = trend
+
+        // Reuse the live chart: a full destroy/recreate on every 15s poll
+        // replayed the entrance animation and threw away the hover state.
+        if (this.trafficChart && this.trafficChart.canvas === canvas) {
+          this.trafficChart.data.labels = labels
+          const dataset = this.trafficChart.data.datasets[0]
+          if (dataset) dataset.data = reqData
+          this.trafficChart.update("none")
+          return
+        }
 
         this.trafficChart = new Chart(ctx, {
           type: "bar",
@@ -242,7 +297,7 @@ function dashboardView() {
                 callbacks: {
                   label: (context) => {
                     const idx = context.dataIndex
-                    const item = trend[idx]
+                    const item = this.trafficChartTrend[idx]
                     const reqStr = `${I18n.t("dashboard.requestsToday")}: ${context.raw}`
                     if (item && item.totalTokens > 0) {
                       return [

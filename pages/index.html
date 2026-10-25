@@ -13,26 +13,74 @@
       href="/admin/static/css/routing-groups.css?v=0.7.3"
     />
     <link rel="stylesheet" href="/admin/static/css/tailwind.min.css?v=0.7.9" />
-    <!-- CDN 版本已锁定:升级前先在离线/测试环境验证,避免上游 breaking change 直接白屏 -->
-    <script
-      defer
-      src="https://cdn.jsdelivr.net/npm/alpinejs@3.17.1/dist/cdn.min.js"
-    ></script>
-    <script src="https://unpkg.com/lucide@1.41.0/dist/umd/lucide.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <!--
+      The three vendor bundles are served by this instance (pages/vendor), not a
+      third-party CDN: an offline or CDN-blocked install still gets a working
+      admin UI. Upgrading means replacing the file and bumping its ?v=.
+    -->
+    <script defer src="/admin/static/vendor/lucide.min.js?v=1.41.0"></script>
+    <script defer src="/admin/static/vendor/chart.umd.min.js?v=4.4.1"></script>
     <!-- Request list transitions; routing packets use native SVG motion. -->
     <script type="module">
-      import autoAnimate from "https://cdn.jsdelivr.net/npm/@formkit/auto-animate@0.8.2/index.min.mjs"
+      import autoAnimate from "/admin/static/vendor/auto-animate.min.js?v=0.8.2"
       globalThis.autoAnimate = autoAnimate
     </script>
-    <script src="/admin/static/js/i18n.js?v=0.7.28"></script>
-    <script src="/admin/static/js/api.js?v=0.7.4"></script>
+    <script defer src="/admin/static/vendor/alpine.min.js?v=3.17.1"></script>
+    <script>
+      // If Alpine never boots (missing bundle, syntax error, blocked script),
+      // x-cloak would hide every view forever. Surface a static error instead.
+      ;(() => {
+        const FAILSAFE_MS = 10000
+        globalThis.__adminBootTimer = setTimeout(() => {
+          if (globalThis.__adminBooted) return
+          const shell = document.getElementById("admin-shell")
+          if (shell) shell.style.display = "none"
+          document.body.removeAttribute("x-cloak")
+          const panel = document.getElementById("boot-failure")
+          if (panel) panel.hidden = false
+        }, FAILSAFE_MS)
+      })()
+    </script>
+    <script src="/admin/static/js/i18n.js?v=0.7.31"></script>
+    <script src="/admin/static/js/api.js?v=0.7.5"></script>
     <script src="/admin/static/js/admin-icons.js?v=0.7.0"></script>
-    <script src="/admin/static/js/view-helpers.js?v=0.7.5"></script>
+    <script src="/admin/static/js/view-helpers.js?v=0.7.6"></script>
     <script src="/admin/static/js/usage-auto-refresh.js?v=0.7.0"></script>
-    <script src="/admin/static/js/quota-display.js?v=0.7.5"></script>
+    <script src="/admin/static/js/quota-display.js?v=0.7.6"></script>
   </head>
   <body x-data="adminApp()" x-cloak>
+    <div
+      id="boot-failure"
+      hidden
+      style="
+        max-width: 32rem;
+        margin: 18vh auto;
+        padding: 1.5rem;
+        font:
+          14px/1.6 -apple-system,
+          BlinkMacSystemFont,
+          &quot;Segoe UI&quot;,
+          sans-serif;
+        color: #1d1d1f;
+        background: #fff;
+        border: 1px solid #e5e5e7;
+        border-radius: 14px;
+      "
+    >
+      <h1 style="margin: 0 0 0.5rem; font-size: 17px">
+        Admin UI failed to start / 管理界面启动失败
+      </h1>
+      <p style="margin: 0 0 1rem; color: #6e6e73">
+        Check the browser console for the failing script, then reload. Serving
+        the bundles locally means this is no longer a CDN outage.
+        <br />
+        请检查浏览器控制台里的报错后刷新；内置前端资源已本地化，不再是 CDN
+        故障。
+      </p>
+      <button onclick="location.reload()" style="padding: 0.4rem 0.9rem">
+        Reload / 刷新
+      </button>
+    </div>
     <!-- Toast Notifications (Highest Z-Index to stay above all modals) -->
     <div
       class="toast-container fixed top-6 right-6 z-[99999] space-y-3 pointer-events-none"
@@ -53,7 +101,7 @@
       </template>
     </div>
 
-    <div class="flex h-screen" x-show="initialized">
+    <div id="admin-shell" class="flex h-screen" x-show="initialized">
       <!-- Mobile Header -->
       <div class="mobile-header">
         <button
@@ -291,8 +339,8 @@
                         ></span>
                         <span
                           class="text-[var(--apple-text-tertiary)] truncate"
-                          :title="alert.message"
-                          x-text="alert.message"
+                          :title="alertMessage(alert)"
+                          x-text="alertMessage(alert)"
                         ></span>
                       </div>
 
@@ -342,7 +390,7 @@
                 </div>
                 <span
                   class="text-[var(--apple-text-secondary)]"
-                  x-text="(data.fleet?.healthy || 0) + ' / ' + (data.fleet?.total || 0) + ' 在线'"
+                  x-text="t('dashboard.fleet.online', { healthy: data.fleet?.healthy || 0, total: data.fleet?.total || 0 })"
                 ></span>
               </div>
 
@@ -474,10 +522,11 @@
                   <div
                     class="flex items-center justify-between pt-3 mt-3 border-t border-[var(--apple-gray-5)] text-xs text-[var(--apple-text-secondary)]"
                   >
-                    <span>首字响应体验</span>
-                    <span class="font-medium text-[var(--apple-purple)]"
-                      >性能分析 &rarr;</span
-                    >
+                    <span x-text="t('dashboard.kpi.ttftHint')"></span>
+                    <span
+                      class="font-medium text-[var(--apple-purple)]"
+                      x-text="t('dashboard.kpi.performanceLink') + ' →'"
+                    ></span>
                   </div>
                 </a>
 
@@ -564,7 +613,7 @@
                       ></h3>
                       <span
                         class="text-xs text-[var(--apple-text-secondary)]"
-                        x-text="(data.topModels?.length || 0) + ' 个活跃'"
+                        x-text="t('dashboard.topModels.active', { count: data.topModels?.length || 0 })"
                       ></span>
                     </div>
                     <p
@@ -588,13 +637,8 @@
                             ></span>
                             <span
                               class="text-[var(--apple-text-secondary)] font-mono"
-                            >
-                              <span
-                                class="font-semibold text-[var(--apple-text)]"
-                                x-text="item.requests"
-                              ></span>
-                              次 (<span x-text="item.percentage + '%'"></span>)
-                            </span>
+                              x-text="t('dashboard.topModels.requests', { count: item.requests, percent: item.percentage })"
+                            ></span>
                           </div>
                           <div
                             class="w-full h-1.5 rounded-full bg-[var(--apple-gray-5)] overflow-hidden"
@@ -638,7 +682,8 @@
                       href="#model-aliases"
                       class="text-xs text-[var(--apple-blue)] hover:underline font-medium"
                     >
-                      管理模型路由与别名 &rarr;
+                      <span x-text="t('dashboard.modelsRouting')"></span>
+                      &rarr;
                     </a>
                   </div>
                 </div>
@@ -704,15 +749,17 @@
                               class="flex items-center gap-2 text-xs text-[var(--apple-text-secondary)] mt-0.5"
                             >
                               <span
-                                x-show="item.statusMessage"
+                                x-show="fleetStatusText(item)"
                                 class="text-[var(--apple-orange)]"
-                                x-text="item.statusMessage"
+                                x-text="fleetStatusText(item)"
                               ></span>
                               <span
-                                x-show="!item.statusMessage && item.quotaInfo && item.quotaInfo.chatTotal"
+                                x-show="!fleetStatusText(item) && item.quotaInfo && item.quotaInfo.chatTotal"
                                 class="text-xs"
                               >
-                                配额:
+                                <span
+                                  x-text="t('dashboard.fleet.quota') + ':'"
+                                ></span>
                                 <span
                                   class="font-medium text-[var(--apple-text)]"
                                   x-text="item.quotaInfo?.chatRemaining"
@@ -721,16 +768,20 @@
                                 <span x-text="item.quotaInfo?.chatTotal"></span>
                               </span>
                               <span
-                                x-show="!item.statusMessage && item.quotaInfo && item.quotaInfo.unlimited"
+                                x-show="!fleetStatusText(item) && item.quotaInfo && item.quotaInfo.unlimited"
                                 class="text-[var(--apple-green)] font-medium"
                               >
-                                无限配额
+                                <span
+                                  x-text="t('dashboard.fleet.unlimited')"
+                                ></span>
                               </span>
                               <span
-                                x-show="!item.statusMessage && (!item.quotaInfo || (!item.quotaInfo.chatTotal && !item.quotaInfo.unlimited))"
+                                x-show="!fleetStatusText(item) && (!item.quotaInfo || (!item.quotaInfo.chatTotal && !item.quotaInfo.unlimited))"
                                 class="text-[var(--apple-text-tertiary)]"
                               >
-                                标准按量 / 正常
+                                <span
+                                  x-text="t('dashboard.fleet.standard')"
+                                ></span>
                               </span>
                             </div>
                           </div>
@@ -772,7 +823,7 @@
                     <p
                       class="text-xs text-[var(--apple-text-secondary)] text-center"
                     >
-                      暂无配置的上游连接
+                      <span x-text="t('dashboard.fleet.empty')"></span>
                     </p>
                   </div>
                 </div>
@@ -844,7 +895,9 @@
                         >
                           <div class="flex items-center gap-3">
                             <span x-show="trace.latencyMs !== undefined">
-                              耗时:
+                              <span
+                                x-text="t('dashboard.trace.latency') + ':'"
+                              ></span>
                               <span
                                 class="font-medium text-[var(--apple-text)]"
                                 x-text="trace.latencyMs + 'ms'"
@@ -871,7 +924,9 @@
                             class="px-1 py-0.2 rounded text-[9px] bg-[var(--apple-purple)]/10 text-[var(--apple-purple)]"
                             x-show="trace.isTranslated"
                           >
-                            协议转译
+                            <span
+                              x-text="t('dashboard.trace.translated')"
+                            ></span>
                           </span>
                         </div>
                       </a>
@@ -1642,9 +1697,11 @@
                               x-text="t(account.enabled ? 'accounts.status.enabled' : 'accounts.status.disabled')"
                             ></span>
                             <span
-                              x-show="account.isExhausted"
-                              class="badge badge-danger"
-                              x-text="t('accounts.status.exhausted')"
+                              x-show="availabilityBadge(account)"
+                              class="badge"
+                              :class="availabilityBadge(account)?.className"
+                              :title="availabilityBadge(account)?.text"
+                              x-text="availabilityBadge(account)?.text"
                             ></span>
                             <span
                               class="badge"
@@ -2259,10 +2316,14 @@
                       @change="setCodebuddyVariant($event.target.value)"
                       :disabled="isReauthFlow()"
                     >
-                      <option value="codebuddy-cn">
-                        国内版 (copilot.tencent.com)
-                      </option>
-                      <option value="codebuddy">国际版 (workbuddy.ai)</option>
+                      <option
+                        value="codebuddy-cn"
+                        x-text="t('accounts.provider.codebuddy.variant.cnOption')"
+                      ></option>
+                      <option
+                        value="codebuddy"
+                        x-text="t('accounts.provider.codebuddy.variant.intlOption')"
+                      ></option>
                     </select>
                     <p
                       class="text-caption text-[var(--apple-text-secondary)] mt-1"
@@ -3762,7 +3823,7 @@
                         <input
                           type="text"
                           class="form-input rg-input-sm"
-                          placeholder="provider/model，例如 openai/gpt-4o-mini"
+                          :placeholder="t('routingGroups.classifierModelPlaceholder')"
                           :value="classifierDisplayValue"
                           @input="setClassifierFromInput($event.target.value)"
                         />
@@ -4881,7 +4942,7 @@
                                 <div class="flex items-center gap-1.5">
                                   <div
                                     class="relative flex-1"
-                                    title="缓存读取 ($/1M)"
+                                    :title="t('pricing.cacheReadTitle')"
                                   >
                                     <span
                                       class="absolute left-1.5 top-1/2 -translate-y-1/2 text-[10px] text-[var(--apple-text-tertiary)] pointer-events-none"
@@ -4902,7 +4963,7 @@
                                   >
                                   <div
                                     class="relative flex-1"
-                                    title="缓存写入 ($/1M)"
+                                    :title="t('pricing.cacheWriteTitle')"
                                   >
                                     <span
                                       class="absolute left-1.5 top-1/2 -translate-y-1/2 text-[10px] text-[var(--apple-text-tertiary)] pointer-events-none"
@@ -5321,6 +5382,19 @@
               </div>
             </header>
 
+            <div
+              x-show="loadError"
+              class="mb-4 rounded-xl border border-[var(--apple-red)]/30 bg-[var(--apple-red)]/5 px-3 py-2 text-xs text-[var(--apple-red)] flex items-center justify-between gap-2"
+            >
+              <span x-text="t('quota.loadError')"></span>
+              <button
+                type="button"
+                class="btn btn-secondary btn-small text-xs"
+                @click="load()"
+                x-text="t('refresh')"
+              ></button>
+            </div>
+
             <div x-show="loading" class="flex justify-center py-20">
               <div
                 class="animate-spin h-10 w-10 border-3 border-[var(--apple-blue)] border-t-transparent rounded-full"
@@ -5428,9 +5502,11 @@
                               ></span>
                             </span>
                             <span
-                              x-show="account.isExhausted"
-                              class="quota-status-pill bg-[rgba(255,59,48,0.12)] text-[#c41c14]"
-                              x-text="t('accounts.status.exhausted')"
+                              x-show="availabilityBadge(account)"
+                              class="quota-status-pill"
+                              :class="account.availabilityReason === 'cooldown' ? 'bg-[rgba(255,149,0,0.14)] text-[#9a5b00]' : 'bg-[rgba(255,59,48,0.12)] text-[#c41c14]'"
+                              :title="availabilityBadge(account)?.text"
+                              x-text="availabilityBadge(account)?.text"
                             ></span>
                             <span
                               x-show="getCodexPlanSummary(account)"
@@ -5743,10 +5819,10 @@
                             <div class="flex items-center gap-1.5">
                               <span
                                 class="w-1.5 h-1.5 rounded-full shrink-0"
-                                :class="account.isExhausted ? 'bg-[var(--apple-red)]' : 'bg-[var(--apple-green)]'"
+                                :class="account.availabilityReason === 'quota' ? 'bg-[var(--apple-red)]' : account.availabilityReason === 'cooldown' ? 'bg-[var(--apple-orange)]' : 'bg-[var(--apple-green)]'"
                               ></span>
                               <span
-                                x-text="account.isExhausted ? t('accounts.status.exhausted') : t('quota.status.synced')"
+                                x-text="availabilityBadge(account)?.text || t('quota.status.synced')"
                               ></span>
                             </div>
                             <span
@@ -7246,10 +7322,16 @@
                 ></div>
 
                 <div x-show="selected">
-                  <h3
-                    class="text-title-2 mb-3"
-                    x-text="t('trace.timeline')"
-                  ></h3>
+                  <div class="flex items-start justify-between gap-2 mb-3">
+                    <h3 class="text-title-2" x-text="t('trace.timeline')"></h3>
+                    <a
+                      href="#logs"
+                      class="text-xs text-[var(--apple-blue)] hover:underline font-medium whitespace-nowrap"
+                      x-show="selected?.requestId"
+                      @click="globalThis.__inspectRequestId = selected.requestId; $dispatch('admin:inspect-request', selected.requestId)"
+                      x-text="t('trace.openRequestLog') + ' →'"
+                    ></a>
+                  </div>
 
                   <section
                     class="tr-tier-detail"
@@ -7632,7 +7714,7 @@
                       <tr
                         class="border-b border-[var(--apple-gray-5)] last:border-0 hover:bg-[var(--apple-bg-secondary)] cursor-pointer"
                         :title="log.error || log.errorSnippet || ''"
-                        @click="selectedLog = selectedLog?.requestId === log.requestId ? null : log"
+                        @click="selectLog(log)"
                       >
                         <td
                           class="p-3 text-[var(--apple-text-secondary)] text-xs"
@@ -7773,6 +7855,110 @@
                   class="overflow-auto text-xs bg-[var(--apple-bg-secondary)] p-3 rounded max-h-80"
                   x-text="formatJson(selectedLog?.attempts || [])"
                 ></pre>
+                <div class="mt-4" x-show="selectedLog?.requestId">
+                  <div class="flex items-center justify-between gap-3 mb-2">
+                    <div
+                      class="font-medium"
+                      x-text="t('logs.bodies.title')"
+                    ></div>
+                    <div class="flex gap-2">
+                      <button
+                        type="button"
+                        class="btn btn-secondary btn-small"
+                        x-show="!bodies && !bodiesLoading"
+                        @click="loadBodies()"
+                        x-text="t('logs.bodies.load')"
+                      ></button>
+                      <button
+                        type="button"
+                        class="btn btn-secondary btn-small"
+                        x-show="bodies"
+                        :disabled="bodiesLoading"
+                        @click="loadBodies()"
+                        x-text="t('logs.bodies.reload')"
+                      ></button>
+                      <button
+                        type="button"
+                        class="btn btn-secondary btn-small"
+                        x-show="bodies"
+                        @click="downloadBodies()"
+                        x-text="t('logs.bodies.download')"
+                      ></button>
+                    </div>
+                  </div>
+                  <p
+                    x-show="bodiesLoading"
+                    class="text-xs text-[var(--apple-text-secondary)]"
+                    x-text="t('loading')"
+                  ></p>
+                  <p
+                    x-show="bodiesError"
+                    class="text-xs text-[var(--apple-red)]"
+                    x-text="bodiesError"
+                  ></p>
+                  <p
+                    x-show="bodies && !bodies.available"
+                    class="text-xs text-[var(--apple-text-secondary)]"
+                    x-text="t('logs.bodies.empty')"
+                  ></p>
+                  <template x-if="bodies?.available">
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 text-sm">
+                      <div x-show="bodies.request">
+                        <div class="flex items-center justify-between">
+                          <div
+                            class="font-medium mb-1"
+                            x-text="t('logs.bodies.request')"
+                          ></div>
+                          <span
+                            class="text-[11px] text-[var(--apple-text-tertiary)]"
+                            x-text="bodyMeta(bodies.request)"
+                          ></span>
+                        </div>
+                        <pre
+                          class="overflow-auto text-xs bg-[var(--apple-bg-secondary)] p-3 rounded max-h-80"
+                          x-text="bodies.request?.body"
+                        ></pre>
+                      </div>
+                      <div x-show="bodies.upstreamRequest">
+                        <div class="flex items-center justify-between">
+                          <div
+                            class="font-medium mb-1"
+                            x-text="t('logs.bodies.upstreamRequest')"
+                          ></div>
+                          <span
+                            class="text-[11px] text-[var(--apple-text-tertiary)]"
+                            x-text="bodyMeta(bodies.upstreamRequest)"
+                          ></span>
+                        </div>
+                        <pre
+                          class="overflow-auto text-xs bg-[var(--apple-bg-secondary)] p-3 rounded max-h-80"
+                          x-text="bodies.upstreamRequest?.body"
+                        ></pre>
+                      </div>
+                      <div x-show="bodies.response">
+                        <div class="flex items-center justify-between">
+                          <div
+                            class="font-medium mb-1"
+                            x-text="t('logs.bodies.response')"
+                          ></div>
+                          <span
+                            class="text-[11px] text-[var(--apple-text-tertiary)]"
+                            x-text="bodyMeta(bodies.response)"
+                          ></span>
+                        </div>
+                        <pre
+                          class="overflow-auto text-xs bg-[var(--apple-bg-secondary)] p-3 rounded max-h-80"
+                          x-text="bodies.response?.body"
+                        ></pre>
+                      </div>
+                    </div>
+                  </template>
+                  <p
+                    x-show="bodies && !bodies.dumpEnabled"
+                    class="text-[11px] text-[var(--apple-text-tertiary)] mt-2"
+                    x-text="t('logs.bodies.disabledHint')"
+                  ></p>
+                </div>
               </div>
 
               <!-- Pagination -->
@@ -8357,22 +8543,22 @@
       </main>
     </div>
 
-    <script src="/admin/static/js/views/app.js?v=0.7.6"></script>
+    <script src="/admin/static/js/views/app.js?v=0.7.7"></script>
     <script src="/admin/static/js/views/system-config.js?v=0.7.3"></script>
     <script src="/admin/static/js/views/redaction.js?v=0.8.9"></script>
-    <script src="/admin/static/js/views/dashboard.js?v=0.7.3"></script>
+    <script src="/admin/static/js/views/dashboard.js?v=0.7.4"></script>
     <script src="/admin/static/js/views/users.js?v=0.7.3"></script>
     <script src="/admin/static/js/views/accounts.js?v=0.7.4"></script>
     <script src="/admin/static/js/views/connections.js?v=0.7.9"></script>
     <script src="/admin/static/js/views/model-aliases.js?v=0.7.3"></script>
     <script src="/admin/static/js/views/routing-groups.js?v=0.7.7"></script>
     <script src="/admin/static/js/views/usage.js?v=0.7.4"></script>
-    <script src="/admin/static/js/views/quotas.js?v=0.7.5"></script>
+    <script src="/admin/static/js/views/quotas.js?v=0.7.6"></script>
     <script src="/admin/static/js/views/performance.js?v=0.7.10"></script>
     <script src="/admin/static/js/views/traces.js?v=0.7.12"></script>
     <script src="/admin/static/js/views/guard.js?v=0.7.3"></script>
-    <script src="/admin/static/js/views/logs.js?v=0.7.4"></script>
+    <script src="/admin/static/js/views/logs.js?v=0.7.6"></script>
     <script src="/admin/static/js/views/system-logs.js?v=0.1.0"></script>
-    <script src="/admin/static/js/partials.js?v=0.7.3"></script>
+    <script src="/admin/static/js/partials.js?v=0.7.4"></script>
   </body>
 </html>

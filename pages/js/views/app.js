@@ -1,22 +1,12 @@
 function adminApp() {
   return {
     currentView: "dashboard",
-    validViews: [
-      "accounts",
-      "connections",
-      "model-aliases",
-      "routing-groups",
-      "dashboard",
-      "guard",
-      "logs",
-      "performance",
-      "quotas",
-      "traces",
-      "usage",
-      "users",
-      "redaction",
-      "system-config",
-    ],
+    /** Derived so a new view only needs its nav entry (one source of truth). */
+    get validViews() {
+      return this.navGroups.flatMap((group) =>
+        group.items.map((item) => item.id),
+      )
+    },
     initialized: false,
     visitedViews: {},
     quotaDisplayMode: "remaining",
@@ -60,6 +50,9 @@ function adminApp() {
       await this.loadQuotaDisplayMode()
       this.visitedViews[this.currentView] = true
       this.initialized = true
+      // The x-cloak failsafe in index.html stops waiting for this signal.
+      globalThis.__adminBooted = true
+      clearTimeout(globalThis.__adminBootTimer)
       refreshAdminIcons(this.$el)
       // Refresh quotas in background after login
       this.refreshQuotaInBackground()

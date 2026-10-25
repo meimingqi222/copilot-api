@@ -27,6 +27,14 @@ interface Display {
     details: Record<string, unknown>,
     t: (key: string) => string,
   ) => Array<Row & { hideBar?: boolean; remaining?: number }>
+  buildMinimaxRows: (
+    details: Record<string, unknown>,
+    t: (key: string, params?: Record<string, unknown>) => string,
+  ) => Array<Row & { valuePercent?: number }>
+  buildXaiRows: (
+    details: Record<string, unknown>,
+    t: (key: string, params?: Record<string, unknown>) => string,
+  ) => Array<Row>
   formatSummary: (
     account: Record<string, unknown>,
     t: (key: string, params?: Record<string, unknown>) => string,
@@ -162,4 +170,48 @@ test("LobsterAI quota shows the wallet balance, not a free-window percent", () =
       : key,
   )
   expect(summary).toBe("584.83 credits")
+})
+
+test("MiniMax boosted weekly windows keep their real >100% text while the bar clamps", () => {
+  const rows = display.buildMinimaxRows(
+    {
+      minimax: {
+        windows: [
+          {
+            key: "weekly",
+            remainingPercent: 130,
+            remaining: 1300,
+            total: 1000,
+          },
+        ],
+      },
+    },
+    translate,
+  )
+  const remaining = display.applyDisplayMode(rows, "remaining", translate)
+  expect(remaining[0]?.valueText).toBe("剩余 130%")
+  expect(remaining[0]?.displayPercent).toBe(100)
+  const used = display.applyDisplayMode(rows, "used", translate)
+  expect(used[0]?.valueText).toBe("已用 0%")
+})
+
+test("xAI credit rows follow the global Used/Remaining mode", () => {
+  const rows = display.buildXaiRows(
+    {
+      config: {
+        credit_usage_percent: 40,
+        productUsage: [{ product: "api", usage_percent: 25 }],
+      },
+    },
+    translate,
+  )
+  const remaining = display.applyDisplayMode(rows, "remaining", translate)
+  expect(remaining.map((row) => row.valueText)).toEqual([
+    "剩余 60%",
+    "剩余 75%",
+  ])
+  const used = display.applyDisplayMode(rows, "used", translate)
+  expect(used.map((row) => row.valueText)).toEqual(["已用 40%", "已用 25%"])
+  // No leftover hard-coded used figure in remaining mode.
+  expect(remaining.every((row) => !row.valueText.includes("已用"))).toBe(true)
 })

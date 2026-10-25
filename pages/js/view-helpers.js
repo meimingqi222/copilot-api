@@ -154,6 +154,34 @@ const ViewHelpers = {
     return I18n.t(key, params)
   },
 
+  /**
+   * Account availability badge. A rate-limit cooldown and a quota exhaustion
+   * are different states: cooldown lifts by itself and shows how long is left,
+   * only quota exhaustion is a terminal red state.
+   */
+  availabilityBadge(account) {
+    const reason = account?.availabilityReason
+    const seconds = Number(account?.retryAfterSeconds || 0)
+    if (reason === "quota") {
+      return {
+        text: this.t("accounts.status.exhausted"),
+        className: "badge badge-danger",
+        dot: "bg-[var(--apple-red)]",
+      }
+    }
+    if (reason === "cooldown") {
+      return {
+        text:
+          seconds > 0 ?
+            this.t("accounts.status.cooldownWithSeconds", { seconds })
+          : this.t("accounts.status.cooldown"),
+        className: "badge badge-warning",
+        dot: "bg-[var(--apple-orange)]",
+      }
+    }
+    return null
+  },
+
   showToast(msg, type) {
     const app = document.querySelector("[x-data^=adminApp]")
     if (app) Alpine.$data(app).showToast(msg, type)

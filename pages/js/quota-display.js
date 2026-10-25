@@ -20,6 +20,17 @@ const QuotaDisplay = {
     return mode === "used" ? 100 - percent : percent
   },
 
+  /**
+   * Text percentage can exceed 100 (MiniMax's weekly window is boosted past its
+   * base allowance); only the bar is clamped. Rewriting that honest number to
+   * "100% remaining" hid the real headroom.
+   */
+  displayTextPercent(remaining, mode = "remaining") {
+    if (typeof remaining !== "number" || !Number.isFinite(remaining))
+      return undefined
+    return mode === "used" ? Math.max(0, 100 - remaining) : remaining
+  },
+
   applyDisplayMode(rows, mode, t) {
     const label = t(
       mode === "used" ? "system.quotaMode.used" : "system.quotaMode.remaining",
@@ -27,7 +38,11 @@ const QuotaDisplay = {
     return rows.map((row) => {
       const displayPercent = this.displayPercent(row.remainingPercent, mode)
       if (displayPercent === undefined) return row
-      const percentText = `${label} ${Math.round(displayPercent)}%`
+      const textPercent = this.displayTextPercent(
+        row.valuePercent ?? row.remainingPercent,
+        mode,
+      )
+      const percentText = `${label} ${Math.round(textPercent ?? displayPercent)}%`
       const next = { ...row, displayPercent, percentText }
       for (const key of ["valueText", "amountText"]) {
         if (typeof row[key] === "string" && /^\d+(?:\.\d+)?%$/.test(row[key])) {
@@ -715,6 +730,7 @@ const QuotaDisplay = {
         label: t(`quota.oauth.minimax.${window.key ?? "interval"}`),
         remainingPercent:
           unlimited ? undefined : Math.max(0, Math.min(100, percent ?? 0)),
+        valuePercent: unlimited ? undefined : percent,
         remaining,
         total,
         valueText:
@@ -930,10 +946,10 @@ const QuotaDisplay = {
       rows.push({
         id: `xai-product-${productKey.replaceAll(/[^a-z0-9]+/g, "-")}`,
         label,
-        valueText: t("quota.oauth.xai.usedPercent", {
-          percent: clampedUsed.toFixed(1),
-        }),
-        amountText: `${Math.round(remainingPercent)}%`,
+        // Keep the row in the same remaining-percentage vocabulary as every
+        // other provider; the global Used/Remaining toggle then applies here
+        // too instead of leaving a hard-coded "used" figure on screen.
+        valueText: `${(100 - clampedUsed).toFixed(1)}%`,
         remainingPercent,
       })
     }
@@ -1004,10 +1020,9 @@ const QuotaDisplay = {
       rows.push({
         id: "weekly-credits",
         label: t("quota.oauth.xai.weeklyCredits"),
-        valueText: t("quota.oauth.xai.usedPercent", {
-          percent: usedPercent.toFixed(1),
-        }),
-        amountText: `${Math.round(remainingPercent)}%`,
+        // Same remaining-percentage vocabulary as every other row so the
+        // global Used/Remaining toggle rewrites it too.
+        valueText: `${(100 - usedPercent).toFixed(1)}%`,
         remainingPercent,
         resetText: this.formatResetTime(weeklyPeriodEnd, t),
       })

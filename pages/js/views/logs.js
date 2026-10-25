@@ -2,11 +2,17 @@ function logsView() {
   return {
     ...ViewHelpers,
     loading: false,
+    /** Monotonic id of the newest load; stale responses must not overwrite. */
+    loadVersion: 0,
     /** "requests" | "system" | "status"; the last two are systemLogsView's. */
     logTab: "requests",
     entries: [],
     total: 0,
     selectedLog: null,
+    /** Lazily fetched bodies for the selected request (never in the list). */
+    bodies: null,
+    bodiesLoading: false,
+    bodiesError: null,
     autoRefresh: false,
     refreshTimer: null,
     filters: {
@@ -20,6 +26,13 @@ function logsView() {
     },
 
     init() {
+      // A trace row can jump here before this view has ever mounted; it leaves
+      // the request id on globalThis because its event has no listener yet.
+      const pending = globalThis.__inspectRequestId
+      if (pending) {
+        globalThis.__inspectRequestId = undefined
+        this.applyInspectRequest(pending)
+      }
       globalThis.addEventListener("admin:inspect-errors", () => {
         this.filters.outcome = "failed"
         this.filters.level = ""
@@ -31,9 +44,7 @@ function logsView() {
       })
       // From a system log line: the request it was written while serving.
       globalThis.addEventListener("admin:inspect-request", (event) => {
-        this.logTab = "requests"
-        this.filters = { ...this.blankFilters(), requestId: event.detail }
-        this.load()
+        this.applyInspectRequest(event.detail)
       })
       this.$watch("autoRefresh", (enabled) => {
         if (enabled) {
@@ -46,6 +57,12 @@ function logsView() {
         this.stopAutoRefresh()
         if (view === "logs" && this.autoRefresh) this.startAutoRefresh()
       })
+    },
+
+    applyInspectRequest(requestId) {
+      this.logTab = "requests"
+      this.filters = { ...this.blankFilters(), requestId }
+      this.load()
     },
 
     startAutoRefresh() {
@@ -69,9 +86,14 @@ function logsView() {
     },
 
     async load() {
+      const version = ++this.loadVersion
       this.loading = true
       try {
         const data = await API.logs.get(this.filters)
+        // A filter/page change while this response was in flight must win:
+        // applying the older payload left the table and the page counter
+        // describing different queries until the next interaction.
+        if (version !== this.loadVersion) return
         this.entries = data.entries || []
         this.total = data.total || 0
         if (this.selectedLog) {
@@ -79,12 +101,20 @@ function logsView() {
             this.entries.find(
               (entry) => entry.requestId === this.selectedLog.requestId,
             ) ?? null
+          if (!this.selectedLog) {
+            this.bodies = null
+            this.bodiesError = null
+          }
         }
       } catch {
-        this.showToast(I18n.t("error.load"), "error")
+        if (version === this.loadVersion) {
+          this.showToast(I18n.t("error.load"), "error")
+        }
       } finally {
-        this.loading = false
-        this.$nextTick(() => refreshAdminIcons(this.$el))
+        if (version === this.loadVersion) {
+          this.loading = false
+          this.$nextTick(() => refreshAdminIcons(this.$el))
+        }
       }
     },
 
@@ -101,6 +131,56 @@ function logsView() {
       }
     },
 
+    selectLog(log) {
+      if (this.selectedLog?.requestId === log.requestId) {
+        this.selectedLog = null
+        this.bodies = null
+        this.bodiesError = null
+        return
+      }
+      this.selectedLog = log
+      this.bodies = null
+      this.bodiesError = null
+    },
+
+    async loadBodies() {
+      const requestId = this.selectedLog?.requestId
+      if (!requestId || this.bodiesLoading) return
+      this.bodiesLoading = true
+      this.bodiesError = null
+      try {
+        this.bodies = await API.logs.bodies(requestId)
+      } catch (error) {
+        this.bodiesError = error?.message || I18n.t("logs.bodies.failed")
+      } finally {
+        this.bodiesLoading = false
+      }
+    },
+
+    downloadBodies() {
+      if (!this.bodies) return
+      const blob = new Blob([JSON.stringify(this.bodies, null, 2)], {
+        type: "application/json",
+      })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = `request-${this.bodies.requestId}.json`
+      document.body.append(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(url)
+    },
+
+    bodyMeta(section) {
+      if (!section) return ""
+      const bytes = section.bytes ?? section.bodyBytes
+      if (section.truncated) {
+        return this.t("logs.bodies.truncated", { bytes: bytes ?? "?" })
+      }
+      return bytes === undefined ? "" : `${bytes} B`
+    },
+
     clearFilters() {
       this.filters = this.blankFilters()
       this.load()
@@ -108,7 +188,14 @@ function logsView() {
 
     async exportLogs() {
       try {
-        const response = await API.logs.exportLogs(this.filters)
+        // The page size is a view concern; exporting it would silently cap the
+        // download at the current page (the default was 50 rows).
+        const { limit: _limit, offset: _offset, ...filters } = this.filters
+        const exportLimit = 5000
+        const response = await API.logs.exportLogs({
+          ...filters,
+          limit: exportLimit,
+        })
         const blob = await response.blob()
         const disposition = response.headers.get("content-disposition") || ""
         const match = disposition.match(/filename="?([^"]+)"?/)
@@ -121,6 +208,14 @@ function logsView() {
         anchor.click()
         anchor.remove()
         URL.revokeObjectURL(url)
+        const text = await blob.text()
+        const rows = text ? text.split("\n").filter(Boolean).length : 0
+        if (rows >= exportLimit) {
+          this.showToast(
+            I18n.t("logs.exportTruncated", { limit: exportLimit }),
+            "info",
+          )
+        }
       } catch {
         this.showToast(I18n.t("error.load"), "error")
       }

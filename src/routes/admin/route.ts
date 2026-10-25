@@ -1,5 +1,6 @@
 import { Hono } from "hono"
-import { readFileSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { readFileSync, statSync } from "node:fs"
 import { resolve } from "node:path"
 
 import {
@@ -46,6 +47,42 @@ import { userApiRoutes } from "./api/users"
 
 export const adminRoutes = new Hono()
 
+interface StaticAsset {
+  content: Buffer
+  etag: string
+  mtimeMs: number
+  size: number
+}
+
+/**
+ * Served assets are cached in memory keyed by path and validated by
+ * mtime+size, so a dev edit is picked up without a restart while production
+ * requests skip the disk read. The ETag makes `?v=` busting optional: an
+ * unversioned URL still revalidates to a 304, a versioned one can be
+ * immutable.
+ */
+const staticAssetCache = new Map<string, StaticAsset>()
+
+function readStaticAsset(fullPath: string): StaticAsset | undefined {
+  try {
+    const stat = statSync(fullPath)
+    const cached = staticAssetCache.get(fullPath)
+    if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size)
+      return cached
+    const content = readFileSync(fullPath)
+    const asset: StaticAsset = {
+      content,
+      etag: `"${createHash("sha1").update(content).digest("base64url")}"`,
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+    }
+    staticAssetCache.set(fullPath, asset)
+    return asset
+  } catch {
+    return undefined
+  }
+}
+
 // Serve static files (CSS/JS)
 adminRoutes.get("/static/*", (c) => {
   const filePath = c.req.path.replace("/admin/static/", "")
@@ -69,36 +106,42 @@ adminRoutes.get("/static/*", (c) => {
       continue
     }
 
-    try {
-      const content = readFileSync(fullPath)
-      let contentType = "application/octet-stream"
-      if (filePath.endsWith(".css")) {
-        contentType = "text/css; charset=utf-8"
-      } else if (filePath.endsWith(".js")) {
-        contentType = "application/javascript; charset=utf-8"
-      } else if (filePath.endsWith(".svg")) {
-        contentType = "image/svg+xml"
-      } else if (filePath.endsWith(".png")) {
-        contentType = "image/png"
-      } else if (filePath.endsWith(".ico")) {
-        contentType = "image/x-icon"
-      } else if (filePath.endsWith(".html")) {
-        contentType = "text/html; charset=utf-8"
-      } else {
-        contentType = "text/plain; charset=utf-8"
-      }
-      const isCodeFile =
-        filePath.endsWith(".js")
-        || filePath.endsWith(".css")
-        || filePath.endsWith(".html")
-      return c.body(content, 200, {
-        "Content-Type": contentType,
-        "Cache-Control":
-          isCodeFile ? "no-cache, must-revalidate" : "public, max-age=86400",
-      })
-    } catch {
-      continue
+    const asset = readStaticAsset(fullPath)
+    if (!asset) continue
+
+    let contentType = "application/octet-stream"
+    if (filePath.endsWith(".css")) {
+      contentType = "text/css; charset=utf-8"
+    } else if (filePath.endsWith(".js")) {
+      contentType = "application/javascript; charset=utf-8"
+    } else if (filePath.endsWith(".svg")) {
+      contentType = "image/svg+xml"
+    } else if (filePath.endsWith(".png")) {
+      contentType = "image/png"
+    } else if (filePath.endsWith(".ico")) {
+      contentType = "image/x-icon"
+    } else if (filePath.endsWith(".html")) {
+      contentType = "text/html; charset=utf-8"
+    } else {
+      contentType = "text/plain; charset=utf-8"
     }
+    const isCodeFile =
+      filePath.endsWith(".js")
+      || filePath.endsWith(".css")
+      || filePath.endsWith(".html")
+    const headers = {
+      "Content-Type": contentType,
+      ETag: asset.etag,
+      // ETag does the caching work: an unchanged file costs a 304, not a
+      // re-download. Code stays revalidating (never immutable) so a forgotten
+      // `?v=` bump can't pin a stale UI for a year.
+      "Cache-Control":
+        isCodeFile ? "no-cache, must-revalidate" : "public, max-age=86400",
+    }
+    if (c.req.header("if-none-match") === asset.etag) {
+      return new Response(null, { status: 304, headers })
+    }
+    return new Response(asset.content, { status: 200, headers })
   }
   return c.notFound()
 })

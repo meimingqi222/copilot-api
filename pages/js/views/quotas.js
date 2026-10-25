@@ -8,6 +8,8 @@ function quotasView() {
     resettingAccountId: null,
     claimingZcodeId: null,
     checkingZcodeId: null,
+    /** Last quota read failure; the cards below still show stale data. */
+    loadError: null,
     accounts: [],
     showCreditDetails: {},
 
@@ -31,7 +33,9 @@ function quotasView() {
         const data = await API.quota.get()
         this.accounts = data.accounts || []
         this.lastUpdatedAt = Date.now()
-      } catch {
+        this.loadError = null
+      } catch (error) {
+        this.loadError = error?.message || this.t("error.load")
         this.showToast(I18n.t("error.load"), "error")
       } finally {
         this.loading = false
@@ -40,14 +44,22 @@ function quotasView() {
     },
 
     async refreshCachedUsage() {
-      const data = await API.quota.get()
-      if (
-        JSON.stringify(this.accounts) !== JSON.stringify(data.accounts || [])
-      ) {
-        this.accounts = data.accounts || []
-        this.$nextTick(() => refreshAdminIcons(this.$el))
+      try {
+        const data = await API.quota.get()
+        if (
+          JSON.stringify(this.accounts) !== JSON.stringify(data.accounts || [])
+        ) {
+          this.accounts = data.accounts || []
+          this.$nextTick(() => refreshAdminIcons(this.$el))
+        }
+        this.lastUpdatedAt = Date.now()
+        this.loadError = null
+      } catch (error) {
+        // Surface it instead of leaving stale cards under a timestamp that
+        // quietly stops advancing.
+        this.loadError = error?.message || this.t("error.load")
+        throw error
       }
-      this.lastUpdatedAt = Date.now()
     },
 
     quotaUpdatedTime(account) {
