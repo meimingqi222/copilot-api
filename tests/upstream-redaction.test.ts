@@ -865,26 +865,31 @@ test("repeated masking still protects changed content, newly learned secrets and
   )
 })
 
-test("cache eviction isolates callers, preserves opaque old replay and protects in-flight placeholders", () => {
+test("placeholders past the old 1024-entry point stay restorable and callers stay isolated", () => {
   const caller = randomUUID()
   const active = new RedactionScope(config, caller)
   const release = active.acquire()
   const pinned = active.maskText("/home/live-request")
   let oldest = ""
+  let oldestOriginal = ""
   try {
     for (let index = 0; index < 1050; index++) {
       const request = new RedactionScope(config, caller)
       const done = request.acquire()
       try {
-        const token = request.maskText(`/home/cached-${index}`)
-        if (index === 0) oldest = token
+        const path = String.fromCharCode(47) + `home/cache-${index}`
+        const token = request.maskText(path)
+        if (index === 0) {
+          oldest = token
+          oldestOriginal = path
+        }
       } finally {
         done()
       }
     }
     const next = new RedactionScope(config, caller)
     expect(next.maskText(oldest)).toBe(oldest)
-    expect(next.restoreText(oldest)).toBe(oldest)
+    expect(next.restoreText(oldest)).toBe(oldestOriginal)
     expect(next.restoreText(next.maskText(pinned))).toBe("/home/live-request")
     expect(active.restoreText(pinned)).toBe("/home/live-request")
     const other = createScope()
@@ -1691,4 +1696,28 @@ test("a placeholder inside a credential does not exempt surrounding secret text"
   expect(scope.restore(masked, "issuer").password).toBe(
     `prefix123${home}suffix456`,
   )
+})
+
+test("a stream stopped right after its closing frame is completed, not cancelled", async () => {
+  process.env.UPSTREAM_REDACTION = '{"enabled":true}'
+  initializeSystemConfig({ save: () => {}, onChange: () => {} })
+  // OpenAI clients break on [DONE]; Anthropic ones stop after message_stop.
+  for (const closing of ["[DONE]", JSON.stringify({ type: "message_stop" })]) {
+    const result = await runRedactedCall(
+      { text: "hello" },
+      undefined,
+      async () => ({
+        response: (async function* () {
+          yield { choices: [{ index: 0, delta: { content: "first" } }] }
+          yield { data: closing }
+        })(),
+      }),
+    )
+    const iterator = result.response[Symbol.asyncIterator]()
+    await iterator.next()
+    const last = await iterator.next()
+    expect(last.value).toEqual({ data: closing })
+    await iterator.return?.()
+    expect(getRedactionDiagnostics().entries[0].status).toBe("completed")
+  }
 })

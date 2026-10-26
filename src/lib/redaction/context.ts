@@ -44,7 +44,25 @@ const TTL_MS = 60 * 60_000
 const MAX_BYTES = 16 * 1024 * 1024
 const MAX_BLOCK_BYTES = 1024 * 1024
 const MAX_TENANT_BYTES = 2 * 1024 * 1024
-const MAX_TENANT_ITEMS = 1024
+// An entry costs at least ~128 bytes, so MAX_TENANT_BYTES is the real memory
+// bound. The item cap only stops floods of tiny values; capping it at 1024
+// rejected a single request that referenced more distinct values than that,
+// even when its bytes fit. Keep the two bounds consistent.
+const MAX_TENANT_ITEMS = Math.floor(MAX_TENANT_BYTES / 128)
+
+/**
+ * Cross-request memo for text that was already masked as this identity.
+ * Agents resend their whole history on every turn; without it each turn runs
+ * every rule over the unchanged part again. Bounds are deliberately modest:
+ * only masked output is kept (never the original text), entries expire, and
+ * a new known value, config change or tenant replacement invalidates them.
+ */
+const MASK_MEMO_TTL_MS = 60 * 60_000
+const MAX_MASK_MEMO_BYTES = 32 * 1024 * 1024
+const MAX_MASK_MEMO_ENTRIES = 8192
+const MIN_MASK_MEMO_TEXT = 256
+const MAX_MASK_MEMO_TEXT = 512 * 1024
+const MAX_MASK_MEMO_ENTRY_BYTES = 512 * 1024
 
 export class RedactionError extends LocalUnavailableError {
   constructor(message: string, status = 422) {
@@ -63,7 +81,32 @@ interface SignedReplay {
   visibleHash: string
   issuer: string
 }
+interface MaskMemoHit {
+  token: string
+  kind: RedactionMatch["kind"]
+  label: RedactionMatch["label"]
+  source: RedactionMatch["source"]
+}
+interface MaskMemoEntry {
+  version: number
+  config: string
+  /** Masked output; placeholders only, never the original value. */
+  value: string
+  /** Distinct placeholders this text replaced, for per-request metrics. */
+  hits: Array<MaskMemoHit>
+  bytes: number
+  at: number
+}
+const maskMemo = new Map<string, MaskMemoEntry>()
+let maskMemoBytes = 0
+let tenantEpoch = 0
+
+export function clearMaskMemoForTest(): void {
+  maskMemo.clear()
+  maskMemoBytes = 0
+}
 interface Tenant {
+  epoch: number
   entries: Map<string, Entry>
   signed: Map<string, SignedReplay>
   responses: Map<string, Set<string>>
@@ -112,6 +155,7 @@ function tenantFor(id?: string): Tenant {
     return existing
   }
   const tenant: Tenant = {
+    epoch: ++tenantEpoch,
     entries: new Map(),
     signed: new Map(),
     responses: new Map(),
@@ -187,6 +231,9 @@ export class RedactionScope {
   )
   private cachedBytes = 0
   private leases = 0
+  private readonly memoConfig: string
+  private readonly memoizable: boolean
+  private collecting?: Map<string, MaskMemoHit>
   readonly config: RedactionConfig
 
   /** `preview` reports values a `block` action would refuse instead of throwing. */
@@ -204,6 +251,27 @@ export class RedactionScope {
       : config.words,
     )
     this.preview = options.preview ?? false
+    this.memoConfig = createHash("sha256")
+      .update(
+        JSON.stringify({
+          secrets: config.secrets,
+          homePaths: config.homePaths,
+          wordsEnabled: config.wordsEnabled,
+          words: config.words,
+          wordsAnyCase: config.wordsAnyCase,
+          homePrefixes: config.homePrefixes,
+          personal: config.personal,
+          personalKinds: config.personalKinds,
+          allow: config.allow,
+          actions: config.actions,
+        }),
+      )
+      .digest("base64url")
+    // `warn`/`block` change counters and may throw; preview reports instead.
+    // Caching only plain masking keeps every request's metrics exact.
+    this.memoizable =
+      !this.preview
+      && Object.values(config.actions).every((action) => action === "mask")
     this.identity = identity ?? randomBytes(16).toString("hex")
     this.tenant = tenantFor(identity)
   }
@@ -321,13 +389,13 @@ export class RedactionScope {
   /** Applies the category's action: mask returns a placeholder, warn and preview-block the value itself. */
   private act(match: RedactionMatch): string {
     const action = this.config.actions[match.kind]
+    if (action === "mask") return this.placeholder(match)
     const key = `${match.label}\0${match.value}`
     if (!this.detected.has(key)) {
       this.detected.add(key)
       this.metrics.detected++
       this.metrics.detectedByKind[match.kind]++
     }
-    if (action === "mask") return this.placeholder(match)
     if (!this.warned.has(key)) {
       this.warned.add(key)
       if (action === "warn") {
@@ -354,6 +422,19 @@ export class RedactionScope {
 
   private placeholder(match: RedactionMatch): string {
     const token = this.token(match)
+    if (!this.detected.has(token)) {
+      this.detected.add(token)
+      this.metrics.detected++
+      this.metrics.detectedByKind[match.kind]++
+    }
+    if (this.collecting && !this.collecting.has(token)) {
+      this.collecting.set(token, {
+        token,
+        kind: match.kind,
+        label: match.label,
+        source: match.source,
+      })
+    }
     const previous = this.tenant.entries.get(token)
     if (!previous) {
       const json = JSON.stringify(match.value).slice(1, -1)
@@ -391,20 +472,146 @@ export class RedactionScope {
     const started = performance.now()
     try {
       this.tenant.touched = Date.now()
-      const cache = this.textCache[Number(json) + 2 * Number(secretField)]
+      const slot = Number(json) + 2 * Number(secretField)
+      const cache = this.textCache[slot]
       const cached = cache.get(text)
       if (cached?.version === this.tenant.version) return cached.value
-      const value = this.maskUncachedText(text, json, secretField)
-      const bytes = 2 * (text.length + value.length)
-      const previousBytes = cached ? 2 * (text.length + cached.value.length) : 0
-      if (this.cachedBytes - previousBytes + bytes <= MAX_BLOCK_BYTES) {
-        this.cachedBytes += bytes - previousBytes
-        cache.set(text, { version: this.tenant.version, value })
+
+      const memo = this.memoLookup(text, slot)
+      if (memo !== undefined) {
+        this.rememberText(cache, text, memo, cached)
+        return memo
       }
+
+      const hits = new Map<string, MaskMemoHit>()
+      this.collecting = hits
+      let value: string
+      try {
+        value = this.maskUncachedText(text, json, secretField)
+      } finally {
+        this.collecting = undefined
+      }
+      this.rememberText(cache, text, value, cached)
+      this.memoStore(text, slot, value, [...hits.values()])
       return value
     } finally {
       this.metrics.maskingMs += performance.now() - started
     }
+  }
+
+  /** Per-request cache of one text's masked form (bounded by MAX_BLOCK_BYTES). */
+  private rememberText(
+    cache: Map<string, { version: number; value: string }>,
+    text: string,
+    value: string,
+    previous: { version: number; value: string } | undefined,
+  ): void {
+    const bytes = 2 * (text.length + value.length)
+    const previousBytes =
+      previous ? 2 * (text.length + previous.value.length) : 0
+    if (this.cachedBytes - previousBytes + bytes <= MAX_BLOCK_BYTES) {
+      this.cachedBytes += bytes - previousBytes
+      cache.set(text, { version: this.tenant.version, value })
+    }
+  }
+
+  private memoKey(text: string, slot: number): string {
+    const hash = createHash("sha256").update(text).digest("base64url")
+    return `${this.identity}\0${this.tenant.epoch}\0${slot}\0${hash}`
+  }
+
+  private memoLookup(text: string, slot: number): string | undefined {
+    if (!this.memoizable || text.length < MIN_MASK_MEMO_TEXT) return undefined
+    if (text.length > MAX_MASK_MEMO_TEXT) return undefined
+    const key = this.memoKey(text, slot)
+    const entry = maskMemo.get(key)
+    if (!entry) return undefined
+    if (
+      entry.version !== this.tenant.version
+      || entry.config !== this.memoConfig
+      || Date.now() - entry.at > MASK_MEMO_TTL_MS
+    ) {
+      maskMemo.delete(key)
+      maskMemoBytes -= entry.bytes
+      return undefined
+    }
+    // Refresh LRU order: a string in the current turn stays longer than an
+    // older one that happened to be inserted first.
+    entry.at = Date.now()
+    maskMemo.delete(key)
+    maskMemo.set(key, entry)
+    this.applyMemo(entry)
+    return entry.value
+  }
+
+  /**
+   * Reproduce the per-request side effects a live run would have: which
+   * placeholders were counted, what `allowed` learned, and how metrics count.
+   * Raw values are never needed; the memo keeps only placeholder metadata.
+   */
+  private applyMemo(entry: MaskMemoEntry): void {
+    for (const hit of entry.hits) {
+      if (!this.detected.has(hit.token)) {
+        this.detected.add(hit.token)
+        this.metrics.detected++
+        this.metrics.detectedByKind[hit.kind]++
+      }
+      if (!this.counted.has(hit.token)) {
+        this.counted.set(hit.token, hit.source)
+        this.metrics.total++
+        this.metrics.byKind[hit.kind]++
+        this.metrics.byLabel[hit.label] =
+          (this.metrics.byLabel[hit.label] ?? 0) + 1
+        this.metrics.bySource[hit.source]++
+      }
+    }
+    // Tokens already present in the text (from earlier turns) were skipped by
+    // the rules; the cached output still names them, so allow restoring them.
+    for (const match of entry.value.matchAll(tokenPattern())) {
+      const known = this.tenant.entries.get(match[0])
+      if (!known) continue
+      this.allowed.set(match[0], known)
+      this.touch(match[0])
+    }
+  }
+
+  private memoStore(
+    text: string,
+    slot: number,
+    value: string,
+    hits: Array<MaskMemoHit>,
+  ): void {
+    if (!this.memoizable) return
+    if (text.length < MIN_MASK_MEMO_TEXT || text.length > MAX_MASK_MEMO_TEXT)
+      return
+    const bytes = 2 * value.length + hits.length * 64 + 64
+    if (bytes > MAX_MASK_MEMO_ENTRY_BYTES) return
+    const key = this.memoKey(text, slot)
+    const previous = maskMemo.get(key)
+    if (previous) {
+      maskMemo.delete(key)
+      maskMemoBytes -= previous.bytes
+    }
+    while (
+      maskMemo.size > 0
+      && (maskMemo.size >= MAX_MASK_MEMO_ENTRIES
+        || maskMemoBytes + bytes > MAX_MASK_MEMO_BYTES)
+    ) {
+      const oldestKey = maskMemo.keys().next().value
+      if (oldestKey === undefined) break
+      const oldest = maskMemo.get(oldestKey)
+      maskMemo.delete(oldestKey)
+      if (oldest) maskMemoBytes -= oldest.bytes
+    }
+    maskMemo.set(key, {
+      version: this.tenant.version,
+      config: this.memoConfig,
+      value,
+      hits,
+      bytes,
+      at: Date.now(),
+    })
+    maskMemoBytes += bytes
   }
 
   private maskUncachedText(
@@ -810,6 +1017,58 @@ export function bindRedactionStream<T>(
   }
 }
 
+type TerminalStreamStatus = Exclude<RedactionRecordStatus, "in_progress">
+
+/**
+ * A protocol's closing frame. Seeing one means the reply reached its end even
+ * when the consumer stops reading immediately afterwards — OpenAI clients
+ * `break` on `[DONE]`, which triggers `iterator.return()`. Recording that as a
+ * cancellation made every normal streamed answer look abandoned. Mirrors
+ * magpie's rule: a request is canceled only when the agent goes away before
+ * the reply ended.
+ */
+function terminalStreamStatus(
+  value: unknown,
+): TerminalStreamStatus | undefined {
+  if (!value || typeof value !== "object") return undefined
+  const data = (value as { data?: unknown }).data
+  if (data === "[DONE]") return "completed"
+  let packet: unknown = value
+  if (typeof data === "string") {
+    if (!data.includes('"')) return undefined
+    try {
+      packet = JSON.parse(data)
+    } catch {
+      return undefined
+    }
+  }
+  if (!packet || typeof packet !== "object") return undefined
+  const type = (packet as { type?: unknown }).type
+  if (type === "message_stop") return "completed"
+  if (
+    type === "response.completed"
+    || type === "response.incomplete"
+    || type === "response.done"
+  )
+    return "completed"
+  if (type === "response.failed") return "failed"
+  if (type === "response.cancelled" || type === "response.canceled")
+    return "cancelled"
+  const candidates = (packet as { candidates?: unknown }).candidates
+  if (
+    Array.isArray(candidates)
+    && candidates.some(
+      (candidate) =>
+        candidate
+        && typeof candidate === "object"
+        && typeof (candidate as { finishReason?: unknown }).finishReason
+          === "string",
+    )
+  )
+    return "completed"
+  return undefined
+}
+
 export async function runRedactedCall<P, R extends { response: unknown }>(
   payload: P,
   c: Context | undefined,
@@ -910,11 +1169,13 @@ export async function runRedactedCall<P, R extends { response: unknown }>(
         response: {
           [Symbol.asyncIterator]() {
             const iterator = restored[Symbol.asyncIterator]()
+            let terminal: TerminalStreamStatus | undefined
             return {
               async next() {
                 try {
                   const item = await iterator.next()
-                  if (item.done) release()
+                  if (item.done) release(terminal ?? "completed")
+                  else terminal ??= terminalStreamStatus(item.value)
                   return item
                 } catch (error) {
                   release("failed")
@@ -927,7 +1188,10 @@ export async function runRedactedCall<P, R extends { response: unknown }>(
                     done: true as const,
                     value: undefined,
                   }
-                  release("cancelled")
+                  // A consumer that stops right after the protocol's closing
+                  // frame completed the reply; only one that stops before it
+                  // cancelled the stream.
+                  release(terminal ?? "cancelled")
                   return result
                 } catch (error) {
                   release("failed")

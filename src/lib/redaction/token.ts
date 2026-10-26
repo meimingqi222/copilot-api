@@ -13,11 +13,21 @@ const PERSONAL_LABELS = [
   "ID_CARD",
   "BANK_CARD",
   "IP",
+  "SSN",
+  "PASSPORT",
+  "IBAN",
+  "BIRTHDAY",
+  "MAC",
+  "SERIAL",
+  "USERNAME",
+  "HOSTNAME",
+  "BUCKET",
 ] as const
 export type PersonalLabel = (typeof PERSONAL_LABELS)[number]
 
 const REDACTION_LABELS = [
   "SECRET",
+  "PASSWORD",
   "API_KEY",
   "PRIVATE_KEY",
   "TOKEN",

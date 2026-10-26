@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto"
 
 import { RedactionScope } from "~/lib/redaction/context"
 import {
+  findRedactions,
   idCardChecksum,
   luhn,
   redactionConfigSchema,
@@ -169,4 +170,149 @@ test("block refuses the request without echoing the value; preview only reports 
   )
   expect(preview.maskText(`deploy ${KEY}`)).toBe(`deploy ${KEY}`)
   expect(preview.diagnostics().blocked).toHaveLength(1)
+})
+
+test("the literal gate before each secret regex admits every variant it guards", () => {
+  const config = redactionConfigSchema.parse({ enabled: true })
+  const samples = [
+    "-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----",
+    `sk-${"a".repeat(24)}`,
+    `ghp_${"a".repeat(24)}`,
+    `github_pat_${"a".repeat(24)}`,
+    `glpat-${"a".repeat(24)}`,
+    `AKIA${"A".repeat(16)}`,
+    `xoxb-${"a".repeat(24)}`,
+    `AIza${"a".repeat(35)}`,
+    `ASIA${"A".repeat(16)}`,
+    `xai-${"a".repeat(40)}`,
+    `hf_${"a".repeat(30)}`,
+    `gsk_${"a".repeat(40)}`,
+    `npm_${"a".repeat(36)}`,
+    `pypi-${"a".repeat(50)}`,
+    `rk_live_${"a".repeat(20)}`,
+    `sk_live_${"a".repeat(20)}`,
+    `eyJ${"a".repeat(20)}.${"b".repeat(20)}.${"c".repeat(20)}`,
+  ]
+  for (const sample of samples) {
+    const matches = findRedactions(`x ${sample} y`, config)
+    expect(matches.length, sample.slice(0, 12)).toBeGreaterThan(0)
+    expect(matches[0]?.kind).toBe("SECRET")
+  }
+  expect(
+    findRedactions('const password = "hunter22"', config).length,
+  ).toBeGreaterThan(0)
+  expect(
+    findRedactions("https://user:pw123456@example.com/", config).length,
+  ).toBeGreaterThan(0)
+})
+
+test("gateway keys and bare key fields are masked", () => {
+  const config = redactionConfigSchema.parse({ enabled: true })
+  const samples = [
+    `gw_sk_${"a".repeat(24)}`,
+    `dop_v1_${"a".repeat(64)}`,
+    `SG.${"a".repeat(22)}.${"b".repeat(43)}`,
+    '{"key":"AbCdEf0123456789XyZ"}',
+  ]
+  for (const sample of samples) {
+    const matches = findRedactions(sample, config)
+    expect(matches.length, sample.slice(0, 12)).toBeGreaterThan(0)
+    expect(["SECRET", "API_KEY"]).toContain(matches[0]?.label)
+  }
+  // Short, all-digit or all-letter values are counters and identifiers, not keys.
+  expect(findRedactions('{"key":"2048"}', config)).toEqual([])
+  expect(findRedactions('{"key":"abcdefghijklmnop"}', config)).toEqual([])
+})
+
+test("secrets named in Chinese, Japanese or Korean are masked", () => {
+  const scope = scopeFor()
+  const text =
+    "密码: hunter2! 密钥为 abc123xyz45 令牌是 tok_live_99213 password为 hunter3! 密钥为 2048 位"
+  const masked = scope.maskText(text)
+  expect(masked).toContain("{{PASSWORD_")
+  expect(masked).toContain("{{SECRET_")
+  expect(masked).not.toContain("hunter2!")
+  expect(masked).not.toContain("abc123xyz45")
+  expect(masked).not.toContain("tok_live_99213")
+  expect(masked).not.toContain("hunter3!")
+  // "2048 位" is a bit count, not a key.
+  expect(masked).toContain("2048 位")
+  expect(scope.restoreText(masked)).toBe(text)
+})
+
+test("new personal kinds stay off by default and validate their formats", () => {
+  const text =
+    "ssn 123-45-6789 passport number AB1234567 iban DE89 3704 0044 0532 0130 00 birth 1990-03-05 mac 00:1A:2B:3C:4D:5E serial XK-4821-9F v6 2606:4700:4700::1111"
+  expect(scopeFor({ personal: true }).maskText(text)).toBe(text)
+
+  const scope = scopeFor({
+    personal: true,
+    personalKinds: {
+      SSN: true,
+      PASSPORT: true,
+      IBAN: true,
+      BIRTHDAY: true,
+      MAC: true,
+      SERIAL: true,
+      IP: true,
+    },
+  })
+  const masked = scope.maskText(text)
+  for (const label of [
+    "SSN",
+    "PASSPORT",
+    "IBAN",
+    "BIRTHDAY",
+    "MAC",
+    "SERIAL",
+    "IP",
+  ])
+    expect(masked).toContain(`{{${label}_`)
+  expect(scope.restoreText(masked)).toBe(text)
+
+  const invalid =
+    "ssn 000-12-3456 iban DE89 3704 0044 0532 0130 01 birthday 1890-03-05 mac 00:00:00:00:00:00 serial ---- v6 ::1 fe80::1 2001:db8::1"
+  expect(scope.maskText(invalid)).toBe(invalid)
+})
+
+test("machine and storage identifiers are off by default", () => {
+  const text =
+    "/home/alice/app /Users/bob/work hostname: db-01.internal s3://acme-assets/x https://logs-prod.s3.us-east-1.amazonaws.com/a"
+  expect(scopeFor({ personal: true, homePaths: false }).maskText(text)).toBe(
+    text,
+  )
+
+  const scope = scopeFor({
+    personal: true,
+    homePaths: false,
+    personalKinds: { USERNAME: true, HOSTNAME: true, BUCKET: true },
+  })
+  const masked = scope.maskText(text)
+  for (const label of ["USERNAME", "HOSTNAME", "BUCKET"])
+    expect(masked).toContain(`{{${label}_`)
+  expect(masked).not.toContain("alice")
+  expect(masked).not.toContain("db-01.internal")
+  expect(masked).not.toContain("acme-assets")
+  expect(scope.restoreText(masked)).toBe(text)
+
+  const invalid =
+    "/home/user/app hostname: example.com s3://my-bucket/x foo.localhost"
+  expect(scope.maskText(invalid)).toBe(invalid)
+})
+
+test("one request can mask far more than 1024 distinct values", () => {
+  const scope = scopeFor({ personal: true, personalKinds: { EMAIL: true } })
+  const release = scope.acquire()
+  try {
+    const values = Array.from(
+      { length: 1500 },
+      (_, i) => `user${String(i).padStart(4, "0")}@example.cn`,
+    )
+    const text = values.join(" ")
+    const masked = scope.maskText(text)
+    expect(masked.match(/\{\{EMAIL_/g)).toHaveLength(values.length)
+    expect(scope.restoreText(masked)).toBe(text)
+  } finally {
+    release()
+  }
 })
