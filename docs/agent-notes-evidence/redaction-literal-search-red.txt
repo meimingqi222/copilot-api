@@ -1,0 +1,70 @@
+bun test v1.4.2 (744846f84)
+
+tests/redaction-kinds.test.ts:
+(pass) placeholders are short and named for what they hide [2.20ms]
+(pass) placeholders from earlier versions stay opaque and are never re-masked [0.41ms]
+(pass) a placeholder the model rewrote with spaces or another case is still restored [0.12ms]
+(pass) streams hold a split loose placeholder until it is complete [1.33ms]
+(pass) personal data is masked only when switched on, per kind [0.65ms]
+(pass) checksums keep ids, timestamps and counters out of personal data [0.09ms]
+(pass) words can match in any case and allowlisted values are sent as written [0.36ms]
+(pass) warn sends values as written and counts them [0.10ms]
+(pass) block refuses the request without echoing the value; preview only reports it [0.39ms]
+(pass) the literal gate before each secret regex admits every variant it guards [0.31ms]
+(pass) gateway keys and bare key fields are masked [0.11ms]
+(pass) secrets named in Chinese, Japanese or Korean are masked [0.44ms]
+(pass) new personal kinds stay off by default and validate their formats [1.09ms]
+(pass) machine and storage identifiers are off by default [0.46ms]
+(pass) one request can mask far more than 1024 distinct values [21.57ms]
+(pass) contextual personal values do not mask unrelated text or later requests [0.32ms]
+(pass) MAC accepts numeric and alphabetic addresses but excludes known examples [0.16ms]
+(pass) bucket names containing common words are still sensitive [0.12ms]
+(pass) overlapping HOME matches do not turn nested directory names into global replacements [0.08ms]
+397 |   const scope = scopeFor({ personal: true, personalKinds: { BUCKET: true } })
+398 |   for (const bucket of ["ama", "com", "amazonaws", "aws", "s3a"]) {
+399 |     const input = `${bucket}.s3.amazonaws.com`
+400 |     const matches = findRedactions(input, scope.config)
+401 |     expect(matches).toHaveLength(1)
+402 |     expect(matches[0].start).toBe(0)
+                                   ^
+error: expect(received).toBe(expected)
+
+Expected: 0
+Received: 7
+
+      at <anonymous> ([workspace]/tests/redaction-kinds.test.ts:402:30)
+(fail) S3 prefix captures mask the bucket itself even when the suffix repeats it [0.31ms]
+409 | test("German geboren birthday forms pass the personal hint gate", () => {
+410 |   const scope = scopeFor({ personal: true, personalKinds: { BIRTHDAY: true } })
+411 |   for (const prefix of ["geboren", "geboren am", "Geboren am", "geburtsdatum"]) {
+412 |     const input = `${prefix} 1990-03-05`
+413 |     const masked = scope.maskText(input)
+414 |     expect(masked).toBe(`${prefix} ${masked.match(/\{\{BIRTHDAY_[a-z2-7]{8}\}\}/)?.[0]}`)
+                         ^
+error: expect(received).toBe(expected)
+
+Expected: "geboren undefined"
+Received: "geboren 1990-03-05"
+
+      at <anonymous> ([workspace]/tests/redaction-kinds.test.ts:414:20)
+(fail) German geboren birthday forms pass the personal hint gate [0.24ms]
+434 |   } finally {
+435 |     String.prototype.indexOf = indexOf
+436 |     release()
+437 |   }
+438 |   // Count the offending operation, rather than relying on machine-dependent timing.
+439 |   expect(fullScans).toBeLessThanOrEqual(8)
+                          ^
+error: expect(received).toBeLessThanOrEqual(expected)
+
+Expected: <= 8
+Received: 24000
+
+      at <anonymous> ([workspace]/tests/redaction-kinds.test.ts:439:21)
+(fail) large personal batches do not scan the whole text once per known value [8698.59ms]
+  ^ this test timed out after 5000ms.
+
+ 19 pass
+ 3 fail
+ 152 expect() calls
+Ran 22 tests across 1 file. [8.77s]

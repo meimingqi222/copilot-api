@@ -12,6 +12,7 @@ function logsView() {
     /** Lazily fetched bodies for the selected request (never in the list). */
     bodies: null,
     bodiesLoading: false,
+    bodiesVersion: 0,
     bodiesError: null,
     autoRefresh: false,
     refreshTimer: null,
@@ -102,8 +103,7 @@ function logsView() {
               (entry) => entry.requestId === this.selectedLog.requestId,
             ) ?? null
           if (!this.selectedLog) {
-            this.bodies = null
-            this.bodiesError = null
+            this.resetBodies()
           }
         }
       } catch {
@@ -131,29 +131,34 @@ function logsView() {
       }
     },
 
-    selectLog(log) {
-      if (this.selectedLog?.requestId === log.requestId) {
-        this.selectedLog = null
-        this.bodies = null
-        this.bodiesError = null
-        return
-      }
-      this.selectedLog = log
+    resetBodies() {
+      this.bodiesVersion++
       this.bodies = null
       this.bodiesError = null
+      this.bodiesLoading = false
+    },
+
+    selectLog(log) {
+      this.resetBodies()
+      this.selectedLog =
+        this.selectedLog?.requestId === log.requestId ? null : log
     },
 
     async loadBodies() {
       const requestId = this.selectedLog?.requestId
       if (!requestId || this.bodiesLoading) return
+      const version = ++this.bodiesVersion
       this.bodiesLoading = true
       this.bodiesError = null
       try {
-        this.bodies = await API.logs.bodies(requestId)
+        const bodies = await API.logs.bodies(requestId)
+        if (version === this.bodiesVersion) this.bodies = bodies
       } catch (error) {
-        this.bodiesError = error?.message || I18n.t("logs.bodies.failed")
+        if (version === this.bodiesVersion) {
+          this.bodiesError = error?.message || I18n.t("logs.bodies.failed")
+        }
       } finally {
-        this.bodiesLoading = false
+        if (version === this.bodiesVersion) this.bodiesLoading = false
       }
     },
 

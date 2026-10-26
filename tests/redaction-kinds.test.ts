@@ -296,7 +296,7 @@ test("machine and storage identifiers are off by default", () => {
   expect(scope.restoreText(masked)).toBe(text)
 
   const invalid =
-    "/home/user/app hostname: example.com s3://my-bucket/x foo.localhost"
+    "/home/user/app hostname: example.com s3://example-bucket/x foo.localhost"
   expect(scope.maskText(invalid)).toBe(invalid)
 })
 
@@ -315,4 +315,137 @@ test("one request can mask far more than 1024 distinct values", () => {
   } finally {
     release()
   }
+})
+
+test("contextual personal values do not mask unrelated text or later requests", () => {
+  const identity = randomUUID()
+  const config = redactionConfigSchema.parse({
+    enabled: true,
+    personal: true,
+    homePaths: false,
+    personalKinds: {
+      USERNAME: true,
+      PASSPORT: true,
+      HOSTNAME: true,
+      SERIAL: true,
+      BIRTHDAY: true,
+      BUCKET: true,
+    },
+  })
+  const scope = new RedactionScope(config, identity)
+  const plain =
+    "lib/lib.rs library 91234567 release=1990-01-02 prod-app-assets-backup AB1234567 db.internal-backup"
+  const input = `/home/lib/src/main.rs serial: 123456 birthday: 1990-01-02 s3://prod-app-assets/a passport AB123456 hostname: db.internal; ${plain}`
+  const masked = scope.maskText(input)
+  for (const label of [
+    "USERNAME",
+    "SERIAL",
+    "BIRTHDAY",
+    "BUCKET",
+    "PASSPORT",
+    "HOSTNAME",
+  ])
+    expect(masked).toContain(`{{${label}_`)
+  expect(masked).toEndWith(plain)
+  expect(scope.restoreText(masked)).toBe(input)
+  expect(scope.maskText(plain)).toBe(plain)
+  expect(new RedactionScope(config, identity).maskText(plain)).toBe(plain)
+})
+
+test("MAC accepts numeric and alphabetic addresses but excludes known examples", () => {
+  const scope = scopeFor({ personal: true, personalKinds: { MAC: true } })
+  for (const address of [
+    "00-11-22-33-44-55",
+    "00:11:22:33:44:55",
+    "AC:DE:FA:BC:DE:FA",
+  ])
+    expect(scope.maskText(address)).toMatch(/^\{\{MAC_/)
+  for (const address of [
+    "00:00:00:00:00:00",
+    "FF:FF:FF:FF:FF:FF",
+    "AA:BB:CC:DD:EE:FF",
+  ])
+    expect(scope.maskText(address)).toBe(address)
+})
+
+test("bucket names containing common words are still sensitive", () => {
+  const scope = scopeFor({ personal: true, personalKinds: { BUCKET: true } })
+  for (const input of [
+    "s3://my-app-assets/file",
+    "my-bucket.s3.amazonaws.com",
+    "gs://prod-test-bucket/file",
+    "storage.googleapis.com/my-app-assets/file",
+  ])
+    expect(scope.maskText(input)).toContain("{{BUCKET_")
+  expect(scope.maskText("s3://example-bucket/file")).toBe(
+    "s3://example-bucket/file",
+  )
+})
+
+test("overlapping HOME matches do not turn nested directory names into global replacements", () => {
+  const scope = scopeFor({ personal: true, personalKinds: { USERNAME: true } })
+  const plain = "never edit lib/lib.rs or the library"
+  const input = `/Users/alice/home/lib/src/main.rs; ${plain}`
+  const masked = scope.maskText(input)
+  expect(masked).toContain("{{HOME_")
+  expect(masked).not.toContain("{{USERNAME_")
+  expect(masked).toEndWith(plain)
+  expect(scope.restoreText(masked)).toBe(input)
+})
+
+test("S3 prefix captures mask the bucket itself even when the suffix repeats it", () => {
+  const scope = scopeFor({ personal: true, personalKinds: { BUCKET: true } })
+  for (const bucket of ["ama", "com", "amazonaws", "aws", "s3a"]) {
+    const input = `${bucket}.s3.amazonaws.com`
+    const matches = findRedactions(input, scope.config)
+    expect(matches).toHaveLength(1)
+    expect(matches[0].start).toBe(0)
+    const masked = scope.maskText(input)
+    expect(masked).toMatch(/^\{\{BUCKET_[a-z2-7]{8}\}\}\.s3\.amazonaws\.com$/)
+    expect(scope.restoreText(masked)).toBe(input)
+  }
+})
+
+test("German geboren birthday forms pass the personal hint gate", () => {
+  const scope = scopeFor({ personal: true, personalKinds: { BIRTHDAY: true } })
+  for (const prefix of [
+    "geboren",
+    "geboren am",
+    "Geboren am",
+    "geburtsdatum",
+  ]) {
+    const input = `${prefix} 1990-03-05`
+    const masked = scope.maskText(input)
+    expect(masked).toStartWith(`${prefix} `)
+    expect(masked).toMatch(/\{\{BIRTHDAY_[a-z2-7]{8}\}\}/)
+    expect(masked).not.toContain("1990-03-05")
+    expect(scope.restoreText(masked)).toBe(input)
+  }
+})
+
+test("large personal batches do not scan the whole text once per known value", () => {
+  const scope = scopeFor({ personal: true })
+  const release = scope.acquire()
+  const emails = Array.from(
+    { length: 12_000 },
+    (_, i) => `u${String(i).padStart(5, "0")}@x.io`,
+  ).join(" ")
+  const input = emails + " ".repeat(1_600_000 - emails.length)
+  const indexOf = String.prototype.indexOf
+  let fullScans = 0
+  let masked: string
+  try {
+    String.prototype.indexOf = function (value: string, from?: number): number {
+      if (this.valueOf() === input) fullScans++
+      return indexOf.call(this, value, from)
+    }
+    masked = scope.maskText(input)
+  } finally {
+    String.prototype.indexOf = indexOf
+    release()
+  }
+  // Count the offending operation, rather than relying on machine-dependent timing.
+  expect(fullScans).toBeLessThanOrEqual(8)
+  expect(masked.match(/\{\{EMAIL_/g)).toHaveLength(12_000)
+  expect(scope.restoreText(masked)).toBe(input)
 })

@@ -309,19 +309,13 @@ function isBirthday(value: string) {
 function isMAC(value: string) {
   const compact = value.replace(/[:-]/g, "").toUpperCase()
   if (compact.length !== 12) return false
-  const swapped = compact.replace(/(..)/g, "$2$1")
-  if (
-    [
-      "FFFFFFFFFFFF",
-      "000000000000",
-      "AABBCCDDEEFF",
-      "E0E0E0E0E0E0",
-      "E0E0E0E0E0E1",
-    ].includes(swapped)
-  ) {
-    return false
-  }
-  return /[A-F]/.test(compact) && /[0-9]/.test(compact)
+  return ![
+    "FFFFFFFFFFFF",
+    "000000000000",
+    "AABBCCDDEEFF",
+    "E0E0E0E0E0E0",
+    "E0E0E0E0E0E1",
+  ].includes(compact)
 }
 
 function isSerialNumber(value: string) {
@@ -391,9 +385,8 @@ function isHostname(value: string) {
 function isBucket(value: string) {
   const lower = value.toLowerCase()
   if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(lower)) return false
-  return !/(?:^|[-.])(?:example|sample|test|my|your|bucket|demo)(?:$|[-.])/.test(
-    lower,
-  )
+  // Only explicit example names are exempt; ordinary name segments are valid.
+  return !/^(?:example|sample|test|demo)(?:[-.]bucket)?$/.test(lower)
 }
 
 const PERSONAL_PATTERNS: Array<
@@ -494,12 +487,12 @@ const PERSONAL_HINTS: Partial<Record<PersonalLabel, RegExp>> = {
   SSN: /-/,
   PASSPORT: /passport|reisepass|护照|護照|パスポート/i,
   IBAN: /[A-Z]{2}\d{2}/,
-  BIRTHDAY: /birth|dob|born|geburt|生日|出生|誕生日|生年月日/i,
+  BIRTHDAY: /birth|dob|born|geburt|geboren|生日|出生|誕生日|生年月日/i,
   MAC: /[0-9A-Fa-f]{2}[:-][0-9A-Fa-f]{2}[:-]/,
   SERIAL: /serial|s\/n|序列号|序列號|シリアル|seriennummer/i,
   USERNAME: /\/home\/|\/Users\/|\\Users\\/i,
   HOSTNAME: /hostname\s*[:=]|\.(?:internal|local|lan|corp|home|intra)\b/i,
-  BUCKET: /:\/\//,
+  BUCKET: /:\/\/|\.s3[.-]|storage\.googleapis\.com\//i,
 }
 
 export function idCardChecksum(value: string): boolean {
@@ -724,9 +717,12 @@ export function findRedactions(
       if (!config.personalKinds[label]) continue
       const hint = PERSONAL_HINTS[label]
       if (hint && !hint.test(text)) continue
-      for (const match of text.matchAll(pattern)) {
+      // Capture positions cannot be inferred from repeated text in the match.
+      const indexedPattern =
+        pattern.hasIndices ? pattern : new RegExp(pattern, `${pattern.flags}d`)
+      for (const match of text.matchAll(indexedPattern)) {
         const value = match[1] ?? match[0]
-        const start = match.index + match[0].lastIndexOf(value)
+        const start = match.indices?.[1]?.[0] ?? match.index
         if (!valid || valid(value)) add(start, value, "PERSONAL", label)
       }
     }

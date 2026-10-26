@@ -20,6 +20,10 @@ import {
   type RedactionAttempt,
 } from "~/lib/redaction/diagnostics"
 import {
+  LiteralSearchLimitError,
+  scanLiterals,
+} from "~/lib/redaction/literal-search"
+import {
   categoryEnabled,
   findRedactions,
   isAllowed,
@@ -45,8 +49,9 @@ const MAX_BYTES = 16 * 1024 * 1024
 const MAX_BLOCK_BYTES = 1024 * 1024
 const MAX_TENANT_BYTES = 2 * 1024 * 1024
 // An entry costs at least ~128 bytes, so MAX_TENANT_BYTES is the real memory
-// bound. The item cap only stops floods of tiny values; capping it at 1024
-// rejected a single request that referenced more distinct values than that,
+// bound. Literal scanning has its own work/index/output limits; this item cap
+// only stops floods of tiny values. Capping it at 1024 rejected requests
+// that referenced more distinct values than that,
 // even when its bytes fit. Keep the two bounds consistent.
 const MAX_TENANT_ITEMS = Math.floor(MAX_TENANT_BYTES / 128)
 
@@ -124,6 +129,7 @@ interface Tenant {
   tracked: boolean
   cache: Map<string, number>
   active: Set<Set<string>>
+  /** Every entries insertion/deletion must invalidate both text caches. */
   version: number
 }
 const tenants = new Map<string, Tenant>()
@@ -677,9 +683,24 @@ export class RedactionScope {
     // Include values found in this text, not only earlier texts/requests: an
     // assignment followed by its bare value must be safe on the first pass too.
     const scanned = new Set<string>()
+    const known = new Map<string, Array<Entry | RedactionMatch>>()
     for (const entry of [...this.tenant.entries.values(), ...matches]) {
       if (!categoryEnabled(this.config, entry.kind, entry.label)) continue
       if (isAllowed(this.config, entry.value)) continue
+      // Contextual identifiers are sensitive only where their rule matched.
+      // Replaying their bare values would also mask ordinary words and numbers.
+      if (
+        entry.kind === "PERSONAL"
+        && [
+          "USERNAME",
+          "SERIAL",
+          "BIRTHDAY",
+          "BUCKET",
+          "PASSPORT",
+          "HOSTNAME",
+        ].includes(entry.label)
+      )
+        continue
       // Plain custom words are already matched by the compiled rules. Partial
       // JSON still needs their escaped spelling, without reviving removed rules.
       if (
@@ -699,38 +720,46 @@ export class RedactionScope {
       const key = `${entry.label}:${value}`
       if (scanned.has(key)) continue
       scanned.add(key)
-      let from = 0
-      while (true) {
-        const start = text.indexOf(value, from)
-        if (start < 0) break
-        const end = start + value.length
-        const pathBoundary =
-          entry.kind !== "HOME"
-          || end === text.length
-          || /[/\\\s"'<>]/.test(text[end])
-        if (pathBoundary)
-          matches.push({
-            start,
-            end,
-            value: entry.value,
-            kind: entry.kind,
-            label: entry.label,
-            source: "known",
-          })
-        from = end
-      }
+      const entries = known.get(value)
+      if (entries) entries.push(entry)
+      else known.set(value, [entry])
+    }
+    try {
+      scanLiterals(text, known, (entries, start, end) => {
+        for (const entry of entries) {
+          const pathBoundary =
+            entry.kind !== "HOME"
+            || end === text.length
+            || /[/\\\s"'<>]/.test(text[end])
+          if (pathBoundary)
+            matches.push({
+              start,
+              end,
+              value: entry.value,
+              kind: entry.kind,
+              label: entry.label,
+              source: "known",
+            })
+        }
+      })
+    } catch (error) {
+      if (error instanceof LiteralSearchLimitError)
+        throw new RedactionError(error.message, 503)
+      throw error
     }
     matches.sort((a, b) => a.start - b.start || b.end - a.end)
     let cursor = 0
     let output = ""
+    let tokenCursor = 0
     for (const match of matches) {
       if (match.start < cursor) continue
-      if (
-        tokenSpans.some(
-          (span) => match.start < span.end && match.end > span.start,
-        )
+      while (
+        tokenCursor < tokenSpans.length
+        && tokenSpans[tokenCursor].end <= match.start
       )
-        continue
+        tokenCursor++
+      const span = tokenSpans[tokenCursor]
+      if (span && span.start < match.end) continue
       output += text.slice(cursor, match.start) + this.act(match)
       cursor = match.end
     }
