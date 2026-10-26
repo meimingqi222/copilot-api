@@ -12,7 +12,7 @@ function fixture(
       AbortController,
       I18n: {
         t: (key: string, values: Record<string, unknown> = {}) =>
-          key + JSON.stringify(values),
+          key === "listSeparator" ? "、" : key + JSON.stringify(values),
       },
       setTimeout: () => 1,
       clearTimeout: () => {},

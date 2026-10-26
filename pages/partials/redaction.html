@@ -86,7 +86,7 @@
                 class="px-2 py-0.5 rounded-md"
                 :class="historyDays === days ? 'bg-[var(--apple-blue)] text-white' : 'text-[var(--apple-text-secondary)] hover:bg-[var(--apple-gray-6)]'"
                 @click="setHistoryDays(days)"
-                x-text="days + ' 天'"
+                x-text="t('redaction.history.days', { days })"
               ></button>
             </template>
           </div>
@@ -96,15 +96,15 @@
             class="msk-num"
             x-text="(history?.total ?? 0).toLocaleString()"
           ></span>
-          <span class="text-xs font-medium text-[var(--apple-text-secondary)]"
-            >个替换值</span
-          >
+          <span
+            class="text-xs font-medium text-[var(--apple-text-secondary)]"
+            x-text="t('redaction.history.values')"
+          ></span>
         </div>
-        <p class="text-xs text-[var(--apple-text-secondary)] mt-1">
-          按天保存在本机数据目录，保留 30
-          天，只记录数量、类型和路由，不记录原值。下方明细和流动图只看内存中最近
-          100 次请求。新记录按请求开始日归档；旧记录沿用原有归档日期。
-        </p>
+        <p
+          class="text-xs text-[var(--apple-text-secondary)] mt-1"
+          x-text="t('redaction.history.hint')"
+        ></p>
         <p
           class="text-xs text-[var(--apple-red)] mt-1"
           x-show="historyError"
@@ -115,17 +115,20 @@
       <!-- 关键指标现代小药丸卡片 -->
       <div class="redaction-stats-grid">
         <div class="redaction-stat-pill">
-          <span class="label">扫描请求 / 有替换的请求</span>
+          <span class="label" x-text="t('redaction.history.scanned')"></span>
           <span
             class="val text-[var(--apple-text)]"
-            x-text="(history?.requests ?? 0) + ' / ' + (history?.replacedRequests ?? 0) + ' 次'"
+            x-text="t('redaction.history.scannedValue', { scanned: history?.requests ?? 0, replaced: history?.replacedRequests ?? 0 })"
           ></span>
         </div>
         <div class="redaction-stat-pill">
-          <span class="label">只警告 / 拦截</span>
+          <span
+            class="label"
+            x-text="t('redaction.history.warnedBlocked')"
+          ></span>
           <span
             class="val text-[var(--apple-orange)]"
-            x-text="(history?.warned ?? 0) + ' 个值 / ' + (history?.blocked ?? 0) + ' 次'"
+            x-text="t('redaction.history.warnedBlockedValue', { warned: history?.warned ?? 0, blocked: history?.blocked ?? 0 })"
           ></span>
         </div>
         <div class="redaction-stat-pill">
@@ -142,7 +145,9 @@
         <div
           class="flex justify-between items-center text-xs text-[var(--apple-text-secondary)] mb-1.5"
         >
-          <span x-text="'每日分布（' + historyDays + ' 天）'"></span>
+          <span
+            x-text="t('redaction.history.daily', { days: historyDays })"
+          ></span>
           <span
             class="text-[var(--apple-blue)] font-medium"
             x-text="activityDays.at(-1)?.tooltip || ''"
@@ -175,7 +180,7 @@
           <span
             class="w-1.5 h-1.5 rounded-full bg-[var(--apple-green)] live-dot"
           ></span>
-          新路由活动示意
+          <span x-text="t('redaction.routes.newActivity')"></span>
         </span>
       </div>
 
@@ -196,7 +201,7 @@
                 :data-lane="item.id"
                 :disabled="item.more"
                 @click="filterRoute('client', item.id)"
-                :title="item.more ? '合并显示的其余客户端' : ('筛选 ' + item.name)"
+                :title="item.more ? t('redaction.routes.moreClients') : t('redaction.routes.filterClient', { name: item.name })"
               >
                 <div class="tx">
                   <span class="nm" x-text="item.name"></span>
@@ -243,7 +248,7 @@
                 :data-lane="item.id"
                 :disabled="item.more"
                 @click="filterRoute('upstream', item.id)"
-                :title="item.more ? '合并显示的其余上游' : ('筛选 ' + item.name)"
+                :title="item.more ? t('redaction.routes.moreUpstreams') : t('redaction.routes.filterUpstream', { name: item.name })"
               >
                 <div class="ic">
                   <span
@@ -273,8 +278,8 @@
           <span
             class="hidden sm:inline font-mono"
             :title="t('redaction.routes.legend')"
-            >● 原值 → ■ 占位符 · ○ 未命中</span
-          >
+            x-text="t('redaction.routes.legendValue')"
+          ></span>
         </div>
       </div>
     </div>
@@ -493,7 +498,7 @@
       >
         <span x-show="clientFilter || upstreamFilter || kindFilter !== 'all'">
           <span
-            x-text="'已筛选: ' + filteredRecords.length + ' / ' + redactionStats.length"
+            x-text="t('redaction.records.filtered', { shown: filteredRecords.length, total: redactionStats.length })"
           ></span>
         </span>
         <button
@@ -545,28 +550,28 @@
             <path d="m9 12 2 2 4-4" />
           </svg>
         </div>
-        <h4 class="text-sm font-semibold text-[var(--apple-text)]">
-          暂无脱敏诊断记录
-        </h4>
+        <h4
+          class="text-sm font-semibold text-[var(--apple-text)]"
+          x-text="t('redaction.empty.title')"
+        ></h4>
         <p
           class="text-xs text-[var(--apple-text-secondary)] mt-1.5 leading-relaxed max-w-sm"
-        >
-          脱敏内核已准备就绪。当客户端通过本机代理向模型发起包含密钥、路径或敏感词的请求时，将在此保留诊断元数据与还原映射。
-        </p>
+          x-text="t('redaction.empty.hint')"
+        ></p>
         <div class="flex items-center gap-3 mt-4">
           <button
             type="button"
             @click="tab = 'rules'"
             class="btn btn-secondary text-xs"
           >
-            配置脱敏规则
+            x-text="t('redaction.empty.configure')" >
           </button>
           <button
             type="button"
             @click="tab = 'preview'"
             class="btn btn-primary text-xs"
           >
-            前往模拟沙箱体验
+            x-text="t('redaction.empty.trySandbox')" >
           </button>
         </div>
       </div>
@@ -587,7 +592,7 @@
           @click="clientFilter = null; upstreamFilter = null; kindFilter = 'all'"
           class="btn btn-secondary text-xs"
         >
-          重置所有筛选
+          x-text="t('redaction.empty.resetFilters')" >
         </button>
       </div>
 
@@ -600,7 +605,7 @@
             <span x-text="group.dateLabel"></span>
             <span
               class="text-[11px] font-normal opacity-70"
-              x-text="'(' + group.records.length + ' 条请求)'"
+              x-text="t('redaction.records.groupCount', { count: group.records.length })"
             ></span>
           </div>
 
@@ -678,6 +683,7 @@
                 <div class="flex items-center gap-3 shrink-0 text-xs">
                   <span
                     class="font-mono text-[var(--apple-text-secondary)]"
+                    :title="t('system.redaction.maskingMs')"
                     x-text="(entry.maskingMs ? entry.maskingMs.toFixed(1) + 'ms' : '<0.1ms')"
                   ></span>
                   <svg
@@ -1095,9 +1101,10 @@
                   class="text-xs font-semibold text-[var(--apple-text)]"
                   x-text="t('redaction.inspect.mappings')"
                 ></span>
-                <span class="text-[11px] text-[var(--apple-text-secondary)]"
-                  >点击条目联动高亮</span
-                >
+                <span
+                  class="text-[11px] text-[var(--apple-text-secondary)]"
+                  x-text="t('redaction.inspect.clickToHighlight')"
+                ></span>
               </div>
 
               <!-- 命中 0 处时的安全空状态卡片 -->
@@ -1119,14 +1126,14 @@
                     <path d="m9 12 2 2 4-4" />
                   </svg>
                 </div>
-                <div class="text-xs font-semibold text-[var(--apple-text)]">
-                  暂无可展示的原值映射
-                </div>
+                <div
+                  class="text-xs font-semibold text-[var(--apple-text)]"
+                  x-text="t('redaction.inspect.noMappings')"
+                ></div>
                 <p
                   class="text-[11px] text-[var(--apple-text-secondary)] leading-relaxed"
-                >
-                  映射可能尚未生成、已过期，或命中位置未被截断内容保留。没有映射不代表没有脱敏，请以上方请求统计为准。
-                </p>
+                  x-text="t('redaction.inspect.noMappingsHint')"
+                ></p>
               </div>
 
               <div class="space-y-2" x-show="detail.mappings?.length">
@@ -1157,9 +1164,10 @@
                     <div
                       class="text-xs font-mono mt-1 text-[var(--apple-text)] break-all"
                     >
-                      <span class="text-[var(--apple-text-secondary)]"
-                        >占位:
-                      </span>
+                      <span
+                        class="text-[var(--apple-text-secondary)]"
+                        x-text="t('redaction.inspect.placeholder')"
+                      ></span>
                       <span x-text="mapping.placeholder"></span>
                     </div>
 
@@ -1167,9 +1175,10 @@
                       class="text-xs font-mono mt-1 text-[var(--apple-green)] break-all"
                       x-show="detailRevealed && mapping.value"
                     >
-                      <span class="text-[var(--apple-text-secondary)]"
-                        >真值:
-                      </span>
+                      <span
+                        class="text-[var(--apple-text-secondary)]"
+                        x-text="t('redaction.inspect.truth')"
+                      ></span>
                       <span x-text="mapping.value"></span>
                       <span
                         class="text-xs text-[var(--apple-orange)]"
@@ -1184,7 +1193,7 @@
               <p
                 class="text-[11px] text-[var(--apple-text-tertiary)] leading-relaxed"
               >
-                * 敏感原值仅在内存映射中临时保存，不会落盘到任何日志文件中。
+                <span x-text="t('redaction.inspect.memoryOnly')"></span>
               </p>
             </div>
           </div>
@@ -1224,18 +1233,20 @@
               class="w-2.5 h-2.5 rounded-full"
               :class="settings?.redaction?.enabled ? 'bg-[var(--apple-green)] live-dot' : 'bg-[var(--apple-gray)]'"
             ></span>
-            <span class="text-sm font-semibold text-[var(--apple-text)]"
-              >脱敏保护总开关</span
-            >
+            <span
+              class="text-sm font-semibold text-[var(--apple-text)]"
+              x-text="t('system.redaction.masterSwitch')"
+            ></span>
             <span
               class="px-2 py-0.5 rounded-full text-[11px] font-medium"
               :class="settings?.redaction?.enabled ? 'bg-[rgba(52,199,89,0.12)] text-[var(--apple-green)]' : 'bg-[var(--apple-gray-6)] text-[var(--apple-text-secondary)]'"
-              x-text="settings?.redaction?.enabled ? '运行中' : '已关闭'"
+              x-text="settings?.redaction?.enabled ? t('system.redaction.running') : t('system.redaction.stopped')"
             ></span>
           </div>
-          <p class="text-xs text-[var(--apple-text-secondary)] leading-relaxed">
-            控制本地脱敏网关的全局总开关。开启后，发往上游模型的流量将自动匹配并替换以下敏感项。
-          </p>
+          <p
+            class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+            x-text="t('system.redaction.masterHint')"
+          ></p>
         </div>
         <div
           class="switch-track"
@@ -1334,7 +1345,7 @@
               @click="addHomePrefix()"
               x-show="newPrefixInput.trim()"
             >
-              添加
+              x-text="t('system.redaction.add')" >
             </button>
           </div>
         </div>
@@ -1398,7 +1409,7 @@
               @click="addWord()"
               x-show="newWordInput.trim()"
             >
-              添加
+              x-text="t('system.redaction.add')" >
             </button>
           </div>
           <label
@@ -1409,7 +1420,7 @@
               :checked="settings?.redaction?.wordsAnyCase"
               @change="if (settings?.redaction) { settings.redaction.wordsAnyCase = $event.target.checked; saved = false; }"
             />
-            <span>忽略大小写（Nightjar 也会遮蔽 NIGHTJAR）</span>
+            <span x-text="t('system.redaction.wordsAnyCaseHint')"></span>
           </label>
         </div>
       </div>
@@ -1424,16 +1435,15 @@
               <span
                 class="w-2 h-2 rounded-full bg-[var(--apple-orange)]"
               ></span>
-              <span class="text-sm font-semibold text-[var(--apple-text)]"
-                >个人数据</span
-              >
+              <span
+                class="text-sm font-semibold text-[var(--apple-text)]"
+                x-text="t('system.redaction.PERSONAL')"
+              ></span>
             </div>
             <p
               class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
-            >
-              邮箱、大陆手机号、身份证号（校验位）、银行卡号（Luhn 校验）。公网
-              IP 几乎每个请求都有，默认不遮蔽；内网 IP 从不算个人数据。
-            </p>
+              x-text="t('system.redaction.personalHint')"
+            ></p>
           </div>
           <div
             class="switch-track"
@@ -1457,7 +1467,7 @@
                 :checked="settings?.redaction?.personalKinds?.[kind.id]"
                 @change="settings.redaction.personalKinds[kind.id] = $event.target.checked; saved = false"
               />
-              <span x-text="kind.name"></span>
+              <span x-text="t(kind.nameKey)"></span>
             </label>
           </template>
         </div>
@@ -1468,29 +1478,39 @@
         class="p-4 rounded-xl border border-[var(--apple-gray-5)] bg-[var(--apple-gray-6)] space-y-3"
       >
         <div class="space-y-1">
-          <span class="text-sm font-semibold text-[var(--apple-text)]"
-            >发现后怎么处理</span
-          >
-          <p class="text-xs text-[var(--apple-text-secondary)] leading-relaxed">
-            脱敏：换成占位符发出，回复里还原。只警告：原样发出，但计入统计。拦截：整个请求不发出，返回
-            400，错误信息只写类型和长度，不含原值。
-          </p>
+          <span
+            class="text-sm font-semibold text-[var(--apple-text)]"
+            x-text="t('system.redaction.actionTitle')"
+          ></span>
+          <p
+            class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+            x-text="t('system.redaction.actionHint')"
+          ></p>
         </div>
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <template x-for="kind in redactionCategories" :key="kind.id">
             <label class="space-y-1">
               <span
                 class="block text-xs text-[var(--apple-text-secondary)]"
-                x-text="kind.name"
+                x-text="t(kind.nameKey)"
               ></span>
               <select
                 class="input text-xs py-1 w-full"
                 :value="settings?.redaction?.actions?.[kind.id] || 'mask'"
                 @change="settings.redaction.actions[kind.id] = $event.target.value; saved = false"
               >
-                <option value="mask">脱敏</option>
-                <option value="warn">只警告</option>
-                <option value="block">拦截</option>
+                <option
+                  value="mask"
+                  x-text="t('system.redaction.action.mask')"
+                ></option>
+                <option
+                  value="warn"
+                  x-text="t('system.redaction.action.warn')"
+                ></option>
+                <option
+                  value="block"
+                  x-text="t('system.redaction.action.block')"
+                ></option>
               </select>
             </label>
           </template>
@@ -1501,12 +1521,14 @@
       <div
         class="p-4 rounded-xl border border-[var(--apple-gray-5)] bg-[var(--apple-gray-6)] space-y-2"
       >
-        <span class="text-sm font-semibold text-[var(--apple-text)]"
-          >永不脱敏</span
-        >
-        <p class="text-xs text-[var(--apple-text-secondary)] leading-relaxed">
-          任务需要原样使用的值（团队邮箱、测试密钥等），每行一个。只在完整出现时放行。
-        </p>
+        <span
+          class="text-sm font-semibold text-[var(--apple-text)]"
+          x-text="t('system.redaction.allowTitle')"
+        ></span>
+        <p
+          class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+          x-text="t('system.redaction.allowHint')"
+        ></p>
         <textarea
           class="input w-full min-h-[72px] font-mono text-xs resize-y"
           rows="3"
@@ -1608,7 +1630,7 @@
             maxlength="65536"
             spellcheck="false"
             autocomplete="off"
-            placeholder="输入要测试脱敏的文本、代码或 JSON..."
+            :placeholder="t('system.redaction.previewPlaceholder')"
           ></textarea>
         </div>
 
@@ -1621,7 +1643,7 @@
             <span
               x-show="previewResult"
               class="text-[var(--apple-blue)] font-mono text-[11px]"
-              x-text="'耗时: ' + (previewResult?.diagnostics?.maskingMs ? previewResult.diagnostics.maskingMs.toFixed(2) + ' ms' : '0.00 ms')"
+              x-text="t('system.redaction.elapsed', { ms: previewResult?.diagnostics?.maskingMs ? previewResult.diagnostics.maskingMs.toFixed(2) : '0.00' })"
             ></span>
           </div>
           <div
@@ -1647,12 +1669,13 @@
         class="p-3.5 rounded-xl bg-[var(--apple-gray-6)] border border-[var(--apple-gray-5)] flex flex-wrap items-center justify-between text-xs gap-3"
       >
         <div class="flex items-center gap-4 flex-wrap">
-          <span class="font-medium text-[var(--apple-text)]"
-            >演练结果统计:</span
-          >
+          <span
+            class="font-medium text-[var(--apple-text)]"
+            x-text="t('system.redaction.previewStats')"
+          ></span>
           <span
             x-show="previewResult"
-            x-text="previewResult ? ('替换 ' + previewResult.diagnostics.total + ' 个值') : ''"
+            x-text="previewResult ? t('system.redaction.previewReplaced', { count: previewResult.diagnostics.total }) : ''"
           ></span>
           <span
             x-show="previewResult"
@@ -1662,12 +1685,12 @@
           <span
             x-show="previewResult?.diagnostics?.warned"
             class="text-[var(--apple-orange)]"
-            x-text="'只警告 ' + (previewResult?.diagnostics?.warned || 0) + ' 个值（原样发出）'"
+            x-text="t('system.redaction.previewWarned', { count: previewResult?.diagnostics?.warned || 0 })"
           ></span>
           <span
             x-show="previewResult?.diagnostics?.blocked?.length"
             class="text-[var(--apple-red)] font-medium"
-            x-text="'会被拦截：' + (previewResult?.diagnostics?.blocked || []).map((b) => b.label + '（' + b.hint + '）').join('、')"
+            x-text="t('system.redaction.previewBlocked', { list: (previewResult?.diagnostics?.blocked || []).map((b) => b.label + ' (' + b.hint + ')').join(t('listSeparator')) })"
           ></span>
         </div>
         <button

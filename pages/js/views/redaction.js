@@ -2,7 +2,7 @@ const REDACTION_SVG_NS = "http://www.w3.org/2000/svg"
 const REDACTION_MORE_LANE = "__more__"
 // Mirrors tokenPattern() in src/lib/redaction/token.ts, including the
 // 32-hex suffix earlier versions sent.
-const REDACTION_TOKEN_SOURCE = String.raw`\{\{(?:BANK_CARD|PRIVATE_KEY|API_KEY|ID_CARD|SECRET|EMAIL|PHONE|TOKEN|HOME|WORD|IP)_(?:[a-z2-7]{16}|[a-z2-7]{8}|[a-f0-9]{32})\}\}`
+const REDACTION_TOKEN_SOURCE = String.raw`\{\{(?:BANK_CARD|PRIVATE_KEY|API_KEY|ID_CARD|PASSWORD|SSN|PASSPORT|IBAN|BIRTHDAY|MAC|SERIAL|USERNAME|HOSTNAME|BUCKET|SECRET|EMAIL|PHONE|TOKEN|HOME|WORD|IP)_(?:[a-z2-7]{16}|[a-z2-7]{8}|[a-f0-9]{32})\}\}`
 const REDACTION_KINDS = ["SECRET", "HOME", "WORD", "PERSONAL"]
 
 function redactionKindCounts(counts) {
@@ -203,17 +203,26 @@ function redactionView() {
     historyError: "",
     historyVersion: 0,
     personalKinds: [
-      { id: "EMAIL", name: "邮箱" },
-      { id: "PHONE", name: "手机号" },
-      { id: "ID_CARD", name: "身份证号" },
-      { id: "BANK_CARD", name: "银行卡号" },
-      { id: "IP", name: "公网 IP" },
+      { id: "EMAIL", nameKey: "system.redaction.personalKind.EMAIL" },
+      { id: "PHONE", nameKey: "system.redaction.personalKind.PHONE" },
+      { id: "ID_CARD", nameKey: "system.redaction.personalKind.ID_CARD" },
+      { id: "BANK_CARD", nameKey: "system.redaction.personalKind.BANK_CARD" },
+      { id: "IP", nameKey: "system.redaction.personalKind.IP" },
+      { id: "SSN", nameKey: "system.redaction.personalKind.SSN" },
+      { id: "PASSPORT", nameKey: "system.redaction.personalKind.PASSPORT" },
+      { id: "IBAN", nameKey: "system.redaction.personalKind.IBAN" },
+      { id: "BIRTHDAY", nameKey: "system.redaction.personalKind.BIRTHDAY" },
+      { id: "MAC", nameKey: "system.redaction.personalKind.MAC" },
+      { id: "SERIAL", nameKey: "system.redaction.personalKind.SERIAL" },
+      { id: "USERNAME", nameKey: "system.redaction.personalKind.USERNAME" },
+      { id: "HOSTNAME", nameKey: "system.redaction.personalKind.HOSTNAME" },
+      { id: "BUCKET", nameKey: "system.redaction.personalKind.BUCKET" },
     ],
     redactionCategories: [
-      { id: "SECRET", name: "凭据" },
-      { id: "HOME", name: "目录" },
-      { id: "WORD", name: "词条" },
-      { id: "PERSONAL", name: "个人数据" },
+      { id: "SECRET", nameKey: "system.redaction.SECRET" },
+      { id: "HOME", nameKey: "system.redaction.HOME" },
+      { id: "WORD", nameKey: "system.redaction.WORD" },
+      { id: "PERSONAL", nameKey: "system.redaction.PERSONAL" },
     ],
     previewText: "",
     previewFormat: "text",
@@ -426,7 +435,7 @@ function redactionView() {
         this.saved = true
       } catch (error) {
         this.settings.redaction.enabled = previous
-        this.error = error.message || "更新脱敏总开关失败"
+        this.error = error.message || I18n.t("redaction.error.toggle")
       } finally {
         this.saving = false
       }
@@ -709,7 +718,7 @@ function redactionView() {
         }
       } catch {
         if (version === this.historyVersion)
-          this.historyError = "历史统计读取失败"
+          this.historyError = I18n.t("redaction.error.history")
       }
     },
 
@@ -727,7 +736,10 @@ function redactionView() {
       return days.map((day, i) => {
         const isToday = i === days.length - 1
         const [, month, date] = day.day.split("-").map(Number)
-        const dayLabel = isToday ? "今日" : `${month}/${date}`
+        const dayLabel =
+          isToday ?
+            I18n.t("redaction.history.today")
+          : I18n.t("redaction.history.monthDay", { month, date })
         return {
           key: day.day,
           dayLabel,
@@ -738,7 +750,20 @@ function redactionView() {
             : 0,
           hasData: day.total > 0,
           isToday,
-          tooltip: `${dayLabel}: ${day.total} 个替换值 · ${day.requests} 次扫描请求${day.warned ? ` · ${day.warned} 个只警告值` : ""}${day.blocked ? ` · ${day.blocked} 次拦截` : ""}`,
+          tooltip:
+            I18n.t("redaction.history.tooltip", {
+              day: dayLabel,
+              total: day.total,
+              requests: day.requests,
+            })
+            + (day.warned ?
+              I18n.t("redaction.history.tooltipWarned", { warned: day.warned })
+            : "")
+            + (day.blocked ?
+              I18n.t("redaction.history.tooltipBlocked", {
+                blocked: day.blocked,
+              })
+            : ""),
         }
       })
     },
@@ -782,7 +807,7 @@ function redactionView() {
         ...groups.slice(0, 2),
         {
           id: REDACTION_MORE_LANE,
-          name: `其他 ${rest.length} 个`,
+          name: I18n.t("redaction.routes.others", { count: rest.length }),
           count: rest.reduce((sum, item) => sum + item.count, 0),
           values: rest.reduce((sum, item) => sum + item.values, 0),
           more: true,
@@ -798,7 +823,9 @@ function redactionView() {
             item.name
           : item.name
             || item.id
-            || (side === "client" ? "未知客户端" : "未分发"),
+            || (side === "client" ?
+              I18n.t("redaction.routes.unknownClient")
+            : I18n.t("redaction.routes.unknownUpstream")),
         count: I18n.t("redaction.routes.associations", { count: item.count }),
         weight: item.count,
         more: !!item.more,
@@ -1078,18 +1105,23 @@ function redactionView() {
       return (
         entry.upstreams
           .map((upstream) => upstream.name || upstream.id)
-          .join("、") || I18n.t("redaction.routes.unknown")
+          .join(I18n.t("listSeparator")) || I18n.t("redaction.routes.unknown")
       )
     },
 
     formatDateGroup(timestamp) {
       const d = new Date(timestamp)
       const now = new Date()
-      if (d.toDateString() === now.toDateString()) return "今天"
+      if (d.toDateString() === now.toDateString())
+        return I18n.t("redaction.history.todayLabel")
       const yesterday = new Date(now)
       yesterday.setDate(now.getDate() - 1)
-      if (d.toDateString() === yesterday.toDateString()) return "昨天"
-      return `${d.getMonth() + 1}月${d.getDate()}日`
+      if (d.toDateString() === yesterday.toDateString())
+        return I18n.t("redaction.history.yesterday")
+      return I18n.t("redaction.history.monthDay", {
+        month: d.getMonth() + 1,
+        date: d.getDate(),
+      })
     },
 
     formatTimeOnly(timestamp) {
@@ -1353,7 +1385,7 @@ function redactionView() {
 
     detailClientName() {
       const entry = this.redactionStats.find((e) => e.id === this.detailId)
-      return entry?.client || "来自客户端"
+      return entry?.client || I18n.t("redaction.routes.fromClient")
     },
 
     get detailDiagnostics() {

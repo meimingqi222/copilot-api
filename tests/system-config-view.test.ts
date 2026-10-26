@@ -535,7 +535,9 @@ function redactionView(
             Promise.resolve({ days: [], requests: 0, total: 0 })
           : request(path, options),
       },
-      I18n: { t: (key: string) => key },
+      I18n: {
+        t: (key: string) => (key === "listSeparator" ? "、" : key),
+      },
       setTimeout: () => 1,
       clearTimeout: () => {},
       ...runtime,
