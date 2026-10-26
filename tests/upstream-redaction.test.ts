@@ -753,7 +753,7 @@ test("inspection retains bounded payloads and evicts old records under memory pr
   )
 })
 
-test("unresolved placeholders are rejected in tool inputs but preserved in ordinary text and tool outputs", async () => {
+test("unresolved placeholders stay opaque in tool inputs, ordinary text and tool outputs", async () => {
   const scope = createScope()
   const token = `{{HOME_${"a".repeat(32)}}}`
   const command = `cd ${token}/work/code/project`
@@ -766,10 +766,7 @@ test("unresolved placeholders are rejected in tool inputs but preserved in ordin
     { type: "custom_tool_call", input: command },
     { functionCall: { args: { command } }, thoughtSignature: "signed" },
   ]
-  for (const call of calls)
-    expect(() => scope.restore(call, "issuer")).toThrow(
-      "Cannot restore redacted tool input",
-    )
+  for (const call of calls) expect(scope.restore(call, "issuer")).toEqual(call)
   const ordinary = {
     text: command,
     output: [{ type: "function_call_output", output: { text: command } }],
@@ -815,9 +812,8 @@ test("unresolved placeholders are rejected in tool inputs but preserved in ordin
             delta: chunk,
           },
       )
-      await expect(collect(packets, scope)).rejects.toThrow(
-        "Cannot restore redacted tool input",
-      )
+      const output = await collect(packets, scope)
+      expect(JSON.stringify(output)).not.toContain("Cannot restore")
     }
 })
 
@@ -1515,8 +1511,10 @@ test("chained Responses inherit only their caller's previous response mappings, 
     expect(third.status).toBe(200)
     expect(await third.text()).not.toContain("{{HOME_")
     const other = await send(randomUUID(), "Continue", responseId)
-    expect(other.status).toBe(422)
-    expect(await other.text()).toContain("Cannot restore redacted tool input")
+    expect(other.status).toBe(200)
+    const otherBody = await other.text()
+    expect(otherBody).toContain(upstreamPath)
+    expect(otherBody).not.toContain(original)
   }
 })
 

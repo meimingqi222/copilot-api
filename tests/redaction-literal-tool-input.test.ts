@@ -37,11 +37,9 @@ test("source literals round-trip in tool arguments without granting another call
   expect(scope.diagnostics().restored).toBe(0)
   expect(scope.inspectionMappings([literal, foreign])).toEqual([])
   const unseen = `{{HOME_${"b".repeat(32)}}}`
-  expect(() => scope.restoreText(unseen, false, true)).toThrow("Cannot restore")
+  expect(scope.restoreText(unseen, false, true)).toBe(unseen)
   const unrelated = new RedactionScope(config, randomUUID())
-  expect(() => unrelated.restoreText(literal, false, true)).toThrow(
-    "Cannot restore",
-  )
+  expect(unrelated.restoreText(literal, false, true)).toBe(literal)
 })
 
 test("memoized history preserves literal tool-input provenance on every request", () => {
@@ -70,10 +68,10 @@ test("Responses continuations retain literal provenance without exposing mapping
   expect(next.restoreText(args, true, true)).toBe(args)
   const other = new RedactionScope(config, randomUUID())
   other.inheritResponse(response.id)
-  expect(() => other.restoreText(args, true, true)).toThrow("Cannot restore")
+  expect(other.restoreText(args, true, true)).toBe(args)
 })
 
-test("tool argument streams preserve source literals across every placeholder split", async () => {
+test("tool argument streams preserve unmapped placeholders across every split", async () => {
   for (const wire of [
     "chat",
     "legacy-chat",
@@ -84,7 +82,7 @@ test("tool argument streams preserve source literals across every placeholder sp
   ]) {
     for (let split = 1; split < args.length; split++) {
       const scope = new RedactionScope(config, randomUUID())
-      scope.maskText(literal)
+      scope.maskText("Generate a new source-code fixture")
       const chunks = [args.slice(0, split), args.slice(split)]
       const packets =
         wire === "gemini" ?
@@ -201,4 +199,22 @@ test("real mappings still restore alongside source literals in the same tool arg
     input: { command: `${original} ${literal}` },
   })
   expect(scope.diagnostics().restored).toBe(1)
+})
+
+test("unmapped generated placeholders do not abort a tool response or borrow tenant secrets", () => {
+  const identity = randomUUID()
+  const owner = new RedactionScope(config, identity)
+  const original = ["/Users", "mapping-owner", "private-work"].join("/")
+  const known = owner.maskText(original)
+  const request = new RedactionScope(config, identity)
+  request.maskText("Continue the review with a generated test fixture")
+  for (const token of [literal, known]) {
+    const call = {
+      type: "tool_use",
+      input: { command: `printf '%s' '${token}'` },
+    }
+    expect(request.restore(call, "issuer")).toEqual(call)
+    expect(request.inspectionMappings([token])).toEqual([])
+  }
+  expect(request.diagnostics().restored).toBe(0)
 })
