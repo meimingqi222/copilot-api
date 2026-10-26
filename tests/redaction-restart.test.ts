@@ -21,7 +21,9 @@ test("ordinary placeholders survive a real process restart without restoring ano
     masked: typeof input
     restored: typeof input
     streamed: Array<{ delta: string }>
+    tool: { arguments: string }
   }
+  expect(JSON.parse(replay.tool.arguments)).toEqual({ command: input.text })
   expect(replay.masked).toEqual(input)
   expect(replay.restored).toEqual(input)
   expect(replay.streamed.map((frame) => frame.delta).join("")).toBe(input.text)

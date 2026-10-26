@@ -35,6 +35,13 @@ if (process.argv[2] === "mask") {
       masked,
       restored: scope.restore(masked, "issuer"),
       streamed,
+      tool: scope.restore(
+        {
+          type: "function_call",
+          arguments: JSON.stringify({ command: input.text }),
+        },
+        "issuer",
+      ),
     }),
   )
 }

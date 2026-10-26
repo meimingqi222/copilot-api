@@ -117,7 +117,7 @@ interface Tenant {
   epoch: number
   entries: Map<string, Entry>
   signed: Map<string, SignedReplay>
-  responses: Map<string, Set<string>>
+  responses: Map<string, { tokens: Set<string>; literals: Set<string> }>
   bytes: number
   touched: number
   leases: number
@@ -225,6 +225,9 @@ function digest(value: unknown): string {
 export class RedactionScope {
   private readonly tenant: Tenant
   private readonly allowed = new Map<string, Entry>()
+  // Input may quote placeholders from source code or another redactor. These
+  // may be echoed literally, but never authorize restoring an original value.
+  private readonly literals = new Set<string>()
   private readonly identity: string
   private readonly used = new Set<string>()
   private readonly counted = new Map<string, RedactionMatch["source"]>()
@@ -354,10 +357,11 @@ export class RedactionScope {
 
   inheritResponse(id: string): void {
     const key = `response:${id}`
-    const tokens = this.tenant.responses.get(key)
-    if (!tokens) return
+    const response = this.tenant.responses.get(key)
+    if (!response) return
+    for (const token of response.literals) this.literals.add(token)
     // Pin the conversation's mappings before any new input can evict them.
-    for (const token of tokens) {
+    for (const token of response.tokens) {
       const entry = this.tenant.entries.get(token)
       if (!entry)
         throw new RedactionError(
@@ -373,9 +377,11 @@ export class RedactionScope {
     const key = `response:${id}`
     if (this.tenant.responses.has(key)) return
     const tokens = new Set(this.allowed.keys())
-    const bytes = Buffer.byteLength(key) + tokens.size * 128 + 128
+    const literals = new Set(this.literals)
+    const bytes =
+      Buffer.byteLength(key) + (tokens.size + literals.size) * 128 + 128
     reserve(this.tenant, bytes)
-    this.tenant.responses.set(key, tokens)
+    this.tenant.responses.set(key, { tokens, literals })
     this.tenant.cache.set(key, bytes)
     this.touch(key)
   }
@@ -577,10 +583,7 @@ export class RedactionScope {
     // Tokens already present in the text (from earlier turns) were skipped by
     // the rules; the cached output still names them, so allow restoring them.
     for (const match of entry.value.matchAll(tokenPattern())) {
-      const known = this.tenant.entries.get(match[0])
-      if (!known) continue
-      this.allowed.set(match[0], known)
-      this.touch(match[0])
+      this.rememberInputToken(match[0])
     }
   }
 
@@ -623,6 +626,16 @@ export class RedactionScope {
     maskMemoBytes += bytes
   }
 
+  private rememberInputToken(token: string): void {
+    const entry = this.tenant.entries.get(token)
+    if (entry) {
+      this.allowed.set(token, entry)
+      this.touch(token)
+    } else {
+      this.literals.add(token)
+    }
+  }
+
   private maskUncachedText(
     text: string,
     json: boolean,
@@ -630,13 +643,7 @@ export class RedactionScope {
   ): string {
     const tokenSpans: Array<{ start: number; end: number }> = []
     for (const token of text.matchAll(tokenPattern())) {
-      const entry = this.tenant.entries.get(token[0])
-      // Restarted/evicted contexts and other tools can supply opaque placeholders.
-      // Preserve them without granting access to another caller's original value.
-      if (entry) {
-        this.allowed.set(token[0], entry)
-        this.touch(token[0])
-      }
+      this.rememberInputToken(token[0])
       tokenSpans.push({
         start: token.index,
         end: token.index + token[0].length,
@@ -737,7 +744,7 @@ export class RedactionScope {
     return text.replaceAll(loosePattern(), (found, label, suffix) => {
       const token = canonicalToken(label, suffix)
       const entry = token ? this.allowed.get(token) : undefined
-      if (!entry && toolInput && found === token)
+      if (!entry && toolInput && found === token && !this.literals.has(token))
         throw new RedactionError(
           "Cannot restore redacted tool input; resend the original unredacted context",
         )

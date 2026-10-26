@@ -790,3 +790,96 @@ test("Claude CLI resumes a pending tool with masked results and restores its rep
     else process.env.COPILOT_API_CLAUDE_TRANSPORT = oldTransport
   }
 })
+
+for (const streaming of [false, true]) {
+  test(`chat tool calls can quote source placeholders without terminating the agent (${streaming ? "SSE" : "JSON"})`, async () => {
+    await connection("chat")
+    const literal = `{{HOME_${"a".repeat(32)}}}`
+    const command = `printf '%s' '${literal}'`
+    const argumentsJson = JSON.stringify({ command })
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      expect(String(init?.body)).toContain(literal)
+      const tool = {
+        id: "tool-literal",
+        type: "function",
+        function: { name: "bash", arguments: argumentsJson },
+      }
+      const response = {
+        id: "chat-literal",
+        object: "chat.completion",
+        created: 1,
+        model: "redaction-model",
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: null, tool_calls: [tool] },
+            finish_reason: "tool_calls",
+          },
+        ],
+        usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 },
+      }
+      if (!streaming)
+        return new Response(JSON.stringify(response), {
+          headers: { "content-type": "application/json" },
+        })
+      const packets = [
+        {
+          id: response.id,
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "redaction-model",
+          choices: [
+            {
+              index: 0,
+              delta: { role: "assistant", tool_calls: [{ index: 0, ...tool }] },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          id: response.id,
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "redaction-model",
+          choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+        },
+      ]
+      return new Response(
+        packets.map((packet) => `data: ${JSON.stringify(packet)}\n\n`).join("")
+          + "data: [DONE]\n\n",
+        { headers: { "content-type": "text/event-stream" } },
+      )
+    }) as typeof fetch
+    const base = request("chat", streaming)
+    const payload = (await base.json()) as Record<string, unknown>
+    const response = await server.fetch(
+      new Request(base, {
+        method: "POST",
+        body: JSON.stringify({
+          ...payload,
+          messages: [
+            {
+              role: "user",
+              content: `Write a regression test for the literal ${literal}`,
+            },
+          ],
+        }),
+      }),
+    )
+    expect(response.status).toBe(200)
+    const received = await response.text()
+    expect(received).not.toContain("Cannot restore")
+    expect(received).toContain(literal)
+    if (streaming) {
+      expect(received).toContain("[DONE]")
+      expect(received).toContain('"finish_reason":"tool_calls"')
+    } else {
+      expect(
+        JSON.parse(
+          JSON.parse(received).choices[0].message.tool_calls[0].function
+            .arguments,
+        ),
+      ).toEqual({ command })
+    }
+  })
+}

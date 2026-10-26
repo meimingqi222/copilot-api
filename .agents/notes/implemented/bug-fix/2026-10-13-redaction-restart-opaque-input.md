@@ -8,7 +8,7 @@ Status: implemented
 
 ## Decision
 
-Treat unknown placeholders in ordinary text as opaque input. Preserve their spans so overlapping redaction rules cannot rewrite them. Only known entries in the current caller's tenant enter the request's restoration allowlist. New sensitive input continues to be masked. Signed content still follows the existing exact-content and issuer checks.
+Treat unknown placeholders in ordinary text as opaque input. Preserve their spans so overlapping redaction rules cannot rewrite them. Only known entries in the current caller's tenant enter the request's restoration allowlist. Track already-supplied unknown tokens separately as literal text: the model may quote them in tool arguments without attempting restoration. Never consult other tenants or count a literal as a restored secret. A token the model invents without an input occurrence is still rejected in tool arguments. Rebuild this provenance on memo hits and retain it separately from real mappings in bounded Responses continuation records. New sensitive input continues to be masked. Signed content still follows the existing exact-content and issuer checks.
 
 ## Alternatives considered
 
@@ -20,12 +20,23 @@ Treat unknown placeholders in ordinary text as opaque input. Preserve their span
 
 ## Consequences
 
-Unknown placeholders remain visible as placeholders; lost originals cannot be reconstructed. This fix removes the ordinary-text 422, rather than promising durable original-value restoration or recovery of signed replay history. Caller isolation, bounded memory and signature validation remain in force.
+Unknown placeholders remain visible as placeholders; lost originals cannot be reconstructed. This removes both the ordinary-text 422 and agent failures when source-code examples are copied into tool arguments. Lost originals remain literal placeholders; this does not promise durable original-value restoration or recovery of signed replay history. Caller isolation, bounded memory and signature validation remain in force.
 
 ## Verification
 
 - `tests/redaction-restart.test.ts::ordinary placeholders survive a real process restart without restoring another caller's values`
 - `tests/upstream-redaction.test.ts::expired ordinary placeholders remain opaque while new sensitive input is still masked`
 - `tests/upstream-redaction-routes.test.ts`
+- `tests/redaction-literal-tool-input.test.ts::source literals round-trip in tool arguments without granting another caller's mapping`
+- `tests/redaction-literal-tool-input.test.ts::memoized history preserves literal tool-input provenance on every request`
+- `tests/redaction-literal-tool-input.test.ts::Responses continuations retain literal provenance without exposing mappings`
+- `tests/redaction-literal-tool-input.test.ts::tool argument streams preserve source literals across every placeholder split`
 
 Proved: Before the implementation change, `bun test tests/redaction-restart.test.ts` failed in the second independent Bun process with the exact local 422 message "Redaction context expired or belongs to another caller; replay original input". After the change the test passes for SECRET, HOME and WORD input and both JSON and stream restoration. Expiry, eviction, caller isolation and Responses HTTP JSON/SSE tests also pass.
+
+Proved: Before the literal-provenance fix, all four new tests in
+`tests/redaction-literal-tool-input.test.ts` failed with "Cannot restore redacted
+tool input" at restoration (including a split tool-argument stream). Output is
+retained in `temp/redaction-literal-tool-input-red.log`.
+After the fix the focused suite passes, while unseen-token and cross-caller
+restoration guards remain active.

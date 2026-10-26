@@ -767,14 +767,17 @@ test("unresolved placeholders are rejected in tool inputs but preserved in ordin
     { functionCall: { args: { command } }, thoughtSignature: "signed" },
   ]
   for (const call of calls)
-    expect(() => scope.restore(scope.mask(call), "issuer")).toThrow(
+    expect(() => scope.restore(call, "issuer")).toThrow(
       "Cannot restore redacted tool input",
     )
   const ordinary = {
     text: command,
     output: [{ type: "function_call_output", output: { text: command } }],
   }
-  expect(scope.restore(scope.mask(ordinary), "issuer")).toEqual(ordinary)
+  const ordinaryScope = createScope()
+  expect(ordinaryScope.restore(ordinaryScope.mask(ordinary), "issuer")).toEqual(
+    ordinary,
+  )
 
   for (const wire of ["chat", "legacy-chat", "messages", "responses", "custom"])
     for (let split = 1; split < token.length; split++) {
