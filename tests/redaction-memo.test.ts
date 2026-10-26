@@ -38,7 +38,7 @@ test("a repeated text comes from the memo with the same output, metrics and rest
 })
 
 test("learning a new secret invalidates text that was cached before it", () => {
-  const secret = ["memo", Date.now().toString(36), "Pass"].join("-")
+  const secret = ["memo", `${Date.now().toString(36)}7`, "Pass"].join("-")
   const plain = `the build log mentions ${secret} nowhere else\n`.repeat(20)
   const first = new RedactionScope(config, "memo-invalidate-user")
   expect(JSON.stringify(first.mask({ text: plain }))).toContain(secret)
