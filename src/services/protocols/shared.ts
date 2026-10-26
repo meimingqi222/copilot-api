@@ -553,7 +553,12 @@ export function detectResponsesStreamError(
         (parsed.response?.error ?? parsed.error)
       : parsed.error
 
-    // Promote usage_limit_reached to 429 (quota exhaustion, not retryable)
+    // Promote usage_limit_reached to 429 so that downstream
+    // classifyUpstreamError/shouldFailover handle them correctly — quota
+    // exhaustion must NOT trigger failover to another account of the same
+    // provider in the same request. The body keeps the refusal's own fields
+    // (the wire rewrite in forwardError turns it into a retryable
+    // rate-limit answer when it dates its reset).
     if (errorPayload?.type === "usage_limit_reached") {
       const headers = new Headers()
       if (typeof errorPayload.resets_in_seconds === "number") {
@@ -562,7 +567,7 @@ export function detectResponsesStreamError(
       return new HTTPError(
         errorPayload.message ?? "usage limit reached",
         new Response(null, { status: 429, headers }),
-        e.data,
+        JSON.stringify({ error: errorPayload }),
       )
     }
 

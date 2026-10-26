@@ -3,6 +3,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status"
 import type { IRUsage } from "~/services/ir/types"
 
 import { logger } from "~/lib/logger"
+import { retryableUsageLimit } from "~/lib/usage-limit"
 
 export class HTTPError extends Error {
   response: Response
@@ -77,6 +78,40 @@ export class UpstreamTransportError extends HTTPError {
   }
 }
 
+/**
+ * 本地背压(排队/并发门禁)的 429。
+ *
+ * 光是 429 不够:Codex 这类客户端只按 `Retry-After` 决定要不要重来,读不到
+ * 就把整轮当终态结束。所以本地拒绝也要带退避头和指明可重试的错误体。
+ */
+export function localRateLimitError(
+  message: string,
+  retryAfterMs = 1000,
+): HTTPError {
+  const seconds = Math.max(1, Math.ceil(retryAfterMs / 1000))
+  const body = JSON.stringify({
+    error: {
+      message,
+      type: "rate_limit_exceeded",
+      param: null,
+      code: "rate_limit_exceeded",
+    },
+  })
+  return new HTTPError(
+    message,
+    new Response(body, {
+      status: 429,
+      headers: {
+        "Content-Type": "application/json",
+        "Retry-After": String(seconds),
+        "retry-after-ms": String(seconds * 1000),
+        "x-ratelimit-reset": String(seconds),
+      },
+    }),
+    body,
+  )
+}
+
 export function forwardError(c: Context, error: unknown) {
   logger.error("Error occurred:", error)
 
@@ -92,10 +127,31 @@ export function forwardError(c: Context, error: unknown) {
     // `{ type: "error", error: { type, message } }` 或 OpenAI 风格
     // `{ error: { message, type, code } }`,不会被这里二次包装。
     const body = error.responseBody
+
+    // 额度用尽(Codex 的 usage_limit_reached)按可重试的限流交出去:那些客户端
+    // 看到该 type 就结束本轮,看到带 Retry-After 的 429 才会等到厂商写明的
+    // 重置时刻再发同一轮。没说什么时候恢复的保持原样。
+    const retryable = retryableUsageLimit({
+      status,
+      body,
+      retryAfterHeader: error.response.headers.get("retry-after"),
+      anthropic: c.req.path.startsWith("/v1/messages"),
+    })
+    if (retryable) {
+      // 立刻要等多长时间以厂商写明的重置时刻为准:上游若只带了短的
+      // Retry-After(或压根没带),这里统一换成同一个数。
+      setRateLimitHeaders(c, retryable.retryAfterMs)
+      return c.body(retryable.body, retryable.status, {
+        "Content-Type": "application/json",
+      })
+    }
+
     if (body) {
       try {
         JSON.parse(body)
-        return c.body(body, status)
+        // 这些是 JSON 错误体:c.body 默认不带 Content-Type,客户端与中间层
+        // 会把它当 text/plain。
+        return c.body(body, status, { "Content-Type": "application/json" })
       } catch {
         // not JSON, fall through to default wrapping
       }

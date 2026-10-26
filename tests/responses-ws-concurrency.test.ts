@@ -199,7 +199,7 @@ loopbackTest(
     expect(message.type).toBe("error")
     // Local saturation is a retryable 429, not a 500.
     expect(message.status).toBe(429)
-    expect(message.error.type).toBe("rate_limit_error")
+    expect(message.error.type).toBe("rate_limit_exceeded")
     expect(message.error.retryable).toBe(true)
 
     // The rejection must NOT be treated as a lazy connection failure: the

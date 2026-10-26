@@ -12,6 +12,7 @@ import { isCodebuddyModelFree } from "~/lib/codebuddy-model-pricing"
 import { getRemainingCooldownSeconds } from "~/lib/rate-limit"
 import { parseRetryAfterMs } from "~/lib/retry-after"
 import { isResting } from "~/lib/route-target/resting"
+import { usageLimitResetMs } from "~/lib/usage-limit"
 
 import type { ApiCredential, ProviderConnection } from "./types"
 
@@ -751,71 +752,21 @@ export function isCodexUsageLimitError(body: string): boolean {
  * Parses resets_at / resets_in_seconds from a Codex usage_limit_reached error
  * body and returns the retry-after duration in milliseconds.
  * Mirrors CPA's parseCodexRetryAfter.
+ *
+ * The local recovery window caps it: a reset further out is confirmed again by
+ * the next probe rather than held for days here. The wire-facing `Retry-After`
+ * (lib/usage-limit) uses the reset instant itself.
  */
 export function parseCodexUsageLimitRetryAfter(
   body?: string,
 ): number | undefined {
   if (!body) return undefined
-  try {
-    const parsed = JSON.parse(body) as Record<string, unknown>
-    const error = parsed.error as Record<string, unknown> | undefined
-    if (!error) return undefined
-    if (
-      error.type !== "usage_limit_reached"
-      && error.code !== "AccountQuotaExceeded"
-    ) {
-      return undefined
-    }
-
-    // resets_at — Unix timestamp (seconds)
-    const resetsAt = error.resets_at
-    if (typeof resetsAt === "number" && resetsAt > 0) {
-      const resetMs = resetsAt * 1000
-      const diff = resetMs - Date.now()
-      if (diff > 0) {
-        return Math.min(diff, DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS)
-      }
-    }
-
-    // resets_in_seconds — duration in seconds
-    const resetsInSeconds = error.resets_in_seconds
-    if (typeof resetsInSeconds === "number" && resetsInSeconds > 0) {
-      return Math.min(
-        resetsInSeconds * 1000,
-        DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
-      )
-    }
-
-    // Parse "reset at" timestamp from the error message.
-    // e.g. "...reset at 2026-07-16 20:27:09 +0800 CST..."
-    // The offset is part of the message and must be preserved; appending "Z"
-    // would treat a local time as UTC and extend the cooldown by hours.
-    const message = typeof error.message === "string" ? error.message : ""
-    const resetAtMatch = message.match(
-      /reset at (\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})(?:\s*([+-]\d{2}:?\d{2}))?/,
-    )
-    if (resetAtMatch) {
-      const datePart = resetAtMatch[1].replace(" ", "T")
-      const offsetRaw = resetAtMatch[2]
-      let offsetPart = "Z"
-      if (offsetRaw) {
-        offsetPart =
-          offsetRaw.includes(":") ? offsetRaw : (
-            `${offsetRaw.slice(0, 3)}:${offsetRaw.slice(3)}`
-          )
-      }
-      const resetTime = Date.parse(`${datePart}${offsetPart}`)
-      if (!Number.isNaN(resetTime)) {
-        const diff = resetTime - Date.now()
-        if (diff > 0) {
-          return Math.min(diff, DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS)
-        }
-      }
-    }
-
-    // No reset timing — use default quota cooldown
-    return DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
-  } catch {
-    return undefined
+  const resetMs = usageLimitResetMs(body)
+  if (resetMs !== undefined) {
+    return Math.min(resetMs, DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS)
   }
+  // No reset timing — use default quota cooldown (only for a usage-limit body).
+  return isCodexUsageLimitError(body) ?
+      DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
+    : undefined
 }

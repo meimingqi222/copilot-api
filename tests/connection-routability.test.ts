@@ -21,6 +21,7 @@ import {
   readConnectionMetadata,
   refreshConnectionAvailability,
   setConnectionAuthStatus,
+  setConnectionCooldownUntil,
   setConnectionExhausted,
   setConnectionQuotaState,
   setCredentialEnabled,
@@ -182,6 +183,19 @@ describe("getConnectionRoutability", () => {
     // credential.cooldownUntil 同步进 limiter 内存,走 cooldown 分支。
     expect(result.reason).toBe("cooldown")
     expect(result.retryAfterSeconds).toBeGreaterThan(0)
+  })
+
+  test("配额窗口恢复后重新可路由（Codex 5 小时窗口的自动续跑）", async () => {
+    await setupConnection("c-quota-done")
+    const conn = mustGet("c-quota-done")
+    setConnectionQuotaState(conn, "exhausted")
+    setConnectionCooldownUntil(conn, Date.now() - 1000)
+
+    refreshConnectionAvailability(mustGet("c-quota-done"))
+
+    const result = getConnectionRoutability(mustGet("c-quota-done"))
+    expect(result.routable).toBe(true)
+    expect(result.retryAfterSeconds).toBe(0)
   })
 
   test("只剩遗留 metadata.exhaustedAt 的陈旧标记也会自愈（线上实测形态）", async () => {

@@ -615,8 +615,9 @@ async function prepareRequestAdmissionImpl(
       initiator,
       outcome: "failed",
       error: diagnostic.message,
+      // 与线上错误体一致:额度耗尽按限流报告。
       errorType:
-        diagnostic.reason === "quota" ? "insufficient_quota" : "no_route",
+        diagnostic.reason === "quota" ? "rate_limit_exceeded" : "no_route",
       upstreamStatus: 429,
       retryAfterMs: diagnostic.retryAfterSeconds * 1000 || undefined,
       failoverReason: diagnostic.reason,
@@ -759,12 +760,16 @@ async function prepareRequestAdmissionImpl(
  * 按 endpoint 协议构造错误响应体。
  *
  * - Anthropic `/v1/messages`: `{ type: "error", error: { type, message } }`,
- *   `type` = `rate_limit_error`(cooldown)或 `billing_error`(quota)。
+ *   `type` = `rate_limit_error`。
  *   参考:docs.anthropic.com/en/api/errors
  * - OpenAI(`/v1/chat/completions`、`/v1/responses`、`/v1/embeddings`):
  *   `{ error: { message, type, param, code } }`,
- *   `code` = `insufficient_quota`(quota)或 `rate_limit_exceeded`(其他)。
+ *   `code` = `rate_limit_exceeded`。
  *   参考:platform.openai.com/docs/guides/error-codes
+ *
+ * 额度耗尽(订阅窗口用尽)也是一种限流:重置时刻写在 `Retry-After` 里,客户端
+ * 自己等到那时重试即可。若报成 `insufficient_quota`/`billing_error`,Codex 这类
+ * 客户端会把它当终态直接结束本轮,窗口恢复后也不会自动继续。
  */
 function buildRateLimitResponseBody(
   endpoint: ModelEndpoint,
@@ -772,18 +777,15 @@ function buildRateLimitResponseBody(
 ): string {
   const isAnthropic = endpoint === "messages"
   if (isAnthropic) {
-    const errorType =
-      diagnostic.reason === "quota" ? "billing_error" : "rate_limit_error"
     return JSON.stringify({
       type: "error",
       error: {
-        type: errorType,
+        type: "rate_limit_error",
         message: diagnostic.message,
       },
     })
   }
-  const code =
-    diagnostic.reason === "quota" ? "insufficient_quota" : "rate_limit_exceeded"
+  const code = "rate_limit_exceeded"
   return JSON.stringify({
     error: {
       message: diagnostic.message,

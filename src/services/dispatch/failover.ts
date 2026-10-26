@@ -8,6 +8,7 @@ import {
   LocalConcurrencyLimitError,
   LocalPayloadUnsupportedError,
   LocalUnavailableError,
+  localRateLimitError,
 } from "~/lib/error"
 import { createLogger } from "~/lib/logger"
 import { identityFromAdmission, recordAccountUsage } from "~/lib/usage"
@@ -312,10 +313,7 @@ export async function executeWithFailover<
           `${logPrefix} pacing queue full for connection "${current.connection.name}", rotating to next target`,
         )
         if (advanceToNextTarget()) continue
-        throw new HTTPError(
-          "Rate limiter queue is full",
-          new Response(null, { status: 429 }),
-        )
+        throw localRateLimitError("Rate limiter queue is full")
       }
       if (signal?.aborted || isAbortError(error)) throw error
 

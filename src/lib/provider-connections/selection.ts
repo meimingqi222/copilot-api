@@ -47,7 +47,6 @@ function getMinimumRetryAfterSeconds(
  * - `x-ratelimit-reset`:OpenAI 风格,秒。oh-my-pi 等客户端作为补充信号。
  */
 function buildRateLimitedResponse(
-  reason: "cooldown" | "quota",
   message: string,
   connections: Array<ProviderConnection>,
 ): Response {
@@ -60,13 +59,14 @@ function buildRateLimitedResponse(
     headers["retry-after-ms"] = String(retryAfterSeconds * 1000)
     headers["x-ratelimit-reset"] = String(retryAfterSeconds)
   }
-  const code = reason === "quota" ? "insufficient_quota" : "rate_limit_exceeded"
+  // 额度耗尽也是限流:客户端按 Retry-After 等窗口恢复即可,报
+  // insufficient_quota 会让 Codex 这类客户端当终态结束本轮。
   const body = JSON.stringify({
     error: {
       message,
-      type: code,
+      type: "rate_limit_exceeded",
       param: null,
-      code,
+      code: "rate_limit_exceeded",
     },
   })
   return new Response(body, { status: 429, headers })
@@ -111,7 +111,6 @@ export function getFirstAvailableAccountManagedConnection():
     throw new HTTPError(
       "All accounts are temporarily unavailable due to rate limiting",
       buildRateLimitedResponse(
-        "cooldown",
         "All accounts are temporarily unavailable due to rate limiting",
         candidates,
       ),
@@ -127,7 +126,6 @@ export function getFirstAvailableAccountManagedConnection():
     throw new HTTPError(
       "All accounts are unavailable due to quota exhaustion",
       buildRateLimitedResponse(
-        "quota",
         "All accounts are unavailable due to quota exhaustion",
         candidates,
       ),

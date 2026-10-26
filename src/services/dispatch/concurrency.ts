@@ -25,7 +25,7 @@ import { isCredentialAvailable } from "~/lib/provider-connections"
 
 import { getSystemSettings } from "~/lib/system-config"
 
-import { LocalConcurrencyLimitError } from "~/lib/error"
+import { LocalConcurrencyLimitError, localRateLimitError } from "~/lib/error"
 import { targetKey, resolveConnectionFromTarget } from "~/lib/route-target"
 import {
   acquireRouteTargetSlot,
@@ -64,33 +64,13 @@ export class CredentialConcurrencyLimitError extends LocalConcurrencyLimitError 
     // (connection::credential::endpoint) and must not leak downstream. It
     // stays on `credentialKey` for logs; mirrors `WindsurfConcurrencyLimitError`,
     // whose `accountId` is likewise a field rather than part of the message.
-    const message = reason
-    const headers = new Headers({
-      "Retry-After": "1",
-      "retry-after-ms": "1000",
-    })
-    // JSON body so both `forwardError` (HTTP) and
-    // `createResponsesErrorPayload` (WS) forward a typed retryable 429 instead
-    // of a generic error.
-    const body = JSON.stringify({
-      error: {
-        code: 429,
-        message,
-        retryable: true,
-        type: "rate_limit_error",
-      },
-    })
-    super(
-      message,
-      new Response(body, {
-        status: 429,
-        headers: {
-          ...Object.fromEntries(headers),
-          "Content-Type": "application/json",
-        },
-      }),
-      body,
-    )
+    //
+    // One shape for every local 429 (`localRateLimitError`): retry advice plus
+    // a typed `rate_limit_exceeded` body, so HTTP (`forwardError`) and WS
+    // (`createResponsesErrorPayload`) clients both see a retryable refusal
+    // rather than a generic error.
+    const refusal = localRateLimitError(reason)
+    super(reason, refusal.response, refusal.responseBody)
     this.name = "CredentialConcurrencyLimitError"
     this.credentialKey = credentialKey
   }

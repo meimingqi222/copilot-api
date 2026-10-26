@@ -11,6 +11,7 @@ import {
   ClientAbortError,
   getKnownRouteErrorDetails,
 } from "~/lib/request-lifecycle"
+import { retryableUsageLimit } from "~/lib/usage-limit"
 import { isAbortError } from "~/lib/utils"
 
 import type { WebSocketSendTarget } from "./ws-pump"
@@ -53,6 +54,35 @@ export async function handleResponseError(
       signal,
     )
     return
+  }
+
+  // Frame body: `error.type` must not be `usage_limit_reached` — Codex reads
+  // that as terminal, and the frame's `headers` are its only retry advice.
+  if (error instanceof HTTPError) {
+    const retryable = retryableUsageLimit({
+      status: error.response.status,
+      body: error.responseBody,
+      retryAfterHeader: error.response.headers.get("retry-after"),
+    })
+    if (retryable) {
+      await sendJson(
+        ws,
+        {
+          type: "error",
+          status: retryable.status,
+          headers: {
+            "Retry-After": String(Math.ceil(retryable.retryAfterMs / 1000)),
+          },
+          error: {
+            message: retryable.message,
+            type: "rate_limit_exceeded",
+            code: "rate_limit_exceeded",
+          },
+        },
+        signal,
+      )
+      return
+    }
   }
 
   const payload = createResponsesErrorPayload(error)

@@ -183,7 +183,18 @@ describe("executeWithFailover pacing gate", () => {
         (e: unknown) => e,
       )
       expect(error).toBeInstanceOf(HTTPError)
-      expect((error as HTTPError).response.status).toBe(429)
+      const httpError = error as HTTPError
+      expect(httpError.response.status).toBe(429)
+      // 本地饱和也要说明"过多久再来":没有 Retry-After 的 429 会被 Codex
+      // 当终态,整轮直接结束。
+      expect(httpError.response.headers.get("Retry-After")).toBe("1")
+      expect(httpError.response.headers.get("retry-after-ms")).toBe("1000")
+      expect(httpError.response.headers.get("x-ratelimit-reset")).toBe("1")
+      const body = JSON.parse(httpError.responseBody) as {
+        error: { type: string; code: string }
+      }
+      expect(body.error.type).toBe("rate_limit_exceeded")
+      expect(body.error.code).toBe("rate_limit_exceeded")
     } finally {
       await saturation.release()
     }
