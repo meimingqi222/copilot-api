@@ -1,6 +1,10 @@
 import { beforeEach, expect, test } from "bun:test"
 
-import { clearMaskMemoForTest, RedactionScope } from "~/lib/redaction/context"
+import {
+  clearMaskMemoForTest,
+  maskMemoHitsForTest,
+  RedactionScope,
+} from "~/lib/redaction/context"
 import { redactionConfigSchema } from "~/lib/redaction/rules"
 
 const config = redactionConfigSchema.parse({ enabled: true })
@@ -27,10 +31,8 @@ test("a repeated text comes from the memo with the same output, metrics and rest
   expect(secondDiagnostics.total).toBe(firstDiagnostics.total)
   expect(secondDiagnostics.detected).toBe(firstDiagnostics.detected)
   expect(secondDiagnostics.byKind).toEqual(firstDiagnostics.byKind)
-  // The second request must not re-scan: only the hash lookup remains.
-  expect(secondDiagnostics.maskingMs).toBeLessThan(
-    firstDiagnostics.maskingMs / 2,
-  )
+  // The second request must come from the cross-request memo.
+  expect(maskMemoHitsForTest()).toBeGreaterThan(0)
   // Placeholders in the cached output are still allowed for this request.
   expect(second.restore(again, "issuer")).toEqual({
     messages: [{ role: "user", content: text }],
@@ -69,11 +71,8 @@ test("without an identity there is no cross-request memo to share", () => {
   const text = longText("memo-anonymous")
   const first = new RedactionScope(config)
   first.mask({ text })
-  const firstDiagnostics = first.diagnostics()
   const second = new RedactionScope(config)
   second.mask({ text })
   // A fresh tenant means the same work is done again, not a shared hit.
-  expect(second.diagnostics().maskingMs).toBeGreaterThan(
-    firstDiagnostics.maskingMs / 2,
-  )
+  expect(maskMemoHitsForTest()).toBe(0)
 })

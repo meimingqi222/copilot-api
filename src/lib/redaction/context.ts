@@ -101,9 +101,17 @@ const maskMemo = new Map<string, MaskMemoEntry>()
 let maskMemoBytes = 0
 let tenantEpoch = 0
 
+let maskMemoHits = 0
+
 export function clearMaskMemoForTest(): void {
   maskMemo.clear()
   maskMemoBytes = 0
+  maskMemoHits = 0
+}
+
+/** Deterministic memo evidence for tests; timing ratios flake under CI load. */
+export function maskMemoHitsForTest(): number {
+  return maskMemoHits
 }
 interface Tenant {
   epoch: number
@@ -540,6 +548,7 @@ export class RedactionScope {
     entry.at = Date.now()
     maskMemo.delete(key)
     maskMemo.set(key, entry)
+    maskMemoHits++
     this.applyMemo(entry)
     return entry.value
   }
