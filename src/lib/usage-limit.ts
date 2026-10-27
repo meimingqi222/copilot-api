@@ -141,7 +141,7 @@ export function usageLimitResetMs(
   return refusal.resetAtMs - now
 }
 
-export interface RetryableUsageLimit {
+interface RetryableUsageLimit {
   /** 对客户端应回的状态:额度用尽是 429,不是请求错误。 */
   status: 429
   /** 厂商自己的说法,原样带给客户端。 */

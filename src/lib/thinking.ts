@@ -6,7 +6,11 @@
  * and Windsurf translation layers.
  */
 
-import { isReasoningLevel, type ReasoningLevel } from "~/lib/effort-levels"
+import {
+  isReasoningLevel,
+  type EffortLevel,
+  type ReasoningLevel,
+} from "~/lib/effort-levels"
 
 /**
  * Extracts a thinking signature under any of the spellings the various proxy
@@ -119,7 +123,7 @@ export function extractReasoningPartsText(
  */
 type ReasoningEffortLevel = ReasoningLevel
 
-export type ReasoningEffort = ReasoningEffortLevel | "none" | "auto"
+export type ReasoningEffort = Exclude<EffortLevel, "ultra"> | "auto"
 
 type ThinkingSuffixConfig =
   | { mode: "level"; effort: ReasoningEffortLevel }
