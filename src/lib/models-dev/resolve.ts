@@ -10,13 +10,16 @@ import type { ModelsDevPriceIndexes } from "~/lib/models-dev/catalog"
 import { parseModelReference } from "~/lib/route-target/model-reference"
 import {
   lookupGlobalModelContext,
+  lookupGlobalModelEfforts,
   lookupGlobalModelPrice,
   lookupProviderModelContext,
+  lookupProviderModelEfforts,
   lookupProviderModelPrice,
 } from "~/lib/models-dev/catalog"
 import {
   getModelsDevCatalog,
   getModelsDevContextIndexes,
+  getModelsDevEffortsIndexes,
   getModelsDevIndexes,
 } from "~/lib/models-dev/client"
 import {
@@ -96,33 +99,97 @@ function applyFastMultiplier(
     })),
   }
 }
+/**
+ * One model id's route through the catalog: the candidate spellings and the
+ * models.dev provider ids to ask first. A `provider/model` reference that
+ * names a catalog provider is exclusive — the answer is that provider's.
+ */
+interface CatalogLookupPath {
+  candidates: Array<string>
+  providerIds: Array<string>
+  nativeModelId: string
+  provider?: string
+  exclusive: boolean
+}
 
-function lookupCandidates(
-  indexes: ModelsDevPriceIndexes,
-  providerIds: Array<string>,
-  candidates: Array<string>,
-): ModelPricingPer1k | null {
-  for (const candidate of candidates) {
-    const providerMatch = lookupProviderModelPrice(
-      indexes,
-      providerIds,
-      candidate,
-    )
-    if (providerMatch) {
-      return providerMatch
+function catalogLookupPath(
+  modelId: string,
+  providerHint?: string,
+  catalog: ModelsDevCatalog | null = getModelsDevCatalog(),
+): CatalogLookupPath | null {
+  const raw = modelId.trim().toLowerCase()
+  const channel = raw.includes("/") ? raw.split("/").at(0)! : ""
+  if (channel && catalog?.[channel] && !providerHint) {
+    const nativeModelId = raw.slice(channel.length + 1)
+    const candidates = buildPricingLookupCandidates(nativeModelId)
+    if (candidates.length === 0) return null
+    return {
+      candidates,
+      providerIds: [channel],
+      nativeModelId,
+      provider: channel,
+      exclusive: true,
     }
   }
 
-  if (providerIds.length > 0) return null
+  const parsed = parseModelReference(modelId)
+  const provider = providerHint ?? parsed.provider
+  const nativeModelId =
+    providerHint && parsed.provider !== providerHint ?
+      raw
+    : parsed.nativeModelId
+  const candidates = buildPricingLookupCandidates(
+    nativeModelId,
+    provider && isProviderId(provider) ? provider : undefined,
+  )
+  if (candidates.length === 0) return null
 
-  for (const candidate of candidates) {
-    const globalMatch = lookupGlobalModelPrice(indexes, candidate)
-    if (globalMatch) {
-      return globalMatch
-    }
+  const buckets =
+    provider ?
+      isProviderId(provider) ?
+        (MODELS_DEV_PROVIDER_PRIORITY[provider] ?? [provider])
+      : [provider]
+    : []
+  const windsurfBuckets =
+    provider === "windsurf" ? inferWindsurfVendorBucket(nativeModelId) : []
+  return {
+    candidates,
+    providerIds: [
+      ...buckets,
+      ...windsurfBuckets.filter((bucket) => !buckets.includes(bucket)),
+    ],
+    nativeModelId,
+    provider,
+    exclusive: false,
   }
+}
 
-  return null
+/**
+ * Ask the path's providers first, then (unless the caller says otherwise) the
+ * global index. Pricing refuses the global fallback once a provider is hinted:
+ * a catalog insertion order is not a billing policy.
+ */
+function walkCatalog<T>(
+  path: CatalogLookupPath,
+  providerLookup: (
+    providerIds: Array<string>,
+    candidate: string,
+  ) => T | null | undefined,
+  globalLookup: (candidate: string) => T | null | undefined,
+  fallbackWhenHinted = true,
+): T | undefined {
+  if (path.providerIds.length > 0) {
+    for (const candidate of path.candidates) {
+      const hit = providerLookup(path.providerIds, candidate)
+      if (hit !== null && hit !== undefined) return hit
+    }
+    if (path.exclusive || !fallbackWhenHinted) return undefined
+  }
+  for (const candidate of path.candidates) {
+    const hit = globalLookup(candidate)
+    if (hit !== null && hit !== undefined) return hit
+  }
+  return undefined
 }
 
 export function resolveModelsDevPrice(
@@ -142,24 +209,13 @@ export function resolveModelsDevPrice(
   }
 }
 
-function priceProviderBuckets(provider: string | undefined): Array<string> {
-  if (!provider) return []
-  if (isProviderId(provider))
-    return MODELS_DEV_PROVIDER_PRIORITY[provider] ?? [provider]
-  return [provider]
-}
-
 export function resolveModelsDevPriceDetailed(
   modelId: string,
   providerHint?: string,
 ): ResolvedModelPricing | null {
   const indexes = getModelsDevIndexes()
-  if (!indexes) {
-    return null
-  }
-
   const catalog = getModelsDevCatalog()
-  if (!catalog) return null
+  if (!indexes || !catalog) return null
   return resolveCatalogPrice(indexes, catalog, modelId, providerHint)
 }
 
@@ -169,116 +225,65 @@ export function resolveCatalogPrice(
   modelId: string,
   providerHint?: string,
 ): ResolvedModelPricing | null {
-  // Catalog channel/full-model references take precedence over routing aliases.
-  const raw = modelId.trim().toLowerCase()
-  const direct = indexes.byProviderModel.get(raw)
-  if (direct && !providerHint) return { ...direct, source: "models-dev" }
-  const channel = raw.split("/")[0]!
-  const explicitChannel = catalog[channel]
-  if (explicitChannel && !providerHint) {
-    const candidates = buildPricingLookupCandidates(
-      raw.slice(channel.length + 1),
-    )
-    for (const candidate of candidates) {
-      const price = lookupProviderModelPrice(indexes, [channel], candidate)
-      if (price) return { ...price, source: "models-dev" }
-    }
-    return null
-  }
-  const parsed = parseModelReference(modelId)
-  const provider = providerHint ?? parsed.provider
-  const nativeModelId =
-    providerHint && parsed.provider !== providerHint ?
-      raw
-    : parsed.nativeModelId
-  const candidates = buildPricingLookupCandidates(
-    nativeModelId,
-    provider && isProviderId(provider) ? provider : undefined,
+  const path = catalogLookupPath(modelId, providerHint, catalog)
+  if (!path) return null
+
+  const pricing = walkCatalog(
+    path,
+    (providerIds, candidate) =>
+      lookupProviderModelPrice(indexes, providerIds, candidate),
+    (candidate) => lookupGlobalModelPrice(indexes, candidate),
+    false,
   )
+  if (!pricing) return null
 
-  if (candidates.length === 0) {
-    return null
-  }
-
-  const providerBuckets = priceProviderBuckets(provider)
-  if (provider === "windsurf") {
-    const nativeQuote = lookupProviderModelPrice(
-      indexes,
-      ["windsurf"],
-      nativeModelId,
-    )
-    if (nativeQuote) return { ...nativeQuote, source: "models-dev" }
-  }
-  const windsurfBuckets =
-    provider === "windsurf" ? inferWindsurfVendorBucket(nativeModelId) : []
-
-  const orderedProviderIds = [
-    ...providerBuckets,
-    ...windsurfBuckets.filter((bucket) => !providerBuckets.includes(bucket)),
-  ]
-
-  if (provider && orderedProviderIds.length === 0) return null
-  const pricing = lookupCandidates(indexes, orderedProviderIds, candidates)
-  if (!pricing) {
-    return null
-  }
-
-  const hasFast = nativeModelId.toLowerCase().endsWith("-fast")
-  const isWindsurfLike = provider === "windsurf"
-  const resolvedPricing =
-    hasFast && isWindsurfLike ?
-      applyFastMultiplier(pricing, nativeModelId)
-    : pricing
-
+  const fastWindsurf =
+    !path.exclusive
+    && path.provider === "windsurf"
+    && path.nativeModelId.toLowerCase().endsWith("-fast")
   return {
-    ...resolvedPricing,
+    ...(fastWindsurf ?
+      applyFastMultiplier(pricing, path.nativeModelId)
+    : pricing),
     source: "models-dev",
   }
 }
 
 /**
  * The context window models.dev names for a model, or undefined when the
- * catalog has not loaded or does not know it. Mirrors the price lookup's
- * candidate + provider-bucket walk, so a connection that stores only a bare or
- * vendor-namespaced id still matches.
+ * catalog has not loaded or does not know it.
  */
 export function resolveModelsDevContext(
   modelId: string,
   providerHint?: ProviderId,
 ): number | undefined {
   const indexes = getModelsDevContextIndexes()
-  if (!indexes) return undefined
-
-  const parsed = parseModelReference(modelId)
-  const provider = parsed.provider ?? providerHint
-  const candidates = buildPricingLookupCandidates(
-    parsed.nativeModelId,
-    provider,
+  const path = indexes ? catalogLookupPath(modelId, providerHint) : null
+  if (!indexes || !path) return undefined
+  return walkCatalog(
+    path,
+    (providerIds, candidate) =>
+      lookupProviderModelContext(indexes, providerIds, candidate),
+    (candidate) => lookupGlobalModelContext(indexes, candidate),
   )
-  if (candidates.length === 0) return undefined
+}
 
-  const providerBuckets =
-    provider ? (MODELS_DEV_PROVIDER_PRIORITY[provider] ?? []) : []
-  const windsurfBuckets =
-    provider === "windsurf" ?
-      inferWindsurfVendorBucket(parsed.nativeModelId)
-    : []
-  const orderedProviderIds = [
-    ...providerBuckets,
-    ...windsurfBuckets.filter((bucket) => !providerBuckets.includes(bucket)),
-  ]
-
-  for (const candidate of candidates) {
-    const providerMatch = lookupProviderModelContext(
-      indexes,
-      orderedProviderIds,
-      candidate,
-    )
-    if (providerMatch !== undefined) return providerMatch
-  }
-  for (const candidate of candidates) {
-    const globalMatch = lookupGlobalModelContext(indexes, candidate)
-    if (globalMatch !== undefined) return globalMatch
-  }
-  return undefined
+/**
+ * The reasoning levels models.dev says a model takes, or undefined when the
+ * catalog has not loaded or names none. Without a matching provider it falls
+ * back to the level set most providers agree on (magpie's `mostListed`).
+ */
+export function resolveModelsDevEfforts(
+  modelId: string,
+  providerHint?: ProviderId,
+): Array<string> | undefined {
+  const indexes = getModelsDevEffortsIndexes()
+  const path = indexes ? catalogLookupPath(modelId, providerHint) : null
+  if (!indexes || !path) return undefined
+  return walkCatalog(
+    path,
+    (providerIds, candidate) =>
+      lookupProviderModelEfforts(indexes, providerIds, candidate),
+    (candidate) => lookupGlobalModelEfforts(indexes, candidate),
+  )
 }

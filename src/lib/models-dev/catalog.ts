@@ -296,3 +296,109 @@ export function lookupGlobalModelContext(
   const normalized = modelId.trim().toLowerCase()
   return indexes.byModelId.get(normalized)?.[0]?.context
 }
+
+// ── Reasoning efforts ─────────────────────────────────────────────
+//
+// models.dev also names the reasoning levels each model takes (v1:
+// `reasoning_options: [{ type: "effort", values: [...] }]`, v2:
+// `capabilities.reasoning.effort`). Indexed like the context window: per
+// provider+model for a provider hint, and per bare id as the level set most
+// providers give it — the consensus magpie's `mostListed` picks.
+
+export interface ModelsDevEffortsIndexes {
+  /** `${providerId}/${modelKey}` → levels. */
+  byProviderModel: Map<string, Array<string>>
+  /** model key → the levels most providers listing any give. */
+  byModelId: Map<string, Array<string>>
+}
+
+function collectEfforts(model: ModelsDevModel): Array<string> | undefined {
+  const v2 = model.capabilities?.reasoning?.effort
+  const v1 = model.reasoning_options?.find(
+    (option) => option.type === "effort",
+  )?.values
+  const values = v2 && v2.length > 0 ? v2 : v1
+  if (!values) return undefined
+  const levels: Array<string> = []
+  for (const value of values) {
+    if (typeof value !== "string") continue
+    const level = value.trim()
+    // v2 spells the provider's own default as a value; it is not a level.
+    if (!level || level === "default" || levels.includes(level)) continue
+    levels.push(level)
+  }
+  return levels.length > 0 ? levels : undefined
+}
+
+/** 投票次数最多的一组档位；平票取更短、再按字典序，保证跨进程稳定。 */
+function mostListedLevels(votes: Map<string, number>): string {
+  const commas = (levels: string) => levels.match(/,/g)?.length ?? 0
+  let best = ""
+  let count = 0
+  for (const [levels, c] of votes) {
+    if (
+      c > count
+      || (c === count
+        && (commas(levels) < commas(best)
+          || (commas(levels) === commas(best) && levels < best)))
+    ) {
+      best = levels
+      count = c
+    }
+  }
+  return best
+}
+
+export function buildModelsDevEffortsIndexes(
+  catalog: ModelsDevCatalog,
+): ModelsDevEffortsIndexes {
+  const indexes: ModelsDevEffortsIndexes = {
+    byProviderModel: new Map(),
+    byModelId: new Map(),
+  }
+  const votes = new Map<string, Map<string, number>>()
+
+  for (const [providerId, provider] of Object.entries(catalog)) {
+    for (const [modelKey, model] of Object.entries(provider.models)) {
+      const levels = collectEfforts(model)
+      if (!levels) continue
+      const nativeId = (model.id || modelKey).trim().toLowerCase()
+      const tailId =
+        nativeId.includes("/") ? nativeId.split("/").at(-1)! : nativeId
+      const keys = new Set([nativeId, modelKey.trim().toLowerCase(), tailId])
+      const joined = levels.join(",")
+      for (const key of keys) {
+        indexes.byProviderModel.set(`${providerId}/${key}`, levels)
+        const byLevels = votes.get(key) ?? new Map<string, number>()
+        byLevels.set(joined, (byLevels.get(joined) ?? 0) + 1)
+        votes.set(key, byLevels)
+      }
+    }
+  }
+
+  for (const [key, byLevels] of votes) {
+    const best = mostListedLevels(byLevels)
+    if (best) indexes.byModelId.set(key, best.split(","))
+  }
+  return indexes
+}
+
+export function lookupProviderModelEfforts(
+  indexes: ModelsDevEffortsIndexes,
+  providerIds: Array<string>,
+  modelId: string,
+): Array<string> | undefined {
+  const normalized = modelId.trim().toLowerCase()
+  for (const providerId of providerIds) {
+    const hit = indexes.byProviderModel.get(`${providerId}/${normalized}`)
+    if (hit) return hit
+  }
+  return undefined
+}
+
+export function lookupGlobalModelEfforts(
+  indexes: ModelsDevEffortsIndexes,
+  modelId: string,
+): Array<string> | undefined {
+  return indexes.byModelId.get(modelId.trim().toLowerCase())
+}

@@ -8,8 +8,10 @@ import { logger } from "~/lib/logger"
 import { initDevinPricing, refreshDevinPricing } from "~/lib/devin-pricing"
 import {
   buildModelsDevContextIndexes,
+  buildModelsDevEffortsIndexes,
   buildModelsDevPriceIndexes,
   type ModelsDevContextIndexes,
+  type ModelsDevEffortsIndexes,
   type ModelsDevPriceIndexes,
 } from "~/lib/models-dev/catalog"
 import { MODELS_DEV_API_URL } from "~/lib/models-dev/provider-map"
@@ -20,6 +22,7 @@ const REFRESH_INTERVAL_MS = 60 * 60 * 1000
 
 let indexes: ModelsDevPriceIndexes | null = null
 let contextIndexes: ModelsDevContextIndexes | null = null
+let effortsIndexes: ModelsDevEffortsIndexes | null = null
 let catalog: ModelsDevCatalog | null = null
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 let refreshInFlight: Promise<void> | null = null
@@ -63,14 +66,21 @@ function parseCatalog(text: string): ModelsDevCatalog {
 function setCatalog(nextCatalog: ModelsDevCatalog): void {
   const nextIndexes = buildModelsDevPriceIndexes(nextCatalog)
   const nextContextIndexes = buildModelsDevContextIndexes(nextCatalog)
+  const nextEffortsIndexes = buildModelsDevEffortsIndexes(nextCatalog)
   catalog = nextCatalog
   indexes = nextIndexes
   contextIndexes = nextContextIndexes
+  effortsIndexes = nextEffortsIndexes
 }
 
 /** The context-window index, or null until the catalog has loaded once. */
 export function getModelsDevContextIndexes(): ModelsDevContextIndexes | null {
   return contextIndexes
+}
+
+/** The reasoning-effort index, or null until the catalog has loaded once. */
+export function getModelsDevEffortsIndexes(): ModelsDevEffortsIndexes | null {
+  return effortsIndexes
 }
 
 /**
@@ -122,6 +132,7 @@ export function setModelsDevCatalogForTest(
     catalog = null
     indexes = null
     contextIndexes = null
+    effortsIndexes = null
     return
   }
   setCatalog(nextCatalog)
@@ -202,5 +213,7 @@ export function stopModelsDevPricingForTest(): void {
     refreshTimer = null
   }
   indexes = null
+  contextIndexes = null
+  effortsIndexes = null
   refreshInFlight = null
 }

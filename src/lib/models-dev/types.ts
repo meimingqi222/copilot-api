@@ -34,12 +34,30 @@ interface ModelsDevLimit {
   output?: number
 }
 
+/** models.dev v1 目录里一条思考选项（`reasoning_options`）。 */
+interface ModelsDevReasoningOption {
+  type?: string
+  values?: Array<string>
+}
+
+/** models.dev v2 目录里 `capabilities.reasoning` 的形状。 */
+interface ModelsDevReasoning {
+  supported?: boolean
+  toggle?: boolean
+  effort?: Array<string>
+  budget?: { min?: number; max?: number }
+}
+
 export interface ModelsDevModel {
   id: string
   name?: string
   cost?: ModelsDevCost
   /** Context / output window, when models.dev names them. */
   limit?: ModelsDevLimit
+  /** v1：`[{ type: "effort", values: ["low", "high", "max"] }]`。 */
+  reasoning_options?: Array<ModelsDevReasoningOption>
+  /** v2：`{ supported: true, effort: [...] }`。 */
+  capabilities?: { reasoning?: ModelsDevReasoning }
 }
 
 interface ModelsDevProvider {
