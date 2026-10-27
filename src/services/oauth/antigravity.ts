@@ -13,6 +13,7 @@ import {
 } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 import { generateOAuthState } from "./pkce"
+import { oauthTokenBundle, postOAuthTokenForm } from "./token-response"
 
 function getAntigravityClientId(): string {
   const fromEnv = process.env.ANTIGRAVITY_CLIENT_ID?.trim()
@@ -105,45 +106,29 @@ export function createAntigravityOAuthStart(
 function mapTokenResponse(
   token: AntigravityTokenResponse,
 ): Omit<AntigravityOAuthBundle, "email" | "projectId" | "redirectUri"> {
-  if (!token.access_token) {
-    throw new Error("Antigravity token response missing access_token")
-  }
-  return {
-    accessToken: token.access_token,
-    refreshToken: token.refresh_token,
-    expiresAt:
-      token.expires_in ? Date.now() + token.expires_in * 1000 : undefined,
-  }
+  return oauthTokenBundle(
+    token,
+    "Antigravity token response missing access_token",
+    () => ({}),
+  )
 }
-
 async function postAntigravityTokenForm(
   form: URLSearchParams,
   options?: OAuthFetchOptions,
 ): Promise<AntigravityTokenResponse> {
-  const response = await oauthFetch(
-    ANTIGRAVITY_TOKEN_URL,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
-        // 原生 Antigravity 使用 Go 默认 HTTP 客户端刷新 token，
-        // User-Agent 是 Go-http-client/2.0 而非 antigravity/hub/...
-        "User-Agent": ANTIGRAVITY_OAUTH_REFRESH_USER_AGENT,
-      },
-      body: form.toString(),
-    },
+  return postOAuthTokenForm<AntigravityTokenResponse>({
+    url: ANTIGRAVITY_TOKEN_URL,
+    form,
     options,
-  )
-  if (!response.ok) {
-    const text = await response.text()
-    throw new Error(
-      `Antigravity token request failed (${response.status}): ${text.slice(0, 200)}`,
-    )
-  }
-  return (await response.json()) as AntigravityTokenResponse
+    headers: {
+      // 原生 Antigravity 使用 Go 默认 HTTP 客户端刷新 token，
+      // User-Agent 是 Go-http-client/2.0 而非 antigravity/hub/...
+      "User-Agent": ANTIGRAVITY_OAUTH_REFRESH_USER_AGENT,
+    },
+    errorMessage: (status, text) =>
+      `Antigravity token request failed (${status}): ${text.slice(0, 200)}`,
+  })
 }
-
 export async function exchangeAntigravityCodeForTokens(
   code: string,
   redirectUri: string,

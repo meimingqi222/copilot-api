@@ -11,6 +11,7 @@ import {
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 import { extractEmailFromIdToken } from "./jwt"
 import { generateOAuthState, generatePkceCodes, type PkceCodes } from "./pkce"
+import { oauthTokenBundle, postOAuthTokenForm } from "./token-response"
 
 export const XAI_API_BASE_URL = "https://api.x.ai/v1"
 /**
@@ -128,45 +129,28 @@ export function createXaiOAuthStart(
 function mapTokenResponse(
   token: XaiTokenResponse,
 ): Omit<XaiOAuthBundle, "tokenEndpoint" | "redirectUri"> {
-  if (!token.access_token) {
-    throw new Error("xAI token response missing access_token")
-  }
-  return {
-    accessToken: token.access_token,
-    refreshToken: token.refresh_token,
-    idToken: token.id_token,
-    expiresAt:
-      token.expires_in ? Date.now() + token.expires_in * 1000 : undefined,
-    email: extractEmailFromIdToken(token.id_token),
-  }
+  return oauthTokenBundle(
+    token,
+    "xAI token response missing access_token",
+    (payload) => ({
+      idToken: payload.id_token,
+      email: extractEmailFromIdToken(payload.id_token),
+    }),
+  ) as Omit<XaiOAuthBundle, "tokenEndpoint" | "redirectUri">
 }
-
 async function postXaiTokenForm(
   tokenEndpoint: string,
   form: URLSearchParams,
   options?: OAuthFetchOptions,
 ): Promise<XaiTokenResponse> {
-  const response = await oauthFetch(
-    tokenEndpoint,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
-      },
-      body: form.toString(),
-    },
+  return postOAuthTokenForm<XaiTokenResponse>({
+    url: tokenEndpoint,
+    form,
     options,
-  )
-  if (!response.ok) {
-    const text = await response.text()
-    throw new Error(
-      `xAI token request failed (${response.status}): ${text.slice(0, 200)}`,
-    )
-  }
-  return (await response.json()) as XaiTokenResponse
+    errorMessage: (status, text) =>
+      `xAI token request failed (${status}): ${text.slice(0, 200)}`,
+  })
 }
-
 export async function exchangeXaiCodeForTokens(
   code: string,
   pkce: PkceCodes,

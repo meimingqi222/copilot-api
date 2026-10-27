@@ -1,10 +1,8 @@
 import { prepareOAuthRefresh } from "~/services/providers/auth-update"
-import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { getMinimaxFallbackModels } from "~/services/providers/model-catalogs/minimax"
 import { fetchMinimaxQuota } from "~/lib/quota/fetchers/minimax"
 import type { ProviderModule } from "~/services/providers/module"
 import { minimaxNativeAdapter } from "~/services/protocols/minimax-native"
-import { createOAuthProviderRuntime } from "~/services/providers/oauth"
 import {
   createOAuthConnection,
   applyFlowSettingsToConnection,
@@ -21,6 +19,7 @@ import {
   resolveMinimaxRegion,
   type MinimaxDeviceCodeResponse,
 } from "~/services/oauth/minimax"
+import { defineOAuthProviderModule } from "./define"
 
 const minimaxStrategy: OAuthProviderStrategy = {
   flowType: "device",
@@ -88,15 +87,13 @@ const refreshAuth = prepareOAuthRefresh(
 )
 
 export function getMinimaxModule(): ProviderModule {
-  return {
+  return defineOAuthProviderModule({
     id: "minimax",
-    descriptor: getProviderDescriptor("minimax"),
     fetchQuota: fetchMinimaxQuota,
     fallbackModels: getMinimaxFallbackModels,
     adapter: minimaxNativeAdapter,
-    createRuntime: () => createOAuthProviderRuntime("minimax"),
     oauth: minimaxStrategy,
     refreshAuth,
     refreshLeadMs: 5 * 60 * 1000,
-  }
+  })
 }

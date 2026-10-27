@@ -1,10 +1,8 @@
 import { prepareOAuthRefresh } from "~/services/providers/auth-update"
-import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { getKimiFallbackModels } from "~/services/providers/model-catalogs/kimi"
 import { fetchKimiQuota } from "~/lib/quota/fetchers/kimi"
 import type { ProviderModule } from "~/services/providers/module"
 import { kimiNativeAdapter } from "~/services/protocols/kimi-native"
-import { createOAuthProviderRuntime } from "~/services/providers/oauth"
 import {
   createOAuthConnection,
   applyFlowSettingsToConnection,
@@ -24,6 +22,7 @@ import {
   refreshKimiTokens,
   type KimiDeviceCodeResponse,
 } from "~/services/oauth/kimi"
+import { defineOAuthProviderModule } from "./define"
 
 const kimiStrategy: OAuthProviderStrategy = {
   flowType: "device",
@@ -94,14 +93,12 @@ const refreshAuth = prepareOAuthRefresh(
 )
 
 export function getKimiModule(): ProviderModule {
-  return {
+  return defineOAuthProviderModule({
     id: "kimi",
-    descriptor: getProviderDescriptor("kimi"),
     fetchQuota: fetchKimiQuota,
     fallbackModels: getKimiFallbackModels,
     adapter: kimiNativeAdapter,
-    createRuntime: () => createOAuthProviderRuntime("kimi"),
     oauth: kimiStrategy,
     refreshAuth,
-  }
+  })
 }

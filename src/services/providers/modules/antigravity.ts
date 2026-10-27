@@ -1,13 +1,11 @@
 import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { antigravityCallbackConfig } from "~/services/providers/callbacks/antigravity"
-import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { accountModelsToMappings } from "~/services/providers/model-catalogs/account-mapping"
 import { getAntigravityModelsForConnection } from "~/services/antigravity/get-models"
 import { getAntigravityFallbackModels } from "~/services/providers/model-catalogs/antigravity"
 import { fetchAntigravityQuota } from "~/lib/quota/fetchers/antigravity"
 import type { ProviderModule } from "~/services/providers/module"
 import { antigravityNativeAdapter } from "~/services/protocols/antigravity-native"
-import { createOAuthProviderRuntime } from "~/services/providers/oauth"
 import {
   createOAuthConnection,
   applyFlowSettingsToConnection,
@@ -22,6 +20,7 @@ import {
   ANTIGRAVITY_REDIRECT_URI,
   refreshAntigravityTokens,
 } from "~/services/oauth/antigravity"
+import { defineOAuthProviderModule } from "./define"
 
 const antigravityStrategy: OAuthProviderStrategy = {
   flowType: "callback",
@@ -66,9 +65,8 @@ const refreshAuth = prepareOAuthRefresh(
 )
 
 export function getAntigravityModule(): ProviderModule {
-  return {
+  return defineOAuthProviderModule({
     id: "antigravity",
-    descriptor: getProviderDescriptor("antigravity"),
     callback: antigravityCallbackConfig,
     fetchQuota: fetchAntigravityQuota,
     fallbackModels: getAntigravityFallbackModels,
@@ -78,8 +76,7 @@ export function getAntigravityModule(): ProviderModule {
       )
     },
     adapter: antigravityNativeAdapter,
-    createRuntime: () => createOAuthProviderRuntime("antigravity"),
     oauth: antigravityStrategy,
     refreshAuth,
-  }
+  })
 }

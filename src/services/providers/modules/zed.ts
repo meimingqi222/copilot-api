@@ -1,11 +1,9 @@
 import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { zedCallbackConfig } from "~/services/providers/callbacks/zed"
-import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { getZedFallbackModels } from "~/services/providers/model-catalogs/zed"
 import { fetchZedQuota } from "~/lib/quota/fetchers/zed"
 import type { ProviderModule } from "~/services/providers/module"
 import { zedNativeAdapter } from "~/services/protocols/zed-native"
-import { createOAuthProviderRuntime } from "~/services/providers/oauth"
 import {
   createOAuthConnection,
   applyFlowSettingsToConnection,
@@ -21,6 +19,7 @@ import {
   ZED_CALLBACK_PORT,
   zedSignInUrl,
 } from "~/services/oauth/zed"
+import { defineOAuthProviderModule } from "./define"
 
 const zedPendingKeys = new Map<
   string,
@@ -80,15 +79,13 @@ const refreshAuth = prepareOAuthRefresh(async () => {
 })
 
 export function getZedModule(): ProviderModule {
-  return {
+  return defineOAuthProviderModule({
     id: "zed",
-    descriptor: getProviderDescriptor("zed"),
     callback: zedCallbackConfig,
     fetchQuota: fetchZedQuota,
     fallbackModels: getZedFallbackModels,
     adapter: zedNativeAdapter,
-    createRuntime: () => createOAuthProviderRuntime("zed"),
     oauth: zedStrategy,
     refreshAuth,
-  }
+  })
 }

@@ -1,12 +1,10 @@
 import { getXaiModelsForConnection } from "~/services/xai/get-models"
 import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { xaiCallbackConfig } from "~/services/providers/callbacks/xai"
-import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { getXaiFallbackModels } from "~/services/providers/model-catalogs/xai"
 import { fetchXaiQuota } from "~/lib/quota/fetchers/xai"
 import type { ProviderModule } from "~/services/providers/module"
 import { xaiNativeAdapter } from "~/services/protocols/xai-native"
-import { createOAuthProviderRuntime } from "~/services/providers/oauth"
 import {
   createOAuthConnection,
   applyFlowSettingsToConnection,
@@ -21,6 +19,7 @@ import {
   getXaiTokenEndpoint,
   refreshXaiTokens,
 } from "~/services/oauth/xai"
+import { defineOAuthProviderModule } from "./define"
 
 const xaiStrategy: OAuthProviderStrategy = {
   flowType: "pkce-callback",
@@ -72,16 +71,14 @@ const refreshAuth = prepareOAuthRefresh(
 )
 
 export function getXaiModule(): ProviderModule {
-  return {
+  return defineOAuthProviderModule({
     id: "xai",
-    descriptor: getProviderDescriptor("xai"),
     callback: xaiCallbackConfig,
     fetchQuota: fetchXaiQuota,
     fallbackModels: getXaiFallbackModels,
     discoverModels: getXaiModelsForConnection,
     adapter: xaiNativeAdapter,
-    createRuntime: () => createOAuthProviderRuntime("xai"),
     oauth: xaiStrategy,
     refreshAuth,
-  }
+  })
 }

@@ -1,10 +1,8 @@
 import { prepareOAuthRefresh } from "~/services/providers/auth-update"
-import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { getFactoryFallbackModels } from "~/services/providers/model-catalogs/factory"
 import { fetchFactoryQuota } from "~/lib/quota/fetchers/factory"
 import type { ProviderModule } from "~/services/providers/module"
 import { factoryNativeAdapter } from "~/services/protocols/factory-native"
-import { createOAuthProviderRuntime } from "~/services/providers/oauth"
 import {
   createOAuthConnection,
   applyFlowSettingsToConnection,
@@ -18,6 +16,7 @@ import {
   applyFactoryTokenRefresh,
   refreshFactoryTokens,
 } from "~/services/oauth/factory"
+import { defineOAuthProviderModule } from "./define"
 
 const factoryStrategy: OAuthProviderStrategy = {
   flowType: "device",
@@ -65,15 +64,13 @@ const refreshAuth = prepareOAuthRefresh(
 )
 
 export function getFactoryModule(): ProviderModule {
-  return {
+  return defineOAuthProviderModule({
     id: "factory",
-    descriptor: getProviderDescriptor("factory"),
     fetchQuota: fetchFactoryQuota,
     fallbackModels: getFactoryFallbackModels,
     adapter: factoryNativeAdapter,
-    createRuntime: () => createOAuthProviderRuntime("factory"),
     oauth: factoryStrategy,
     refreshAuth,
     refreshLeadMs: 2 * 60 * 1000,
-  }
+  })
 }

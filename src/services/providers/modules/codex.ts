@@ -1,13 +1,11 @@
 import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { codexCallbackConfig } from "~/services/providers/callbacks/codex"
-import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { accountModelsToMappings } from "~/services/providers/model-catalogs/account-mapping"
 import { getCodexModelsForConnection } from "~/services/codex/get-models"
 import { getCodexFallbackModels } from "~/services/providers/model-catalogs/codex"
 import { fetchCodexQuota } from "~/lib/quota/fetchers/codex"
 import type { ProviderModule } from "~/services/providers/module"
 import { codexNativeAdapter } from "~/services/protocols/codex-native"
-import { createOAuthProviderRuntime } from "~/services/providers/oauth"
 import {
   createOAuthConnection,
   applyFlowSettingsToConnection,
@@ -25,6 +23,7 @@ import {
   codexCliRefreshTokenIfRotated,
   writeCodexCliCredentials,
 } from "~/services/oauth/codex-cli-auth"
+import { defineOAuthProviderModule } from "./define"
 
 const codexStrategy: OAuthProviderStrategy = {
   flowType: "pkce-callback",
@@ -76,9 +75,8 @@ const refreshAuth = prepareOAuthRefresh(
 )
 
 export function getCodexModule(): ProviderModule {
-  return {
+  return defineOAuthProviderModule({
     id: "codex",
-    descriptor: getProviderDescriptor("codex"),
     callback: codexCallbackConfig,
     fetchQuota: fetchCodexQuota,
     fallbackModels: getCodexFallbackModels,
@@ -88,9 +86,8 @@ export function getCodexModule(): ProviderModule {
       )
     },
     adapter: codexNativeAdapter,
-    createRuntime: () => createOAuthProviderRuntime("codex"),
     oauth: codexStrategy,
     refreshAuth,
     refreshLeadMs: 24 * 60 * 60 * 1000,
-  }
+  })
 }

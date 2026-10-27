@@ -1,13 +1,11 @@
 import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { claudeCallbackConfig } from "~/services/providers/callbacks/claude"
-import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { accountModelsToMappings } from "~/services/providers/model-catalogs/account-mapping"
 import { getClaudeModelsForConnection } from "~/services/claude/get-models"
 import { getClaudeFallbackModels } from "~/services/providers/model-catalogs/claude"
 import { fetchClaudeQuota } from "~/lib/quota/fetchers/claude"
 import type { ProviderModule } from "~/services/providers/module"
 import { claudeNativeAdapter } from "~/services/protocols/claude-native"
-import { createOAuthProviderRuntime } from "~/services/providers/oauth"
 import {
   createOAuthConnection,
   applyFlowSettingsToConnection,
@@ -21,6 +19,7 @@ import {
   fetchClaudeBootstrapIdentity,
   refreshClaudeTokens,
 } from "~/services/oauth/claude"
+import { defineOAuthProviderModule } from "./define"
 
 const claudeStrategy: OAuthProviderStrategy = {
   flowType: "pkce-callback",
@@ -73,9 +72,8 @@ const refreshAuth = prepareOAuthRefresh(
 )
 
 export function getClaudeModule(): ProviderModule {
-  return {
+  return defineOAuthProviderModule({
     id: "claude",
-    descriptor: getProviderDescriptor("claude"),
     callback: claudeCallbackConfig,
     fetchQuota: fetchClaudeQuota,
     fallbackModels: getClaudeFallbackModels,
@@ -85,9 +83,8 @@ export function getClaudeModule(): ProviderModule {
       )
     },
     adapter: claudeNativeAdapter,
-    createRuntime: () => createOAuthProviderRuntime("claude"),
     oauth: claudeStrategy,
     refreshAuth,
     refreshLeadMs: 4 * 60 * 60 * 1000,
-  }
+  })
 }

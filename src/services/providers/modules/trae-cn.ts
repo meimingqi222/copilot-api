@@ -9,13 +9,11 @@
 
 import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { traeCnCallbackConfig } from "~/services/providers/callbacks/trae-cn"
-import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { getTraeCnFallbackModels } from "~/services/providers/model-catalogs/trae-cn"
 import { fetchTraeCnQuota } from "~/lib/quota/fetchers/trae-cn"
 import type { ModelMapping } from "~/lib/provider-connections"
 import type { ProviderModule } from "~/services/providers/module"
 import { traeCnNativeAdapter } from "~/services/protocols/trae-cn-native"
-import { createOAuthProviderRuntime } from "~/services/providers/oauth"
 import {
   applyFlowSettingsToConnection,
   createOAuthConnection,
@@ -43,6 +41,7 @@ import {
   traeCnListModels,
   type TraeCnPostResult,
 } from "~/services/trae-cn/client"
+import { defineOAuthProviderModule } from "./define"
 
 // 登录时生成的设备指纹按 flow.state（login_trace_id）暂存——Trae 的授权
 // URL 与之后每个请求都用同一对 deviceId/machineId（插件实测换新的会被
@@ -173,17 +172,15 @@ async function discoverTraeCnModels(
 }
 
 export function getTraeCnModule(): ProviderModule {
-  return {
+  return defineOAuthProviderModule({
     id: "trae-cn",
-    descriptor: getProviderDescriptor("trae-cn"),
     callback: traeCnCallbackConfig,
     fetchQuota: fetchTraeCnQuota,
     fallbackModels: getTraeCnFallbackModels,
     discoverModels: discoverTraeCnModels,
     adapter: traeCnNativeAdapter,
-    createRuntime: () => createOAuthProviderRuntime("trae-cn"),
     oauth: traeCnStrategy,
     refreshAuth,
     refreshLeadMs: 10 * 60 * 1000, // JWT 到期前 10 分钟就换（插件的 LEAD_MS）
-  }
+  })
 }

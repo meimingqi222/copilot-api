@@ -22,6 +22,7 @@ import { asRecord } from "~/lib/json-shape"
 
 import { applyOAuthBundleToCredential } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
+import { asStringOrEmpty } from "~/lib/json-shape"
 
 export const COMMANDCODE_CALLBACK_PORT = 59654
 export const COMMANDCODE_CALLBACK_PATH = "/callback"
@@ -49,10 +50,6 @@ export function buildCommandCodeAuthUrl(state: string): string {
   })
   return `${COMMANDCODE_STUDIO}/studio/auth/cli?${query.toString()}`
 }
-function str(value: unknown): string {
-  return typeof value === "string" ? value : ""
-}
-
 async function commandCodeGet(
   path: string,
   apiKey: string,
@@ -88,9 +85,12 @@ async function fetchCommandCodeWhoami(
   const data = asRecord(await commandCodeGet("/alpha/whoami", apiKey, options))
   const user = asRecord(data?.user)
   return {
-    userName: str(user?.userName) || str(user?.name) || undefined,
-    email: str(user?.email) || undefined,
-    userId: str(user?.id) || undefined,
+    userName:
+      asStringOrEmpty(user?.userName)
+      || asStringOrEmpty(user?.name)
+      || undefined,
+    email: asStringOrEmpty(user?.email) || undefined,
+    userId: asStringOrEmpty(user?.id) || undefined,
   }
 }
 
@@ -108,7 +108,10 @@ async function fetchCommandCodePlan(
     const list = Array.isArray(data) ? data : [data]
     for (const item of list) {
       const sub = asRecord(item)
-      const name = str(sub?.plan) || str(sub?.name) || str(sub?.tier)
+      const name =
+        asStringOrEmpty(sub?.plan)
+        || asStringOrEmpty(sub?.name)
+        || asStringOrEmpty(sub?.tier)
       if (name) return name
     }
   } catch {

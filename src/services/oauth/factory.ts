@@ -33,6 +33,7 @@ import {
 
 import { applyOAuthBundleToCredential } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
+import { delay } from "~/lib/delay"
 
 const FACTORY_WORKOS_BASE = "https://api.workos.com/user_management"
 export const FACTORY_API_BASE = "https://api.factory.ai"
@@ -171,20 +172,6 @@ export async function startFactoryDeviceFlow(
 
 const MAX_POLL_DURATION_MS = 15 * 60 * 1000
 
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, ms)
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer)
-        reject(new Error("aborted"))
-      },
-      { once: true },
-    )
-  })
-}
-
 /**
  * 轮询 WorkOS 直到用户确认设备码。返回 token bundle（含 whoami 身份）。
  * 边界：authorization_pending 继续、slow_down 拉长间隔、expired_token /
@@ -213,7 +200,7 @@ export async function pollFactoryDeviceAuthorization(
         "",
       )
     }
-    await sleep(intervalMs, options?.signal)
+    await delay(intervalMs, options?.signal)
 
     const tokens = await workosPost(
       "/authenticate",

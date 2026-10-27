@@ -45,6 +45,7 @@ import { newQoderMachineId } from "~/services/qoder/ids"
 import { applyOAuthBundleToCredential } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
 import { generatePkceCodes } from "./pkce"
+import { delay } from "~/lib/delay"
 
 /** 设备流轮询间隔（2s）。 */
 export const QODER_DEVICE_POLL_INTERVAL_MS = 2000
@@ -115,10 +116,6 @@ export function createQoderAuthRequest(site: QoderSite = QODER_SITES.qoder): {
     nonce,
     machineId,
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 /** 设备 token 的到期：expires_at（RFC3339 或秒/毫秒纪元）+ expires_in（毫秒）兜底。 */
@@ -198,7 +195,7 @@ export async function pollQoderDeviceToken(params: {
         // 非 JSON：还没好，继续轮询。
       }
     }
-    await sleep(intervalMs)
+    await delay(intervalMs)
   }
 
   throw new Error("Qoder device authorization timed out")

@@ -26,6 +26,8 @@ import { asRecord } from "~/lib/json-shape"
 
 import { applyOAuthBundleToCredential } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
+import { delay } from "~/lib/delay"
+import { asStringOrEmpty } from "~/lib/json-shape"
 
 export const ZCODE_API = "https://zcode.z.ai"
 /**
@@ -96,10 +98,6 @@ function zcodeAnthropicBase(site: ZcodeSite): string {
 function zcodeUserAgent(): string {
   return `ZCode/${ZCODE_APP_VERSION}`
 }
-function str(value: unknown): string {
-  return typeof value === "string" ? value : ""
-}
-
 /** Z.ai 的 JSON 端点把内容包在 {code,msg,data}：code 0/200 才算成功。 */
 async function zcodeCall(
   url: string,
@@ -127,7 +125,7 @@ async function zcodeCall(
     env = {}
   }
   if (!response.ok) {
-    const msg = str(env.msg)
+    const msg = asStringOrEmpty(env.msg)
     throw new HTTPError(
       msg ?
         `${msg} (${response.status})`
@@ -136,10 +134,11 @@ async function zcodeCall(
       text,
     )
   }
-  const code = typeof env.code === "number" ? String(env.code) : str(env.code)
+  const code =
+    typeof env.code === "number" ? String(env.code) : asStringOrEmpty(env.code)
   if (code && code !== "0" && code !== "200" && code !== "null") {
     throw new HTTPError(
-      str(env.msg) || `ZCode error ${code}`,
+      asStringOrEmpty(env.msg) || `ZCode error ${code}`,
       new Response(null, { status: 502 }),
       text,
     )
@@ -170,8 +169,8 @@ export async function startZcodeSignIn(
       options,
     ),
   )
-  const flowId = str(data?.flow_id)
-  const rawUrl = str(data?.authorize_url)
+  const flowId = asStringOrEmpty(data?.flow_id)
+  const rawUrl = asStringOrEmpty(data?.authorize_url)
   if (!flowId || !rawUrl) {
     throw new HTTPError(
       "ZCode gave no sign-in page",
@@ -204,20 +203,6 @@ export async function startZcodeSignIn(
   }
 }
 
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, ms)
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer)
-        reject(new Error("aborted"))
-      },
-      { once: true },
-    )
-  })
-}
-
 /** 轮询登录流程直到 ready，返回会话 token 与身份。 */
 async function pollZcodeSignIn(
   start: ZcodeSignInStart,
@@ -233,7 +218,7 @@ async function pollZcodeSignIn(
         "",
       )
     }
-    await sleep(start.intervalMs, options?.signal)
+    await delay(start.intervalMs, options?.signal)
 
     const data = asRecord(
       await zcodeCall(
@@ -245,7 +230,7 @@ async function pollZcodeSignIn(
         options,
       ),
     )
-    const status = str(data?.status)
+    const status = asStringOrEmpty(data?.status)
     if (status === "pending" || status === "") continue
     if (status === "failed") {
       throw new HTTPError(
@@ -263,7 +248,8 @@ async function pollZcodeSignIn(
     }
     const siteBlock = asRecord(site === "bigmodel" ? data?.bigmodel : data?.zai)
     const sessionToken =
-      str(siteBlock?.access_token) || str(siteBlock?.accessToken)
+      asStringOrEmpty(siteBlock?.access_token)
+      || asStringOrEmpty(siteBlock?.accessToken)
     if (!sessionToken) {
       throw new HTTPError(
         "ZCode sign-in returned no token",
@@ -275,9 +261,9 @@ async function pollZcodeSignIn(
     return {
       sessionToken,
       // 顶层 token 是 ZCode 自己的会话 JWT（Start Plan 的凭证）。
-      jwt: str(data?.token) || undefined,
-      email: str(user?.email) || undefined,
-      userId: str(user?.user_id) || undefined,
+      jwt: asStringOrEmpty(data?.token) || undefined,
+      email: asStringOrEmpty(user?.email) || undefined,
+      userId: asStringOrEmpty(user?.user_id) || undefined,
     }
   }
 }
@@ -296,7 +282,7 @@ async function zcodeBizAuth(
       options,
     ),
   )
-  const bizToken = str(data?.access_token)
+  const bizToken = asStringOrEmpty(data?.access_token)
   if (!bizToken) {
     throw new HTTPError(
       "Z.ai sign-in: no business token",
@@ -332,18 +318,18 @@ export async function mintZcodeKey(
   for (const raw of orgs) {
     const o = asRecord(raw)
     if (!o) continue
-    const orgId = str(o.organizationId)
-    const orgName = str(o.organizationName)
+    const orgId = asStringOrEmpty(o.organizationId)
+    const orgName = asStringOrEmpty(o.organizationName)
     const projects = Array.isArray(o.projects) ? o.projects : []
     let def = ""
     const ids: Array<string> = []
     for (const rawP of projects) {
       const p = asRecord(rawP)
       if (!p) continue
-      const pid = str(p.projectId)
+      const pid = asStringOrEmpty(p.projectId)
       if (!pid || String(p.projectType) === "2") continue
       ids.push(pid)
-      if (!def && str(p.projectName).includes("默认项目")) def = pid
+      if (!def && asStringOrEmpty(p.projectName).includes("默认项目")) def = pid
     }
     if (!orgId || ids.length === 0) continue
     if (!def) def = ids[0]!
@@ -372,8 +358,11 @@ export async function mintZcodeKey(
     for (const raw of list) {
       const k = asRecord(raw)
       if (!k) continue
-      if (str(k.name) === "zcode-api-key" && str(k.apiKey).trim()) {
-        id = str(k.apiKey).trim()
+      if (
+        asStringOrEmpty(k.name) === "zcode-api-key"
+        && asStringOrEmpty(k.apiKey).trim()
+      ) {
+        id = asStringOrEmpty(k.apiKey).trim()
       }
     }
   }
@@ -389,7 +378,7 @@ export async function mintZcodeKey(
         options,
       ),
     )
-    id = str(made?.apiKey).trim()
+    id = asStringOrEmpty(made?.apiKey).trim()
   }
   if (!id) {
     throw new HTTPError(
@@ -405,7 +394,7 @@ export async function mintZcodeKey(
       options,
     ),
   )
-  const secretKey = str(secret?.secretKey).trim()
+  const secretKey = asStringOrEmpty(secret?.secretKey).trim()
   if (!secretKey) {
     throw new HTTPError(
       `${site === "bigmodel" ? "BigModel" : "Z.ai"} gave no API key secret`,

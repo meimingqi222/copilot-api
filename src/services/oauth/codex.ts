@@ -1,18 +1,21 @@
 import type { ProviderConnection } from "~/lib/provider-connections"
 
-import { getConnectionSettings } from "~/lib/provider-connections"
-
 import {
   applyOAuthBundleToCredential,
   applyOAuthConnectionSettings,
 } from "./apply-bundle"
-import { oauthFetch, type OAuthFetchOptions } from "./fetch"
+import type { OAuthFetchOptions } from "./fetch"
 import {
   extractCodexAccountIdFromIdToken,
   extractCodexPlanTypeFromIdToken,
   extractEmailFromIdToken,
 } from "./jwt"
 import { generateOAuthState, generatePkceCodes, type PkceCodes } from "./pkce"
+import {
+  oauthTokenBundle,
+  postOAuthTokenForm,
+  readSettingString,
+} from "./token-response"
 
 const CODEX_AUTH_URL = "https://auth.openai.com/oauth/authorize"
 const CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token"
@@ -70,19 +73,16 @@ export function createCodexOAuthStart(pkce = generatePkceCodes()): {
 }
 
 function mapTokenResponse(token: CodexTokenResponse): CodexOAuthBundle {
-  if (!token.access_token) {
-    throw new Error("Codex token response missing access_token")
-  }
-  return {
-    accessToken: token.access_token,
-    refreshToken: token.refresh_token,
-    idToken: token.id_token,
-    expiresAt:
-      token.expires_in ? Date.now() + token.expires_in * 1000 : undefined,
-    accountId: extractCodexAccountIdFromIdToken(token.id_token),
-    email: extractEmailFromIdToken(token.id_token),
-    planType: extractCodexPlanTypeFromIdToken(token.id_token),
-  }
+  return oauthTokenBundle(
+    token,
+    "Codex token response missing access_token",
+    (payload) => ({
+      idToken: payload.id_token,
+      accountId: extractCodexAccountIdFromIdToken(payload.id_token),
+      email: extractEmailFromIdToken(payload.id_token),
+      planType: extractCodexPlanTypeFromIdToken(payload.id_token),
+    }),
+  )
 }
 
 export async function exchangeCodexCodeForTokens(
@@ -98,27 +98,15 @@ export async function exchangeCodexCodeForTokens(
     code_verifier: pkce.codeVerifier,
   })
 
-  const response = await oauthFetch(
-    CODEX_TOKEN_URL,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
-      },
-      body: body.toString(),
-    },
-    options,
+  return mapTokenResponse(
+    await postOAuthTokenForm<CodexTokenResponse>({
+      url: CODEX_TOKEN_URL,
+      form: body,
+      options,
+      errorMessage: (status, text) =>
+        `Codex token exchange failed (${status}): ${text.slice(0, 200)}`,
+    }),
   )
-
-  if (!response.ok) {
-    const text = await response.text()
-    throw new Error(
-      `Codex token exchange failed (${response.status}): ${text.slice(0, 200)}`,
-    )
-  }
-
-  return mapTokenResponse((await response.json()) as CodexTokenResponse)
 }
 
 export async function refreshCodexTokens(
@@ -132,34 +120,22 @@ export async function refreshCodexTokens(
     scope: "openid profile email",
   })
 
-  const response = await oauthFetch(
-    CODEX_TOKEN_URL,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
+  const bundle = mapTokenResponse(
+    await postOAuthTokenForm<CodexTokenResponse>({
+      url: CODEX_TOKEN_URL,
+      form: body,
+      options: {
+        ...options,
+        // Refresh must outlive the downstream request that triggered it, but it
+        // must not hang forever. This matches CPA's independent 30s refresh ctx.
+        signal: AbortSignal.timeout(CODEX_REFRESH_TIMEOUT_MS),
       },
-      body: body.toString(),
-    },
-    {
-      ...options,
-      // Refresh must outlive the downstream request that triggered it, but it
-      // must not hang forever. This matches CPA's independent 30s refresh ctx.
-      signal: AbortSignal.timeout(CODEX_REFRESH_TIMEOUT_MS),
-    },
+      errorMessage: (status, text) =>
+        // 不要截太狠：上游把错误码放在 JSON 尾部（如
+        // `"code":"refresh_token_invalidated"`），截断会让终态判定漏判成瞬态错误。
+        `Codex token refresh failed (${status}): ${text.slice(0, 1000)}`,
+    }),
   )
-
-  if (!response.ok) {
-    const text = await response.text()
-    throw new Error(
-      // 不要截太狠：上游把错误码放在 JSON 尾部（如
-      // `"code":"refresh_token_invalidated"`），截断会让终态判定漏判成瞬态错误。
-      `Codex token refresh failed (${response.status}): ${text.slice(0, 1000)}`,
-    )
-  }
-
-  const bundle = mapTokenResponse((await response.json()) as CodexTokenResponse)
   return {
     ...bundle,
     refreshToken: bundle.refreshToken ?? refreshToken,
@@ -179,12 +155,4 @@ export function applyCodexOAuthBundle(
   applyOAuthConnectionSettings(connection, {
     baseUrl: readSettingString(connection, "baseUrl") ?? CODEX_API_BASE_URL,
   })
-}
-
-function readSettingString(
-  connection: ProviderConnection,
-  key: string,
-): string | undefined {
-  const value = getConnectionSettings(connection)?.[key]
-  return typeof value === "string" && value ? value : undefined
 }

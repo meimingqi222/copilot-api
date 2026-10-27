@@ -1,10 +1,8 @@
 import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { dimagentCallbackConfig } from "~/services/providers/callbacks/dimagent"
-import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { fetchDimagentQuota } from "~/lib/quota/fetchers/dimagent"
 import type { ProviderModule } from "~/services/providers/module"
 import { dimagentNativeAdapter } from "~/services/protocols/dimagent-native"
-import { createOAuthProviderRuntime } from "~/services/providers/oauth"
 import {
   createOAuthConnection,
   applyFlowSettingsToConnection,
@@ -20,6 +18,7 @@ import {
   newDimagentPkce,
   refreshDimagentTokens,
 } from "~/services/oauth/dimagent"
+import { defineOAuthProviderModule } from "./define"
 
 const dimagentStrategy: OAuthProviderStrategy = {
   flowType: "pkce-callback",
@@ -59,15 +58,13 @@ const refreshAuth = prepareOAuthRefresh(
 )
 
 export function getDimagentModule(): ProviderModule {
-  return {
+  return defineOAuthProviderModule({
     id: "dimagent",
-    descriptor: getProviderDescriptor("dimagent"),
     callback: dimagentCallbackConfig,
     fetchQuota: fetchDimagentQuota,
     fallbackModels: () => [],
     adapter: dimagentNativeAdapter,
-    createRuntime: () => createOAuthProviderRuntime("dimagent"),
     oauth: dimagentStrategy,
     refreshAuth,
-  }
+  })
 }

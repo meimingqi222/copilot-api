@@ -1,10 +1,8 @@
 import { prepareOAuthRefresh } from "~/services/providers/auth-update"
-import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { getZcodeFallbackModels } from "~/services/providers/model-catalogs/zcode"
 import { fetchZcodeQuota } from "~/lib/quota/fetchers/zcode"
 import type { ProviderModule } from "~/services/providers/module"
 import { zcodeNativeAdapter } from "~/services/protocols/zcode-native"
-import { createOAuthProviderRuntime } from "~/services/providers/oauth"
 import {
   createOAuthConnection,
   applyFlowSettingsToConnection,
@@ -17,6 +15,7 @@ import {
   startZcodeSignIn,
   zcodeSignInAndMint,
 } from "~/services/oauth/zcode"
+import { defineOAuthProviderModule } from "./define"
 
 const zcodeStrategy: OAuthProviderStrategy = {
   flowType: "device",
@@ -66,14 +65,12 @@ const refreshAuth = prepareOAuthRefresh(async () => {
 })
 
 export function getZcodeModule(): ProviderModule {
-  return {
+  return defineOAuthProviderModule({
     id: "zcode",
-    descriptor: getProviderDescriptor("zcode"),
     fetchQuota: fetchZcodeQuota,
     fallbackModels: getZcodeFallbackModels,
     adapter: zcodeNativeAdapter,
-    createRuntime: () => createOAuthProviderRuntime("zcode"),
     oauth: zcodeStrategy,
     refreshAuth,
-  }
+  })
 }

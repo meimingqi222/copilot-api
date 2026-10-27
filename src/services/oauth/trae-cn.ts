@@ -28,6 +28,7 @@ import { asRecordOrEmpty } from "~/lib/json-shape"
 
 import { applyOAuthBundleToCredential } from "~/services/oauth/apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "~/services/oauth/fetch"
+import { asTrimmedStringOrEmpty } from "~/lib/json-shape"
 
 // ── 端点与客户端常量 ────────────────────────────────────────────
 
@@ -53,10 +54,6 @@ export {
 } from "~/services/trae-cn/constants"
 
 // ── 小工具 ──────────────────────────────────────────────────────
-
-function asStr(value: unknown): string {
-  return typeof value === "string" ? value.trim() : ""
-}
 
 /** Trae 的到期时间：秒、毫秒或 ISO 字符串，统一为毫秒；读不出为 0。 */
 export function traeWhenOf(value: unknown): number {
@@ -206,13 +203,14 @@ export async function parseTraeCnCallbackCode(
   }
 
   const signIn: TraeCnSignIn = {
-    token: asStr(jwt.Token ?? jwt.token),
-    refresh: asStr(jwt.RefreshToken ?? jwt.refreshToken),
+    token: asTrimmedStringOrEmpty(jwt.Token ?? jwt.token),
+    refresh: asTrimmedStringOrEmpty(jwt.RefreshToken ?? jwt.refreshToken),
     expires: traeWhenOf(jwt.TokenExpireAt ?? jwt.tokenExpireAt),
-    clientId: asStr(jwt.ClientID ?? jwt.clientId) || TRAE_CN_CLIENT_ID,
-    uid: asStr(info.UserID ?? info.userId),
-    name: asStr(info.ScreenName ?? info.screenName),
-    api: asStr(info.Host) || asStr(jwt.Host),
+    clientId:
+      asTrimmedStringOrEmpty(jwt.ClientID ?? jwt.clientId) || TRAE_CN_CLIENT_ID,
+    uid: asTrimmedStringOrEmpty(info.UserID ?? info.userId),
+    name: asTrimmedStringOrEmpty(info.ScreenName ?? info.screenName),
+    api: asTrimmedStringOrEmpty(info.Host) || asTrimmedStringOrEmpty(jwt.Host),
     device,
   }
   if (!signIn.token && signIn.refresh) {
@@ -450,7 +448,7 @@ async function readTraeCnTokenExchange(
     v = {}
   }
   const r = asRecordOrEmpty(v.Result ?? v.result ?? v)
-  const token = asStr(r.Token ?? r.token)
+  const token = asTrimmedStringOrEmpty(r.Token ?? r.token)
   if (response.ok && token) {
     const userInfo = r.UserInfo ?? r.userInfo
     const info = asRecordOrEmpty(
@@ -458,14 +456,17 @@ async function readTraeCnTokenExchange(
     )
     return {
       token,
-      refresh: asStr(r.RefreshToken ?? r.refreshToken) || refresh,
+      refresh:
+        asTrimmedStringOrEmpty(r.RefreshToken ?? r.refreshToken) || refresh,
       expires:
         traeWhenOf(r.TokenExpireAt ?? r.tokenExpireAt) || traeJwtExp(token),
       clientId:
-        asStr(r.ClientID ?? r.clientId) || clientId || TRAE_CN_CLIENT_ID,
-      uid: asStr(info.UserID ?? info.userId ?? r.UserID),
-      name: asStr(info.ScreenName ?? info.screenName),
-      api: asStr(info.Host),
+        asTrimmedStringOrEmpty(r.ClientID ?? r.clientId)
+        || clientId
+        || TRAE_CN_CLIENT_ID,
+      uid: asTrimmedStringOrEmpty(info.UserID ?? info.userId ?? r.UserID),
+      name: asTrimmedStringOrEmpty(info.ScreenName ?? info.screenName),
+      api: asTrimmedStringOrEmpty(info.Host),
     }
   }
   const e = traeCnErrorOf(text)

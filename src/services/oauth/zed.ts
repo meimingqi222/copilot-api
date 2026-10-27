@@ -34,6 +34,7 @@ import { asRecord } from "~/lib/json-shape"
 
 import { applyOAuthBundleToCredential } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
+import { asStringOrEmpty } from "~/lib/json-shape"
 
 export const ZED_SITE = "https://zed.dev"
 export const ZED_CLOUD = "https://cloud.zed.dev"
@@ -127,10 +128,6 @@ interface ZedMe {
   org?: string
   plan?: string
 }
-function str(value: unknown): string {
-  return typeof value === "string" ? value : ""
-}
-
 async function zedCloud(input: {
   path: string
   method: "GET" | "POST"
@@ -189,29 +186,32 @@ export async function fetchZedMe(
   )
   const user = asRecord(root?.user)
   const orgs = Array.isArray(root?.organizations) ? root!.organizations : []
-  const defaultOrg = str(root?.default_organization_id)
+  const defaultOrg = asStringOrEmpty(root?.default_organization_id)
   let org = ""
   for (const raw of orgs) {
     const o = asRecord(raw)
     if (!o) continue
-    if (str(o.id) === defaultOrg) {
+    if (asStringOrEmpty(o.id) === defaultOrg) {
       org = defaultOrg
       break
     }
-    if (!org) org = str(o.id)
+    if (!org) org = asStringOrEmpty(o.id)
   }
   const plans = asRecord(root?.plans_by_organization)
   const planObj = asRecord(root?.plan)
   return {
     userId: uid,
     login:
-      str(user?.github_login)
-      || str(user?.username)
-      || str(user?.name)
+      asStringOrEmpty(user?.github_login)
+      || asStringOrEmpty(user?.username)
+      || asStringOrEmpty(user?.name)
       || undefined,
-    name: str(user?.name) || undefined,
+    name: asStringOrEmpty(user?.name) || undefined,
     org: org || defaultOrg || undefined,
-    plan: (org ? str(plans?.[org]) : "") || str(planObj?.plan_v3) || undefined,
+    plan:
+      (org ? asStringOrEmpty(plans?.[org]) : "")
+      || asStringOrEmpty(planObj?.plan_v3)
+      || undefined,
   }
 }
 
@@ -234,7 +234,7 @@ export async function fetchZedLlmToken(
       options,
     }),
   )
-  const llm = str(root?.token)
+  const llm = asStringOrEmpty(root?.token)
   if (!llm) {
     throw new HTTPError(
       "Zed: no model token in the reply",

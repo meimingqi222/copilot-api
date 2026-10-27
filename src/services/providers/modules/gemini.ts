@@ -1,10 +1,8 @@
 import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { geminiCallbackConfig } from "~/services/providers/callbacks/gemini"
-import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { fetchGeminiQuota } from "~/lib/quota/fetchers/gemini"
 import type { ProviderModule } from "~/services/providers/module"
 import { geminiNativeAdapter } from "~/services/protocols/gemini-native"
-import { createOAuthProviderRuntime } from "~/services/providers/oauth"
 import {
   createOAuthConnection,
   applyFlowSettingsToConnection,
@@ -22,6 +20,7 @@ import {
   resolveGeminiProject,
   refreshGeminiTokens,
 } from "~/services/oauth/gemini"
+import { defineOAuthProviderModule } from "./define"
 
 const geminiStrategy: OAuthProviderStrategy = {
   flowType: "pkce-callback",
@@ -70,15 +69,13 @@ const refreshAuth = prepareOAuthRefresh(
 )
 
 export function getGeminiModule(): ProviderModule {
-  return {
+  return defineOAuthProviderModule({
     id: "gemini",
-    descriptor: getProviderDescriptor("gemini"),
     callback: geminiCallbackConfig,
     fetchQuota: fetchGeminiQuota,
     fallbackModels: () => [],
     adapter: geminiNativeAdapter,
-    createRuntime: () => createOAuthProviderRuntime("gemini"),
     oauth: geminiStrategy,
     refreshAuth,
-  }
+  })
 }
