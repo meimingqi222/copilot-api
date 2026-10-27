@@ -15,6 +15,7 @@ import { parseCodexUsagePayload } from "~/lib/quota/parsers"
 import { getProviderConnection } from "~/lib/provider-connections"
 import { parseModelReference } from "~/lib/route-target/model-reference"
 import { statsStore } from "~/lib/stats-store"
+import { asNumber } from "~/lib/json-shape"
 
 const CYCLE_USAGE_PROVIDERS = new Set<OAuthProviderId>([
   "codex",
@@ -46,19 +47,6 @@ const CLAUDE_WINDOW_LABEL_KEYS: Record<string, string> = {
 
 const MS_PER_HOUR = 3_600_000
 const MS_PER_DAY = 86_400_000
-
-function normalizeNumber(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value
-  }
-  if (typeof value === "string") {
-    const parsed = Number(value.trim())
-    if (Number.isFinite(parsed)) {
-      return parsed
-    }
-  }
-  return undefined
-}
 
 function parseIsoMs(value: unknown): number | undefined {
   if (typeof value !== "string" || !value.trim()) {
@@ -119,7 +107,7 @@ function kimiResetEndMs(data: Record<string, unknown>): number | undefined {
     }
   }
   for (const key of ["reset_in", "resetIn", "ttl"]) {
-    const seconds = normalizeNumber(data[key])
+    const seconds = asNumber(data[key])
     if (seconds !== undefined && seconds > 0) {
       return Date.now() + seconds * 1000
     }
@@ -131,7 +119,7 @@ function kimiWindowDurationMs(
   data: Record<string, unknown>,
   endMs: number,
 ): number | undefined {
-  const duration = normalizeNumber(data.duration)
+  const duration = asNumber(data.duration)
   const timeUnit =
     typeof data.timeUnit === "string" ? data.timeUnit.trim().toUpperCase() : ""
   if (duration !== undefined && duration > 0) {
@@ -244,7 +232,7 @@ export function resolveAntigravityQuotaWindows(
       const bucketId =
         bucket.bucketId || bucket.bucket_id || bucket.window || "bucket"
       const bucketLabel = bucket.displayName || bucket.display_name || bucketId
-      const fraction = normalizeNumber(
+      const fraction = asNumber(
         bucket.remainingFraction ?? bucket.remaining_fraction,
       )
       const usedPercent =

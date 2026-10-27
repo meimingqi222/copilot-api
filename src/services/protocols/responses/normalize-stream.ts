@@ -1,4 +1,6 @@
 import type { CopilotStreamEventLike } from "~/services/protocols/responses/types"
+import { outputItemKey } from "~/services/responses/output-item"
+import { isNonEmptyString } from "~/lib/json-shape"
 
 interface NormalizedOutputState {
   callId?: string
@@ -72,9 +74,9 @@ function collectAndHydrateCompletedOutput(
   if (output && output.length > 0) {
     for (const [index, value] of output.entries()) {
       const item = getRecord(value)
-      if (!item || hasNonEmptyString(item.id)) continue
+      if (!item || isNonEmptyString(item.id)) continue
       const completedId = state.completedOutputItems.get(index)?.id
-      if (hasNonEmptyString(completedId)) {
+      if (isNonEmptyString(completedId)) {
         item.id = completedId
         state.changed = true
       }
@@ -123,14 +125,6 @@ function hasOutputItem(
     const item = getRecord(value)
     return item ? outputItemKey(item) === candidateKey : false
   })
-}
-
-function outputItemKey(item: Record<string, unknown>): string | undefined {
-  const type = getString(item.type) ?? ""
-  const id = getString(item.id)
-  if (id) return `${type}:id:${id}`
-  const callId = getString(item.call_id)
-  return callId ? `${type}:call_id:${callId}` : undefined
 }
 
 function normalizeParsedEvent(
@@ -314,8 +308,4 @@ function getRecord(value: unknown): Record<string, unknown> | undefined {
 
 function getString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined
-}
-
-function hasNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0
 }

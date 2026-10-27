@@ -16,6 +16,7 @@ import os from "node:os"
 import path from "node:path"
 
 import { logger } from "~/lib/logger"
+import { delay } from "~/lib/delay"
 
 class CdpError extends Error {
   constructor(message: string) {
@@ -59,10 +60,6 @@ interface ChromeBrowser {
 
 const COMMAND_TIMEOUT_MS = 30_000
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
 function tail(text: string, limit = 600): string {
   const trimmed = text.trim()
   return trimmed.length <= limit ? trimmed : `…${trimmed.slice(-limit)}`
@@ -95,7 +92,7 @@ async function waitForDevToolsPort(
     } catch {
       /* not written yet */
     }
-    await sleep(100)
+    await delay(100)
   }
   throw new CdpError(
     `Chrome did not expose a debugging port within ${timeoutMs}ms ${tail(stderr())}`.trim(),
@@ -261,7 +258,7 @@ export async function launchChrome(
         /* the browser is probably already gone */
       }
       connection.close()
-      for (let i = 0; i < 20 && child.exitCode === null; i++) await sleep(50)
+      for (let i = 0; i < 20 && child.exitCode === null; i++) await delay(50)
       if (child.exitCode === null) {
         child.kill("SIGKILL")
       }

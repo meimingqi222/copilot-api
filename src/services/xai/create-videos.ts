@@ -3,16 +3,9 @@ import type {
   ProviderConnection,
 } from "~/lib/provider-connections"
 
-import { HTTPError } from "~/lib/error"
-import { serializeUpstreamBody } from "~/lib/upstream-performance"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
-import { logger } from "~/lib/logger"
-import { getConnectionSettings } from "~/lib/provider-connections"
-import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
-import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"
-import { XAI_API_BASE_URL } from "~/services/oauth/xai"
-
-import { buildXaiHeaders } from "./headers"
+import { xaiApiBaseUrl } from "./endpoint"
+import { xaiMediaRequest } from "./media-request"
 
 /**
  * OpenAI-compatible video generation request payload.
@@ -107,15 +100,6 @@ function mapVideoSize(size: string | undefined): {
   return map[lower] ?? { aspect_ratio: "16:9", resolution: "720p" }
 }
 
-function resolveBaseUrl(connection: ProviderConnection): string {
-  const settingsBase = getConnectionSettings(connection)?.baseUrl
-  return (
-    typeof settingsBase === "string" ? settingsBase : XAI_API_BASE_URL).replace(
-    /\/+$/,
-    "",
-  )
-}
-
 function parseDuration(seconds: string | number | undefined): number {
   const n =
     typeof seconds === "number" ? seconds : Number.parseInt(String(seconds), 10)
@@ -143,19 +127,8 @@ export async function createXaiVideoGeneration(
     throw new Error("xAI video generation requires an xAI OAuth connection")
   }
 
-  const accessToken = await ensureOAuthConnectionAccessToken(
-    connection,
-    credential,
-  )
-  if (!accessToken) {
-    throw new Error(
-      `xAI access token missing for connection "${connection.name}"`,
-    )
-  }
-
   const model = canonicalNativeModelId(payload.model)
-  const baseUrl = resolveBaseUrl(connection)
-  const url = `${baseUrl}/videos/generations`
+  const url = `${xaiApiBaseUrl(connection)}/videos/generations`
   const { aspect_ratio, resolution } = mapVideoSize(payload.size)
   let duration = parseDuration(payload.seconds)
 
@@ -183,37 +156,17 @@ export async function createXaiVideoGeneration(
     upstreamBody.reference_images = payload.reference_images
   }
 
-  const headers = buildXaiHeaders(
-    accessToken,
-    false,
-    undefined,
-    false,
-    connection.headers,
-  )
-  if (idempotencyKey) {
-    headers["x-idempotency-key"] = idempotencyKey
-  }
-
-  const response = await fetchWithConnectionProxy(connection, url, {
-    method: "POST",
-    headers,
-    body: serializeUpstreamBody(upstreamBody),
+  const xaiResp = await xaiMediaRequest<XaiVideoCreateResponse>({
+    connection,
+    credential,
+    url,
+    body: upstreamBody,
     signal,
+    idempotencyKey,
+    logLabel: "video generation",
+    logSubject: `model "${model}"`,
+    failureMessage: "Failed to create xAI video generation",
   })
-
-  if (!response.ok) {
-    const bodyText = await response.text().catch(() => "(unreadable)")
-    logger.warn(
-      `xAI video generation failed for connection "${connection.name}" model "${model}": ${response.status} ${response.statusText}`,
-    )
-    throw new HTTPError(
-      "Failed to create xAI video generation",
-      response,
-      bodyText,
-    )
-  }
-
-  const xaiResp = (await response.json()) as XaiVideoCreateResponse
   return {
     object: "video",
     id: xaiResp.request_id,
@@ -246,44 +199,18 @@ export async function retrieveXaiVideo(
     throw new Error("xAI video retrieval requires an xAI OAuth connection")
   }
 
-  const accessToken = await ensureOAuthConnectionAccessToken(
+  const url = `${xaiApiBaseUrl(connection)}/videos/${encodeURIComponent(requestId)}`
+
+  const xaiResp = await xaiMediaRequest<XaiVideoStatusResponse>({
     connection,
     credential,
-  )
-  if (!accessToken) {
-    throw new Error(
-      `xAI access token missing for connection "${connection.name}"`,
-    )
-  }
-
-  const baseUrl = resolveBaseUrl(connection)
-  const url = `${baseUrl}/videos/${encodeURIComponent(requestId)}`
-
-  const response = await fetchWithConnectionProxy(connection, url, {
+    url,
     method: "GET",
-    headers: buildXaiHeaders(
-      accessToken,
-      false,
-      undefined,
-      false,
-      connection.headers,
-    ),
     signal,
+    logLabel: "video retrieval",
+    logSubject: `request "${requestId}"`,
+    failureMessage: "Failed to retrieve xAI video status",
   })
-
-  if (!response.ok) {
-    const bodyText = await response.text().catch(() => "(unreadable)")
-    logger.warn(
-      `xAI video retrieval failed for connection "${connection.name}" request "${requestId}": ${response.status} ${response.statusText}`,
-    )
-    throw new HTTPError(
-      "Failed to retrieve xAI video status",
-      response,
-      bodyText,
-    )
-  }
-
-  const xaiResp = (await response.json()) as XaiVideoStatusResponse
   const status = mapVideoStatus(xaiResp.status)
   const result: VideoRetrieveResponse = {
     object: "video",

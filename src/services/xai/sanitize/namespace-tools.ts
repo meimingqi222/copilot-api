@@ -4,7 +4,9 @@
  * 从 `sanitize-body.ts` 拆分而来，纯代码移动，无行为变更。
  */
 
-import { ADDITIONAL_TOOLS_TYPE, FUNCTION_TOOL_TYPE, stringValue } from "./tools"
+import { asTrimmedStringOrEmpty } from "~/lib/json-shape"
+
+import { ADDITIONAL_TOOLS_TYPE, FUNCTION_TOOL_TYPE } from "./tools"
 
 export type XaiNamespaceToolRef = {
   namespace: string
@@ -186,8 +188,8 @@ export function normalizeXaiInputNamespaceToolCalls(
     if (!item || typeof item !== "object" || Array.isArray(item)) return item
     const record = item as Record<string, unknown>
     if (record.type !== "function_call") return item
-    const namespace = stringValue(record.namespace)
-    const name = stringValue(record.name)
+    const namespace = asTrimmedStringOrEmpty(record.namespace)
+    const name = asTrimmedStringOrEmpty(record.name)
     if (!namespace || !name) return item
     const qualified = qualifyXaiNamespaceToolName(namespace, name)
     const { namespace: _namespace, ...rest } = record

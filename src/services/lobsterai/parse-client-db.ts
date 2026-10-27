@@ -28,6 +28,7 @@ import path from "node:path"
 import { logger } from "~/lib/logger"
 import { asRecordOrEmpty } from "~/lib/json-shape"
 import { parseJwtPayload } from "~/services/oauth/jwt"
+import { asTrimmedString } from "~/lib/json-shape"
 
 /** kv 表中与凭证相关的键。 */
 const KV_KEYS = {
@@ -62,11 +63,6 @@ function readKv(db: Database, key: string): unknown {
     // auth_tokens 等是 JSON；installation_uuid 之类的裸字符串走这里。
     return raw
   }
-}
-
-function asString(value: unknown): string | undefined {
-  if (typeof value === "string" && value.trim()) return value.trim()
-  return undefined
 }
 
 /** 从 JWT `exp`（秒）得到毫秒时间戳。 */
@@ -106,7 +102,7 @@ export async function parseLobsteraiClientDatabase(
     db = new Database(dbPath)
 
     const tokens = asRecordOrEmpty(readKv(db, KV_KEYS.authTokens))
-    const accessToken = asString(tokens.accessToken)
+    const accessToken = asTrimmedString(tokens.accessToken)
     if (!accessToken) {
       throw new Error(
         "数据库里没有找到登录凭证（auth_tokens）。请先在 LobsterAI 客户端登录。",
@@ -128,14 +124,14 @@ export async function parseLobsteraiClientDatabase(
 
     return {
       accessToken,
-      refreshToken: asString(tokens.refreshToken),
+      refreshToken: asTrimmedString(tokens.refreshToken),
       expiresAt: jwtExpiryMs(accessToken),
       uid,
-      yid: asString(user.yid),
-      nickname: asString(user.nickname),
-      uuid: asString(installationUuid),
-      firstKeyfrom: asString(keyfrom.firstKeyfrom),
-      latestKeyfrom: asString(keyfrom.latestKeyfrom),
+      yid: asTrimmedString(user.yid),
+      nickname: asTrimmedString(user.nickname),
+      uuid: asTrimmedString(installationUuid),
+      firstKeyfrom: asTrimmedString(keyfrom.firstKeyfrom),
+      latestKeyfrom: asTrimmedString(keyfrom.latestKeyfrom),
     }
   } finally {
     db?.close()

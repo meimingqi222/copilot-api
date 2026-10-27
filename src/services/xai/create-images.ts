@@ -3,16 +3,9 @@ import type {
   ProviderConnection,
 } from "~/lib/provider-connections"
 
-import { HTTPError } from "~/lib/error"
-import { serializeUpstreamBody } from "~/lib/upstream-performance"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
-import { logger } from "~/lib/logger"
-import { getConnectionSettings } from "~/lib/provider-connections"
-import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
-import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"
-import { XAI_API_BASE_URL } from "~/services/oauth/xai"
-
-import { buildXaiHeaders } from "./headers"
+import { xaiApiBaseUrl } from "./endpoint"
+import { xaiMediaRequest } from "./media-request"
 
 /**
  * OpenAI-compatible image generation request payload.
@@ -74,15 +67,6 @@ function mapSizeToAspectRatio(size: string | undefined): {
   }
 }
 
-function resolveBaseUrl(connection: ProviderConnection): string {
-  const settingsBase = getConnectionSettings(connection)?.baseUrl
-  return (
-    typeof settingsBase === "string" ? settingsBase : XAI_API_BASE_URL).replace(
-    /\/+$/,
-    "",
-  )
-}
-
 /**
  * Create an image generation via xAI's `/images/generations` endpoint.
  * Translates the OpenAI-compatible payload to xAI's format.
@@ -103,18 +87,8 @@ export async function createXaiImageGeneration(
     throw new Error("xAI image generation requires an xAI OAuth connection")
   }
 
-  const accessToken = await ensureOAuthConnectionAccessToken(
-    connection,
-    credential,
-  )
-  if (!accessToken) {
-    throw new Error(
-      `xAI access token missing for connection "${connection.name}"`,
-    )
-  }
-
   const model = canonicalNativeModelId(payload.model)
-  const baseUrl = resolveBaseUrl(connection)
+  const baseUrl = xaiApiBaseUrl(connection)
   const url = `${baseUrl}/images/generations`
   const { aspect_ratio, resolution } = mapSizeToAspectRatio(payload.size)
 
@@ -127,37 +101,17 @@ export async function createXaiImageGeneration(
     n: payload.n ?? 1,
   }
 
-  const headers = buildXaiHeaders(
-    accessToken,
-    false,
-    undefined,
-    false,
-    connection.headers,
-  )
-  if (idempotencyKey) {
-    headers["x-idempotency-key"] = idempotencyKey
-  }
-
-  const response = await fetchWithConnectionProxy(connection, url, {
-    method: "POST",
-    headers,
-    body: serializeUpstreamBody(upstreamBody),
+  return xaiMediaRequest<ImageGenerationResponse>({
+    connection,
+    credential,
+    url,
+    body: upstreamBody,
     signal,
+    idempotencyKey,
+    logLabel: "image generation",
+    logSubject: `model "${model}"`,
+    failureMessage: "Failed to create xAI image generation",
   })
-
-  if (!response.ok) {
-    const bodyText = await response.text().catch(() => "(unreadable)")
-    logger.warn(
-      `xAI image generation failed for connection "${connection.name}" model "${model}": ${response.status} ${response.statusText}`,
-    )
-    throw new HTTPError(
-      "Failed to create xAI image generation",
-      response,
-      bodyText,
-    )
-  }
-
-  return (await response.json()) as ImageGenerationResponse
 }
 
 /**
@@ -180,18 +134,8 @@ export async function createXaiImageEdit(
     throw new Error("xAI image edit requires an xAI OAuth connection")
   }
 
-  const accessToken = await ensureOAuthConnectionAccessToken(
-    connection,
-    credential,
-  )
-  if (!accessToken) {
-    throw new Error(
-      `xAI access token missing for connection "${connection.name}"`,
-    )
-  }
-
   const model = canonicalNativeModelId(payload.model)
-  const baseUrl = resolveBaseUrl(connection)
+  const baseUrl = xaiApiBaseUrl(connection)
   const url = `${baseUrl}/images/edits`
   const { aspect_ratio, resolution } = mapSizeToAspectRatio(payload.size)
 
@@ -211,31 +155,15 @@ export async function createXaiImageEdit(
     upstreamBody.image = payload.image
   }
 
-  const headers = buildXaiHeaders(
-    accessToken,
-    false,
-    undefined,
-    false,
-    connection.headers,
-  )
-  if (idempotencyKey) {
-    headers["x-idempotency-key"] = idempotencyKey
-  }
-
-  const response = await fetchWithConnectionProxy(connection, url, {
-    method: "POST",
-    headers,
-    body: serializeUpstreamBody(upstreamBody),
+  return xaiMediaRequest<ImageGenerationResponse>({
+    connection,
+    credential,
+    url,
+    body: upstreamBody,
     signal,
+    idempotencyKey,
+    logLabel: "image edit",
+    logSubject: `model "${model}"`,
+    failureMessage: "Failed to create xAI image edit",
   })
-
-  if (!response.ok) {
-    const bodyText = await response.text().catch(() => "(unreadable)")
-    logger.warn(
-      `xAI image edit failed for connection "${connection.name}" model "${model}": ${response.status} ${response.statusText}`,
-    )
-    throw new HTTPError("Failed to create xAI image edit", response, bodyText)
-  }
-
-  return (await response.json()) as ImageGenerationResponse
 }

@@ -18,6 +18,7 @@ import { getConnectionProvider } from "~/lib/provider-connections"
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
 import { asNumber, asRecord } from "~/lib/json-shape"
 import { COMMANDCODE_API } from "~/services/oauth/commandcode"
+import { snapshotFromWindows } from "~/lib/quota/snapshot"
 
 interface CommandCodeQuotaWindow {
   name: string
@@ -77,10 +78,9 @@ export function parseCommandCodeQuota(
 }
 
 function buildSnapshot(parsed: ParsedCommandCodeQuota): QuotaSnapshot {
-  const base: QuotaSnapshot = {
-    fetchedAt: Date.now(),
+  return snapshotFromWindows({
     provider: "commandcode-plan",
-    unlimited: parsed.windows.length === 0,
+    windows: parsed.windows,
     details: {
       commandcode: {
         planId: parsed.planId,
@@ -90,19 +90,8 @@ function buildSnapshot(parsed: ParsedCommandCodeQuota): QuotaSnapshot {
         freeCredits: parsed.freeCredits,
       },
     },
-  }
-  if (parsed.windows.length === 0) return base
-  const usedPercent = Math.max(...parsed.windows.map((w) => w.usedPercent))
-  const primary = parsed.windows[0]!
-  return {
-    ...base,
-    premiumInteractionsRemaining: Math.round(Math.max(0, 100 - usedPercent)),
-    premiumInteractionsTotal: 100,
-    chatRemaining: Math.max(0, Math.round(100 - primary.usedPercent)),
-    chatTotal: 100,
-  }
+  })
 }
-
 export async function fetchCommandCodeQuota(
   connection: ProviderConnection,
   signal?: AbortSignal,

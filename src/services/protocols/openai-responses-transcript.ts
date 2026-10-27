@@ -30,6 +30,7 @@ import { logger } from "~/lib/logger"
 import { globalTimers } from "~/lib/timer-registry"
 import { asRecord } from "~/lib/json-shape"
 import { buildResponsesTranscriptInput } from "~/services/codex/ws-transcript-cache"
+import { outputItemKey } from "~/services/responses/output-item"
 
 interface StatelessTranscript {
   input: Array<unknown>
@@ -271,14 +272,6 @@ function parseEventData(data: unknown): Record<string, unknown> | undefined {
 }
 
 /** output item 去重键(与 sse-collector 一致): replay 不能出现重复 id。 */
-function outputItemKey(item: Record<string, unknown>): string | undefined {
-  const type = typeof item.type === "string" ? item.type.trim() : ""
-  const id = typeof item.id === "string" ? item.id.trim() : ""
-  if (id) return `${type}:id:${id}`
-  const callId = typeof item.call_id === "string" ? item.call_id.trim() : ""
-  return callId ? `${type}:call_id:${callId}` : undefined
-}
-
 function mergeCollectedItems(
   byIndex: Map<number, Record<string, unknown>>,
   fallbackItems: Array<Record<string, unknown>>,

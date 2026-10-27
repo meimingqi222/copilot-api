@@ -38,35 +38,7 @@ const logger = createLogger("models")
 
 const MODELS_REFRESH_INTERVAL_MS = 10 * 60 * 1000
 
-function makeSleepAbortError(signal: AbortSignal): Error {
-  if (signal.reason instanceof Error) return signal.reason
-  const err = new Error("Aborted")
-  err.name = "AbortError"
-  return err
-}
-
-export const sleep = (ms: number, signal?: AbortSignal) =>
-  new Promise<void>((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(makeSleepAbortError(signal))
-      return
-    }
-
-    const onAbort = (sig: AbortSignal) => {
-      clearTimeout(id)
-      sig.removeEventListener("abort", boundOnAbort)
-      reject(makeSleepAbortError(sig))
-    }
-
-    const boundOnAbort = onAbort.bind(null, signal as AbortSignal)
-
-    const id = setTimeout(() => {
-      signal?.removeEventListener("abort", boundOnAbort)
-      resolve()
-    }, ms)
-
-    signal?.addEventListener("abort", boundOnAbort, { once: true })
-  })
+export { delay as sleep } from "~/lib/delay"
 
 export const isNullish = (value: unknown): value is null | undefined =>
   value === null || value === undefined

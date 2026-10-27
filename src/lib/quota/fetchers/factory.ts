@@ -22,6 +22,7 @@ import {
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
 import { asNumber, asRecord } from "~/lib/json-shape"
 import { FACTORY_CLI_VERSION, factoryApiBase } from "~/services/oauth/factory"
+import { snapshotFromWindows } from "~/lib/quota/snapshot"
 
 interface FactoryQuotaWindow {
   name: string
@@ -102,10 +103,9 @@ function buildSnapshot(
   parsed: ParsedFactoryQuota,
   host: string,
 ): QuotaSnapshot {
-  const base: QuotaSnapshot = {
-    fetchedAt: Date.now(),
+  return snapshotFromWindows({
     provider: "factory",
-    unlimited: parsed.windows.length === 0,
+    windows: parsed.windows,
     details: {
       factory: {
         host,
@@ -113,20 +113,8 @@ function buildSnapshot(
         extraBalanceCents: parsed.extraBalanceCents,
       },
     },
-  }
-  if (parsed.windows.length === 0) return base
-
-  const usedPercent = Math.max(...parsed.windows.map((w) => w.usedPercent))
-  const primary = parsed.windows[0]!
-  return {
-    ...base,
-    premiumInteractionsRemaining: Math.round(Math.max(0, 100 - usedPercent)),
-    premiumInteractionsTotal: 100,
-    chatRemaining: Math.max(0, Math.round(100 - primary.usedPercent)),
-    chatTotal: 100,
-  }
+  })
 }
-
 export async function fetchFactoryQuota(
   connection: ProviderConnection,
   signal?: AbortSignal,

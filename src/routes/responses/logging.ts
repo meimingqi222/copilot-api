@@ -2,6 +2,7 @@ import type { ResponsesResponse } from "~/services/protocols/responses/types"
 
 import { sanitizeDiagnosticSnippet } from "~/lib/security-sanitizer"
 import { asRecord } from "~/lib/json-shape"
+import { isNonEmptyString } from "~/lib/json-shape"
 
 type ResponsesLogOutcome = "success" | "incomplete" | "failed"
 
@@ -22,7 +23,7 @@ export function getResponsesStatusOutcome(
 
 export function hasResponsesOutput(response: ResponsesResponse): boolean {
   return Boolean(
-    hasNonEmptyString(response.output_text)
+    isNonEmptyString(response.output_text)
       || response.output?.some((item) => hasResponsesOutputItem(item)),
   )
 }
@@ -45,10 +46,10 @@ export function isResponsesOutputEvent(
   }
   if (type.endsWith(".done")) {
     return (
-      hasNonEmptyString(event.text)
-      || hasNonEmptyString(event.refusal)
-      || hasNonEmptyString(event.arguments)
-      || hasNonEmptyString(event.transcript)
+      isNonEmptyString(event.text)
+      || isNonEmptyString(event.refusal)
+      || isNonEmptyString(event.arguments)
+      || isNonEmptyString(event.transcript)
     )
   }
   return false
@@ -76,8 +77,8 @@ function hasResponsesOutputItem(value: unknown): boolean {
     || item.type === "mcp_call"
   ) {
     return (
-      hasNonEmptyString(item.name)
-      || hasNonEmptyString(item.arguments)
+      isNonEmptyString(item.name)
+      || isNonEmptyString(item.arguments)
       || hasMeaningfulValue(item.input)
     )
   }
@@ -88,22 +89,18 @@ function hasResponsesContentPart(value: unknown): boolean {
   const part = asRecord(value)
   if (!part) return false
   return (
-    hasNonEmptyString(part.text)
-    || hasNonEmptyString(part.refusal)
-    || hasNonEmptyString(part.transcript)
+    isNonEmptyString(part.text)
+    || isNonEmptyString(part.refusal)
+    || isNonEmptyString(part.transcript)
   )
 }
 
 function hasMeaningfulValue(value: unknown): boolean {
-  if (hasNonEmptyString(value)) return true
+  if (isNonEmptyString(value)) return true
   if (Array.isArray(value)) return value.length > 0
   return Boolean(
     value && typeof value === "object" && Object.keys(value).length > 0,
   )
-}
-
-function hasNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0
 }
 
 /**

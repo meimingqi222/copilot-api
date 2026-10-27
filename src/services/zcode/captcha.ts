@@ -30,6 +30,7 @@ import { ZCODE_API, ZCODE_APP_VERSION } from "~/services/oauth/zcode"
 
 import { ensureZcodeBrowser, __resetZcodeBrowserForTest } from "./browser"
 import { evaluatePage, launchChrome } from "./cdp"
+import { asTrimmedStringOrEmpty } from "~/lib/json-shape"
 
 interface ZcodeCaptchaConfig {
   sceneId: string
@@ -81,20 +82,22 @@ let cachedToken:
   | { param: string; region: string; sceneId: string; at: number }
   | undefined
 let tokenTask: Promise<{ param: string; region: string }> | undefined
-function str(value: unknown): string {
-  return typeof value === "string" ? value.trim() : ""
-}
-
 /** 解析 client/configs 的 captcha 段（camelCase / snake_case 都接受）。 */
 function parseZcodeCaptchaConfig(raw: unknown): ZcodeCaptchaConfig {
   const captcha = asRecord(raw)
   if (!captcha) return { ...DEFAULT_CONFIG }
   const sceneId =
-    str(captcha.sceneId) || str(captcha.scene_id) || DEFAULT_CONFIG.sceneId
+    asTrimmedStringOrEmpty(captcha.sceneId)
+    || asTrimmedStringOrEmpty(captcha.scene_id)
+    || DEFAULT_CONFIG.sceneId
   const prefix =
-    str(captcha.prefix) || str(captcha.prefix_id) || DEFAULT_CONFIG.prefix
+    asTrimmedStringOrEmpty(captcha.prefix)
+    || asTrimmedStringOrEmpty(captcha.prefix_id)
+    || DEFAULT_CONFIG.prefix
   const region =
-    str(captcha.region) || str(captcha.region_id) || DEFAULT_CONFIG.region
+    asTrimmedStringOrEmpty(captcha.region)
+    || asTrimmedStringOrEmpty(captcha.region_id)
+    || DEFAULT_CONFIG.region
   return {
     sceneId,
     prefix,

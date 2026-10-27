@@ -31,6 +31,7 @@ import {
   zcodeStartBalance,
   type ZcodeStartBalance,
 } from "~/services/zcode/start-plan"
+import { snapshotFromWindows } from "~/lib/quota/snapshot"
 
 interface ZcodeQuotaWindow {
   name: string
@@ -99,24 +100,12 @@ function buildSnapshot(parsed: ParsedZcodeQuota, host: string): QuotaSnapshot {
     parsed.level ?
       `GLM Coding ${parsed.level.charAt(0).toUpperCase()}${parsed.level.slice(1)}`
     : undefined
-  const base: QuotaSnapshot = {
-    fetchedAt: Date.now(),
+  return snapshotFromWindows({
     provider: "zcode",
-    unlimited: parsed.windows.length === 0,
+    windows: parsed.windows,
     details: { zcode: { host, plan, windows: parsed.windows } },
-  }
-  if (parsed.windows.length === 0) return base
-  const usedPercent = Math.max(...parsed.windows.map((w) => w.usedPercent))
-  const primary = parsed.windows[0]!
-  return {
-    ...base,
-    premiumInteractionsRemaining: Math.round(Math.max(0, 100 - usedPercent)),
-    premiumInteractionsTotal: 100,
-    chatRemaining: Math.max(0, Math.round(100 - primary.usedPercent)),
-    chatTotal: 100,
-  }
+  })
 }
-
 // ── Start Plan（billing/balance → 余额桶窗口） ──────────────────
 
 function periodLabel(ms: number): string {

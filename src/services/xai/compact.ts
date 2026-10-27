@@ -21,6 +21,7 @@ import { xaiWsBaseUrl } from "./endpoint"
 import { buildXaiHeaders } from "./headers"
 import { sanitizeXaiResponsesBodyWithRefs } from "./sanitize-body"
 import { resolveXaiSessionId } from "./session"
+import { requireXaiAccessToken } from "./access"
 
 /**
  * True when an upstream error indicates an invalidated xAI OAuth access token:
@@ -52,15 +53,7 @@ export async function createXaiCompactOnce(
     throw new Error("xAI compact requires an xAI OAuth connection")
   }
 
-  const accessToken = await ensureOAuthConnectionAccessToken(
-    connection,
-    credential,
-  )
-  if (!accessToken) {
-    throw new Error(
-      `xAI access token missing for connection "${connection.name}"`,
-    )
-  }
+  const accessToken = await requireXaiAccessToken(connection, credential)
 
   const rawModel = body.model
   if (typeof rawModel !== "string" || !rawModel.trim()) {

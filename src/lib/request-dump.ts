@@ -37,6 +37,7 @@ import {
   isDumpSecretField,
   type DumpSanitizer,
 } from "~/lib/request-dump-sanitizer"
+import { asString } from "~/lib/json-shape"
 
 const DUMP_FILE_PATTERN =
   /^request-dumps-(\d{4}-\d{2}-\d{2})(?:\.(\d+))?\.jsonl$/
@@ -618,10 +619,6 @@ export async function readDumpedRequestBodies(
   }
 
   return found.incoming || found.upstream ? found : undefined
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined
 }
 
 function asNumber(value: unknown): number | undefined {

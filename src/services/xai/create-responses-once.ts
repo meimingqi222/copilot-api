@@ -74,6 +74,7 @@ import {
   restoreXaiNamespaceCallsInStream,
   restoreXaiNamespaceToolCallsInResponse,
 } from "./stream-transforms"
+import { requireXaiAccessToken } from "./access"
 
 export async function createXaiResponsesOnce(
   {
@@ -100,15 +101,7 @@ export async function createXaiResponsesOnce(
     )
   }
 
-  const accessToken = await ensureOAuthConnectionAccessToken(
-    connection,
-    credential,
-  )
-  if (!accessToken) {
-    throw new Error(
-      `xAI access token missing for connection "${connection.name}"`,
-    )
-  }
+  const accessToken = await requireXaiAccessToken(connection, credential)
 
   const model = resolveXaiModelId(canonicalNativeModelId(payload.model))
   const wsUrl = `${xaiWsBaseUrl(connection).replace(/\/+$/, "")}/responses`

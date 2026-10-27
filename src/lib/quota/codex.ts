@@ -21,6 +21,7 @@ import {
   extractCodexPlanTypeFromIdToken,
   extractCodexSubscriptionActiveUntilFromIdToken,
 } from "~/services/oauth/jwt"
+import { asNumber } from "~/lib/json-shape"
 
 /** 读取 codex accountId(context.oauthAccountId 优先,回退 extras)。 */
 function readCodexAccountId(
@@ -85,19 +86,6 @@ interface CodexQuotaMeta {
   windows: Array<CodexQuotaWindowEntry>
 }
 
-function normalizeNumber(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value
-  }
-  if (typeof value === "string") {
-    const parsed = Number(value.trim())
-    if (Number.isFinite(parsed)) {
-      return parsed
-    }
-  }
-  return undefined
-}
-
 function normalizePlanType(value: unknown): string | null {
   if (typeof value !== "string") {
     return null
@@ -110,7 +98,7 @@ function getWindowSeconds(window?: CodexUsageWindow | null): number | null {
   if (!window) {
     return null
   }
-  const seconds = normalizeNumber(
+  const seconds = asNumber(
     window.limit_window_seconds ?? window.limitWindowSeconds,
   )
   return seconds ?? null
@@ -132,11 +120,11 @@ function resolveCodexResetAtSeconds(
   if (!window) {
     return null
   }
-  const resetAt = normalizeNumber(window.reset_at ?? window.resetAt)
+  const resetAt = asNumber(window.reset_at ?? window.resetAt)
   if (resetAt !== undefined && resetAt > 0) {
     return Math.floor(resetAt)
   }
-  const resetAfter = normalizeNumber(
+  const resetAfter = asNumber(
     window.reset_after_seconds ?? window.resetAfterSeconds,
   )
   if (
@@ -227,7 +215,7 @@ function addCodexWindowEntry(
     entry.window,
     referenceTimeMs,
   )
-  const usedPercentRaw = normalizeNumber(
+  const usedPercentRaw = asNumber(
     entry.window.used_percent ?? entry.window.usedPercent,
   )
   const isLimitReached = Boolean(entry.limitReached) || entry.allowed === false
@@ -498,7 +486,7 @@ function parseCodexResetCreditsPayload(payload: unknown): {
         .filter((item): item is CodexResetCreditDetail => item !== null)
     : []
   const availableCount =
-    normalizeNumber(record.available_count ?? record.availableCount) ?? null
+    asNumber(record.available_count ?? record.availableCount) ?? null
   return { availableCount, credits }
 }
 
@@ -514,9 +502,8 @@ export function buildCodexQuotaMeta(
   const resetCredits =
     payload.rate_limit_reset_credits ?? payload.rateLimitResetCredits ?? null
   const usageAvailableCount =
-    normalizeNumber(
-      resetCredits?.available_count ?? resetCredits?.availableCount,
-    ) ?? null
+    asNumber(resetCredits?.available_count ?? resetCredits?.availableCount)
+    ?? null
   const detailsCount =
     resetCreditsDetails && resetCreditsDetails.credits.length > 0 ?
       resetCreditsDetails.credits.length

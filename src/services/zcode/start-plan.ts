@@ -53,6 +53,7 @@ import {
 } from "~/services/oauth/zcode"
 
 import { ZCODE_PROMPT } from "./prompt"
+import { asTrimmedStringOrEmpty } from "~/lib/json-shape"
 
 export const ZCODE_START_PLAN_BASE = `${ZCODE_API}/api/v1/zcode-plan/anthropic`
 
@@ -173,10 +174,6 @@ function asNum(value: unknown): number | undefined {
   return undefined
 }
 
-function asStr(value: unknown): string {
-  return typeof value === "string" ? value.trim() : ""
-}
-
 /**
  * ZCode 的 JSON 端点，响应包在 {code,msg,data}：code 0/200 才算成功。
  * 与 services/oauth/zcode.ts 的 zcodeCall 同一约定；key 裸放 Authorization
@@ -224,10 +221,13 @@ async function zcodeGet(
       text,
     )
   }
-  const code = typeof env.code === "number" ? String(env.code) : asStr(env.code)
+  const code =
+    typeof env.code === "number" ?
+      String(env.code)
+    : asTrimmedStringOrEmpty(env.code)
   if (code && code !== "0" && code !== "200" && code !== "null") {
     throw new HTTPError(
-      asStr(env.msg) || `ZCode error ${code}`,
+      asTrimmedStringOrEmpty(env.msg) || `ZCode error ${code}`,
       new Response(text, { status: 502 }),
       text,
     )
@@ -251,7 +251,7 @@ export function parseZcodeStartBalance(
   for (const raw of Array.isArray(root?.plans) ? root.plans : []) {
     const p = asRecord(raw)
     if (!p) continue
-    let status = asStr(p.status).toLowerCase()
+    let status = asTrimmedStringOrEmpty(p.status).toLowerCase()
     const endsAt = asNum(p.ends_at)
     if (
       status === "active"
@@ -262,9 +262,9 @@ export function parseZcodeStartBalance(
       status = "expired"
     }
     const plan: ZcodeStartBalancePlan = {
-      planId: asStr(p.plan_id),
-      userPlanId: asStr(p.user_plan_id),
-      name: asStr(p.name),
+      planId: asTrimmedStringOrEmpty(p.plan_id),
+      userPlanId: asTrimmedStringOrEmpty(p.user_plan_id),
+      name: asTrimmedStringOrEmpty(p.name),
       status,
       endsAt,
       entitlementPeriods: new Map(),
@@ -272,7 +272,10 @@ export function parseZcodeStartBalance(
     for (const rawE of Array.isArray(p.entitlements) ? p.entitlements : []) {
       const e = asRecord(rawE)
       if (e)
-        plan.entitlementPeriods.set(asStr(e.entitlement_id), asStr(e.period))
+        plan.entitlementPeriods.set(
+          asTrimmedStringOrEmpty(e.entitlement_id),
+          asTrimmedStringOrEmpty(e.period),
+        )
     }
     plans.push(plan)
     if (plan.status === "expired")
@@ -283,10 +286,10 @@ export function parseZcodeStartBalance(
     const x = asRecord(raw)
     if (!x) continue
     const bucket: ZcodeStartBalanceBucket = {
-      planId: asStr(x.plan_id),
-      userPlanId: asStr(x.user_plan_id),
-      entitlement: asStr(x.entitlement_id),
-      showName: asStr(x.show_name),
+      planId: asTrimmedStringOrEmpty(x.plan_id),
+      userPlanId: asTrimmedStringOrEmpty(x.user_plan_id),
+      entitlement: asTrimmedStringOrEmpty(x.entitlement_id),
+      showName: asTrimmedStringOrEmpty(x.show_name),
       capabilities:
         Array.isArray(x.capabilities) ?
           x.capabilities.filter((c): c is string => typeof c === "string")
@@ -402,7 +405,7 @@ async function zcodeHasCodingPlan(
   const subs = Array.isArray(data) ? data : []
   return subs.some((raw) => {
     const s = asRecord(raw)
-    return s && asStr(s.status).toUpperCase() === "VALID"
+    return s && asTrimmedStringOrEmpty(s.status).toUpperCase() === "VALID"
   })
 }
 
@@ -789,7 +792,7 @@ export function shapeZcodeStartBody(
   } else if (Array.isArray(rawSystem)) {
     for (const b of rawSystem) {
       const block = asRecord(b)
-      const text = asStr(block?.text)
+      const text = asTrimmedStringOrEmpty(block?.text)
       if (block?.type !== "text" || !text) continue
       if (text === ZCODE_PROMPT.prefix && own.length === 0) return payload
       own.push(text)
@@ -819,7 +822,7 @@ export function shapeZcodeStartBody(
       texts.push(c)
     } else if (Array.isArray(c)) {
       for (const b of c) {
-        const t = asStr(asRecord(b)?.text)
+        const t = asTrimmedStringOrEmpty(asRecord(b)?.text)
         if (t) texts.push(t)
       }
     }

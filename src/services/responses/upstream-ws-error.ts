@@ -1,4 +1,5 @@
 import { HTTPError } from "~/lib/error"
+import { asStringOrEmpty } from "~/lib/json-shape"
 
 /** Extract an actionable message from top-level or response.failed payloads. */
 export function extractWsErrorMessage(parsed: Record<string, unknown>): string {
@@ -25,7 +26,7 @@ export function extractWsErrorStatus(parsed: Record<string, unknown>): number {
   if (typeof error.status === "number" && error.status >= 400) {
     return error.status
   }
-  const marker = `${stringValue(error.type)} ${stringValue(error.code)}`
+  const marker = `${asStringOrEmpty(error.type)} ${asStringOrEmpty(error.code)}`
   if (/auth|unauthori[sz]ed|invalid_api_key|token_expired/i.test(marker)) {
     return 401
   }
@@ -47,10 +48,6 @@ function readWsErrorPayload(
   return error && typeof error === "object" ?
       (error as Record<string, unknown>)
     : undefined
-}
-
-function stringValue(value: unknown): string {
-  return typeof value === "string" ? value : ""
 }
 
 /**

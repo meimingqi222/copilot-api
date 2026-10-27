@@ -41,6 +41,7 @@ import {
   zcodeJwtExpired,
   zcodeSessionJwt,
 } from "./start-plan"
+import { asTrimmedStringOrEmpty } from "~/lib/json-shape"
 
 const BILLING_BASE = `${ZCODE_API}/api/v1/zcode-plan`
 const CLAIM_STATE_KEY = "zcodeClaim"
@@ -109,10 +110,6 @@ const FAIL_MESSAGES: Record<number, string> = {
   3001: "The claim was rejected (parameter error).",
   3007: "The captcha was rejected; it will be refreshed on the next attempt.",
 }
-function asStr(value: unknown): string {
-  return typeof value === "string" ? value.trim() : ""
-}
-
 function asNum(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) return value
   if (typeof value === "string" && value.trim()) {
@@ -132,7 +129,8 @@ function failError(
   body: Record<string, unknown>,
 ): ZcodeClaimError {
   const base = FAIL_MESSAGES[code] ?? `ZCode rejected the claim (code ${code}).`
-  const detail = asStr(body.msg) || asStr(body.message)
+  const detail =
+    asTrimmedStringOrEmpty(body.msg) || asTrimmedStringOrEmpty(body.message)
   const message =
     detail && !base.includes(detail) ? `${base} (${detail})` : base
   let nextAtMs: number | undefined
@@ -147,19 +145,20 @@ function failError(
 function coercePlan(raw: unknown): ZcodeClaimPlan | undefined {
   const plan = asRecord(raw)
   if (!plan) return undefined
-  const planId = asStr(plan.plan_id) || asStr(plan.planId)
+  const planId =
+    asTrimmedStringOrEmpty(plan.plan_id) || asTrimmedStringOrEmpty(plan.planId)
   if (!planId) return undefined
   const grants: Array<ZcodeClaimGrant> = []
   // 存储态（metadata）里是已解析的 grants；上游是 entitlements。
   const stored = Array.isArray(plan.grants) ? plan.grants : []
   for (const rawGrant of stored) {
     const grant = asRecord(rawGrant)
-    const name = asStr(grant?.name)
+    const name = asTrimmedStringOrEmpty(grant?.name)
     if (!grant || !name) continue
     grants.push({
       name,
       units: asNum(grant.units) ?? 0,
-      period: asStr(grant.period) || "one_time",
+      period: asTrimmedStringOrEmpty(grant.period) || "one_time",
     })
   }
   for (const rawGrant of Array.isArray(plan.entitlements) ?
@@ -167,20 +166,22 @@ function coercePlan(raw: unknown): ZcodeClaimPlan | undefined {
   : []) {
     const grant = asRecord(rawGrant)
     if (!grant) continue
-    if (asStr(grant.meter) !== "model_usage") continue
-    if (asStr(grant.unit_type) !== "token") continue
-    const name = asStr(grant.show_name) || asStr(grant.showName)
+    if (asTrimmedStringOrEmpty(grant.meter) !== "model_usage") continue
+    if (asTrimmedStringOrEmpty(grant.unit_type) !== "token") continue
+    const name =
+      asTrimmedStringOrEmpty(grant.show_name)
+      || asTrimmedStringOrEmpty(grant.showName)
     if (!name) continue
     grants.push({
       name,
       units: asNum(grant.grant_units) ?? asNum(grant.grantUnits) ?? 0,
-      period: asStr(grant.period) || "one_time",
+      period: asTrimmedStringOrEmpty(grant.period) || "one_time",
     })
   }
   return {
     planId,
-    name: asStr(plan.name) || planId,
-    description: asStr(plan.description),
+    name: asTrimmedStringOrEmpty(plan.name) || planId,
+    description: asTrimmedStringOrEmpty(plan.description),
     priority: asNum(plan.priority) ?? 0,
     grants,
   }
@@ -412,12 +413,12 @@ export function readZcodeClaimState(
   }
   const lastClaim = asRecord(raw.lastClaim)
   if (lastClaim) {
-    const planId = asStr(lastClaim.planId)
+    const planId = asTrimmedStringOrEmpty(lastClaim.planId)
     const at = asNum(lastClaim.at)
     if (planId && at !== undefined) {
       state.lastClaim = {
         planId,
-        planName: asStr(lastClaim.planName) || planId,
+        planName: asTrimmedStringOrEmpty(lastClaim.planName) || planId,
         at,
       }
     }

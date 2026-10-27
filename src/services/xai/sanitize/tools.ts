@@ -12,6 +12,7 @@ import {
   hasNonObjectRootUnion,
   injectObjectRootUnionBranchTypes,
 } from "./schema"
+import { asTrimmedStringOrEmpty } from "~/lib/json-shape"
 
 const DROP_TOOL_TYPES = new Set(["tool_search", "image_generation"])
 const CUSTOM_TOOL_TYPE = "custom"
@@ -31,10 +32,6 @@ const EMPTY_FUNCTION_PARAMETERS = {
   type: "object",
   properties: {},
 } as const
-
-export function stringValue(value: unknown): string {
-  return typeof value === "string" ? value.trim() : ""
-}
 
 /**
  * Drop tool_choice / parallel_tool_calls when no tools remain.
@@ -107,8 +104,8 @@ export function normalizeXaiInputCustomToolCalls(
     }
     const record = item as Record<string, unknown>
     if (record.type === "custom_tool_call") {
-      const callId = stringValue(record.call_id)
-      const name = stringValue(record.name)
+      const callId = asTrimmedStringOrEmpty(record.call_id)
+      const name = asTrimmedStringOrEmpty(record.name)
       changed = true
       if (!callId || !name) continue
       input.push({
@@ -120,7 +117,7 @@ export function normalizeXaiInputCustomToolCalls(
       continue
     }
     if (record.type === "custom_tool_call_output") {
-      const callId = stringValue(record.call_id)
+      const callId = asTrimmedStringOrEmpty(record.call_id)
       changed = true
       if (!callId) continue
       input.push({

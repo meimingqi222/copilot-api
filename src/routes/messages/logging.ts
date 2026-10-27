@@ -1,4 +1,5 @@
 import { asRecord } from "~/lib/json-shape"
+import { isNonEmptyString } from "~/lib/json-shape"
 
 export function isMessagesOutputEvent(event: {
   content_block?: unknown
@@ -9,12 +10,12 @@ export function isMessagesOutputEvent(event: {
     const block = asRecord(event.content_block)
     if (!block) return false
     if (block.type === "tool_use" || block.type === "server_tool_use") {
-      return hasNonEmptyString(block.name) || hasMeaningfulObject(block.input)
+      return isNonEmptyString(block.name) || hasMeaningfulObject(block.input)
     }
     return (
-      hasNonEmptyString(block.text)
-      || hasNonEmptyString(block.thinking)
-      || hasNonEmptyString(block.data)
+      isNonEmptyString(block.text)
+      || isNonEmptyString(block.thinking)
+      || isNonEmptyString(block.data)
     )
   }
 
@@ -22,18 +23,14 @@ export function isMessagesOutputEvent(event: {
     const delta = asRecord(event.delta)
     if (!delta || delta.type === "signature_delta") return false
     return (
-      hasNonEmptyString(delta.text)
-      || hasNonEmptyString(delta.thinking)
-      || hasNonEmptyString(delta.partial_json)
-      || hasNonEmptyString(delta.data)
+      isNonEmptyString(delta.text)
+      || isNonEmptyString(delta.thinking)
+      || isNonEmptyString(delta.partial_json)
+      || isNonEmptyString(delta.data)
     )
   }
 
   return false
-}
-
-function hasNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0
 }
 
 function hasMeaningfulObject(value: unknown): boolean {

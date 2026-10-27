@@ -1,3 +1,5 @@
+import { asNumber } from "~/lib/json-shape"
+
 interface ClaudeUsageWindow {
   utilization?: number
   resets_at?: string
@@ -231,7 +233,7 @@ export function parseAntigravityQuotaPayload(
 }
 
 function normalizeQuotaFraction(value: unknown): number | undefined {
-  const normalized = normalizeNumber(value)
+  const normalized = asNumber(value)
   if (normalized !== undefined) {
     return normalized
   }
@@ -290,19 +292,6 @@ export function parseXaiBillingPayload(
   return parsed as XaiBillingPayload | null
 }
 
-function normalizeNumber(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value
-  }
-  if (typeof value === "string") {
-    const parsed = Number(value.trim())
-    if (Number.isFinite(parsed)) {
-      return parsed
-    }
-  }
-  return undefined
-}
-
 export function summarizeClaudeQuota(payload: ClaudeUsagePayload): {
   remainingFraction: number | undefined
   unlimited: boolean
@@ -353,9 +342,9 @@ export function summarizeKimiQuota(payload: KimiUsagePayload): {
   let matchedTotal: number | undefined
 
   for (const item of candidates) {
-    const limit = normalizeNumber(item.limit)
-    const remaining = normalizeNumber(item.remaining)
-    const used = normalizeNumber(item.used)
+    const limit = asNumber(item.limit)
+    const remaining = asNumber(item.remaining)
+    const used = asNumber(item.used)
     const computedRemaining =
       remaining
       ?? (limit !== undefined && used !== undefined ?
@@ -400,7 +389,7 @@ function collectCodexRateLimitWindows(
 function getCodexWindowUsedPercent(
   window: CodexUsageWindow,
 ): number | undefined {
-  const used = normalizeNumber(window.used_percent ?? window.usedPercent)
+  const used = asNumber(window.used_percent ?? window.usedPercent)
   if (used === undefined) {
     return undefined
   }
@@ -456,9 +445,9 @@ function normalizeXaiCentValue(
     return undefined
   }
   if (typeof value === "object" && !Array.isArray(value)) {
-    return normalizeNumber(value.val)
+    return asNumber(value.val)
   }
-  return normalizeNumber(value)
+  return asNumber(value)
 }
 
 export function summarizeXaiQuota(payload: XaiBillingPayload): {
@@ -504,7 +493,7 @@ export function summarizeXaiQuota(payload: XaiBillingPayload): {
     }
   }
 
-  const creditUsagePercent = normalizeNumber(
+  const creditUsagePercent = asNumber(
     config.creditUsagePercent ?? config.credit_usage_percent,
   )
   if (creditUsagePercent !== undefined) {

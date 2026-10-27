@@ -88,3 +88,13 @@ export function xaiWsBaseUrl(connection: ProviderConnection): string {
   }
   return baseUrl
 }
+
+/** xAI 平台 API 的 base（settings.baseUrl 可覆盖），去掉尾部斜杠。 */
+export function xaiApiBaseUrl(connection: ProviderConnection): string {
+  const settingsBase = getConnectionSettings(connection)?.baseUrl
+  return (
+    typeof settingsBase === "string" ? settingsBase : XAI_API_BASE_URL).replace(
+    /\/+$/,
+    "",
+  )
+}

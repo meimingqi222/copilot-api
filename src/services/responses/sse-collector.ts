@@ -16,6 +16,7 @@ import {
   extractWsErrorMessage,
   extractWsErrorStatus,
 } from "./upstream-ws-error"
+import { outputItemKey } from "~/services/responses/output-item"
 
 const MAX_COLLECTED_SSE_BYTES = 32 * 1024 * 1024
 
@@ -118,14 +119,6 @@ function hasOutputItem(
     const item = getRecord(value)
     return item ? outputItemKey(item) === candidateKey : false
   })
-}
-
-function outputItemKey(item: Record<string, unknown>): string | undefined {
-  const type = typeof item.type === "string" ? item.type.trim() : ""
-  const id = typeof item.id === "string" ? item.id.trim() : ""
-  if (id) return `${type}:id:${id}`
-  const callId = typeof item.call_id === "string" ? item.call_id.trim() : ""
-  return callId ? `${type}:call_id:${callId}` : undefined
 }
 
 function createTerminalError(event: Record<string, unknown>): HTTPError {
