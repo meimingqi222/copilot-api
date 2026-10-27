@@ -43,6 +43,7 @@ import {
   resolveCodebuddyDomain,
 } from "~/services/codebuddy/token-refresh"
 import {
+  detectCodebuddyStreamError,
   isCodebuddyModelRateLimit,
   isCodebuddyModelUnavailable,
   recordCodebuddyModelCooldown,
@@ -54,7 +55,6 @@ import { recordModelCooldown } from "~/lib/model-cooldown"
 import {
   connectionFetch,
   connectionFetchInit,
-  detectOpenAIStreamError,
   handleUpstreamFailure,
   safeSseStream,
 } from "~/services/protocols/shared"
@@ -995,7 +995,7 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
       // 首帧即渠道校验（200 包 SSE 错误帧）：同样换 /console 再试一次。
       let stream: AsyncIterable<CopilotStreamEvent>
       try {
-        stream = await safeSseStream(response, detectOpenAIStreamError)
+        stream = await safeSseStream(response, detectCodebuddyStreamError)
       } catch (error: unknown) {
         if (
           error instanceof HTTPError

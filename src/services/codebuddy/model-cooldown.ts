@@ -16,8 +16,15 @@
  * 的限流语义由 body 业务码承载。
  */
 
+import { HTTPError } from "~/lib/error"
 import { classifyUpstreamError, DEFAULTS } from "~/lib/provider-connections"
 import { recordModelCooldown } from "~/lib/model-cooldown"
+
+/** 检测器看到的一条 SSE 事件（与 protocols/shared 的 SimpleSseEvent 同形）。 */
+interface CodebuddySseEvent {
+  event?: string
+  data?: string
+}
 
 /** 模型级限流业务码判定（JSON 空格/引号容差，与 workbuddy2api 同口径）。 */
 const MODEL_RATE_LIMIT_CODE_PATTERN = /"code"\s*:\s*"?6004"?/
@@ -104,4 +111,59 @@ export function isCodebuddyModelUnavailable(body: string): boolean {
   } catch {
     return false
   }
+}
+
+/**
+ * CodeBuddy 的流错误检测器。
+ *
+ * 上游的 6004/11102 错误帧是**顶层** `{code, msg, requestId}`，没有 OpenAI
+ * 惯用的 `error` 字段，所以 `detectOpenAIStreamError` 认不出来——错误帧会被
+ * 当普通数据透传给客户端，模型级冷却因此永远不落，每次请求都再撞一次已知
+ * 限流的账号。
+ *
+ * 这里同时认 OpenAI 的 `error` 字段与顶层业务码，并把业务码折成对客户端有
+ * 意义的 HTTP 状态（6004 → 429，客户端会带 Retry-After 重试），语义同时留在
+ * body 里供 adapter 的 6004 分支落模型级冷却。
+ */
+export function detectCodebuddyStreamError(
+  event: CodebuddySseEvent,
+): HTTPError | null {
+  if (!event.data || event.data === "[DONE]") return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(event.data)
+  } catch {
+    return null
+  }
+  const record =
+    parsed && typeof parsed === "object" && !Array.isArray(parsed) ?
+      (parsed as Record<string, unknown>)
+    : undefined
+  if (!record) return null
+
+  const error = record.error
+  const code = record.code ?? record.status_code ?? record.status
+  const message = record.msg ?? record.message
+  // 顶层业务码：只有明确带 msg/message 的才算错误帧，避免把正常 chunk 里
+  // 偶然出现的数值字段当错误。
+  const topLevelError =
+    error === undefined
+    && code !== undefined
+    && (typeof message === "string" || typeof code === "number")
+    && Number.isFinite(Number(code))
+  if (!error && !topLevelError) return null
+
+  const numeric =
+    typeof code === "number" ? code : Number.parseInt(String(code), 10) || 500
+  // 业务码的 HTTP 语义：6004 是模型限流，交给客户端时应为可重试的 429；
+  // 其余越界业务码（Response 构造器只接受 101 / 200-599）回落 500。
+  const status =
+    numeric === 6004 ? 429
+    : numeric >= 200 && numeric <= 599 ? numeric
+    : 500
+  return new HTTPError(
+    typeof message === "string" ? message : "upstream streaming error",
+    new Response(null, { status }),
+    event.data,
+  )
 }

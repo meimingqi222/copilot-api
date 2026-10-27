@@ -387,6 +387,45 @@ describe("codebuddy adapter 6004 handling", () => {
     expect(connection.credentials[0].status).toBe("cooldown")
     expect(isModelCoolingDown("__cb-cred", "deepseek-x")).toBe(false)
   })
+
+  test("an SSE 6004 frame cools the model (top-level {code,msg}, no error field)", async () => {
+    const connection = adapterConnection()
+    const createChat = codebuddyNativeAdapter.createChatCompletions
+    if (!createChat) throw new Error("adapter missing createChatCompletions")
+    // 真实上游的错误帧是顶层 {code,msg,requestId}，没有 OpenAI 的 error 字段。
+    const frame = JSON.stringify({
+      code: 6004,
+      msg: `usage exceeds frequency limit, but don't worry, your usage will reset at ${wallClockPlus8(new Date(Date.now() + 3_600_000))} UTC+8`,
+      requestId: "d7c1d5d9-8fb6-41b4-9ae7-7849a7997f46",
+    })
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(`data: ${frame}\n\n`, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+      )) as unknown as typeof fetch
+
+    const error = await createChat({
+      target: target("deepseek-x"),
+      connection,
+      credential: { id: "__cb-cred" } as never,
+      payload: {
+        model: "deepseek-x",
+        messages: [{ role: "user", content: "hi" }],
+        stream: true,
+      },
+      signal: undefined,
+    }).catch((error: unknown) => error)
+
+    // 首帧即限流：按 429 + 重置时间交给客户端重试，而不是把错误帧当数据透传。
+    expect(error).toBeInstanceOf(HTTPError)
+    expect((error as HTTPError).response.status).toBe(429)
+    expect(
+      Number((error as HTTPError).response.headers.get("retry-after")),
+    ).toBeGreaterThan(3500)
+    expect(isModelCoolingDown("__cb-cred", "deepseek-x")).toBe(true)
+  })
 })
 
 describe("route-target model-cooldown filtering", () => {
