@@ -309,6 +309,95 @@ describe("dispatch-failover", () => {
     expect(listAccounts()[0]?.isExhausted).toBe(true)
   })
 
+  test("a 429 without upstream advice carries our rest as Retry-After", async () => {
+    const account: Account = {
+      id: "oauth-1",
+      label: "codex-account",
+      provider: "codex",
+      credentials: {
+        accessToken: "access-token",
+        refreshToken: "refresh-token",
+      },
+      enabled: true,
+      priority: 0,
+      quotaState: "available",
+      createdAt: Date.now(),
+    }
+    setTestAccounts([account])
+
+    const credential: ApiCredential = {
+      id: account.id,
+      authMode: "bearer",
+      value: "access-token",
+      enabled: true,
+      priority: 0,
+      status: "ready",
+      createdAt: Date.now(),
+    }
+    const connection: ProviderConnection = {
+      id: account.id,
+      name: account.label,
+      protocol: "codex-native",
+      baseUrl: "https://api.openai.com",
+      enabled: true,
+      priority: 0,
+      credentials: [credential],
+      createdAt: Date.now(),
+    }
+    const target: RouteTarget = {
+      connectionId: account.id,
+      connectionName: account.label,
+      protocol: "codex-native",
+      credentialId: account.id,
+      publicModelId: "gpt-5",
+      upstreamModelId: "gpt-5",
+      endpoint: "chat",
+      connectionPriority: 0,
+      connectionWeight: 1,
+      credentialPriority: 0,
+      credentialWeight: 1,
+    }
+
+    // 上游只说"限流",没给什么时候再来。
+    const body = JSON.stringify({
+      error: { type: "rate_limit_exceeded", message: "Rate limit reached" },
+    })
+
+    try {
+      await executeWithFailover({
+        payload: { model: "gpt-5" },
+        admission: {
+          target,
+          connection,
+          credential,
+          initiator: "user",
+        },
+        routeKind: "chat",
+        execute: () => {
+          throw new HTTPError(
+            "rate limited",
+            new Response(body, { status: 429 }),
+            body,
+          )
+        },
+      })
+      expect.unreachable("expected the 429 to throw")
+    } catch (error) {
+      expect(error).toBeInstanceOf(HTTPError)
+      const httpError = error as HTTPError
+      // 没有退避时间的 429 会被 Codex 当终态;这里补上本地 rest 的时长。
+      const retryAfter = Number(httpError.response.headers.get("Retry-After"))
+      expect(retryAfter).toBeGreaterThan(0)
+      expect(retryAfter).toBeLessThanOrEqual(60)
+      expect(httpError.response.headers.get("retry-after-ms")).toBe(
+        String(retryAfter * 1000),
+      )
+      expect(httpError.response.headers.get("x-ratelimit-reset")).toBe(
+        String(retryAfter),
+      )
+    }
+  })
+
   test("rotates to another account after usage_limit_reached", async () => {
     const makeAccount = (id: string): Account => ({
       id,

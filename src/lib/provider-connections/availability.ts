@@ -222,9 +222,13 @@ function getQuotaRetryAfterSeconds(
     if (cooldownUntil !== undefined && cooldownUntil > now) {
       ends.push(cooldownUntil)
     }
+    // 24 小时自动恢复窗口只给"没人说得清什么时候恢复"的耗尽兜底。已经有
+    // 冷却(429 的 rest:vendor 写明的窗口，或本地退避)时以那一刻为准 ——
+    // 否则 5 小时窗口会被报成 24 小时，客户端(Codex)照着睡一整天。
     const exhaustedAt = getConnectionQuotaExhaustedAt(connection)
     if (
-      exhaustedAt !== undefined
+      cooldownUntil === undefined
+      && exhaustedAt !== undefined
       && now - exhaustedAt < DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
     ) {
       ends.push(exhaustedAt + DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS)

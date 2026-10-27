@@ -185,6 +185,22 @@ describe("getConnectionRoutability", () => {
     expect(result.retryAfterSeconds).toBeGreaterThan(0)
   })
 
+  test("配额刷新不会把 429 写下的窗口冷却顶回 24 小时猜测", async () => {
+    const FIVE_HOURS = 5 * 60 * 60 * 1000
+    await setupConnection("c-window")
+    const conn = mustGet("c-window")
+    // 429 的 rest:vendor 写明的窗口还剩 5 小时。
+    setConnectionCooldownUntil(conn, Date.now() + FIVE_HOURS)
+    // 之后配额刷新又报"耗尽"(窗口仍是 100%):不能把冷却改成 24 小时,
+    // 否则路由和客户端(Codex 照着 Retry-After 睡)都要多等一整天。
+    setConnectionQuotaState(conn, "exhausted")
+
+    const result = getConnectionRoutability(mustGet("c-window"))
+    expect(result.routable).toBe(false)
+    expect(result.retryAfterSeconds).toBeGreaterThan(FIVE_HOURS / 1000 - 10)
+    expect(result.retryAfterSeconds).toBeLessThanOrEqual(FIVE_HOURS / 1000)
+  })
+
   test("配额窗口恢复后重新可路由（Codex 5 小时窗口的自动续跑）", async () => {
     await setupConnection("c-quota-done")
     const conn = mustGet("c-quota-done")

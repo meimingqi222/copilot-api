@@ -458,9 +458,19 @@ export function setConnectionQuotaState(
       // 立刻被擦掉，0 配额账号照旧留在调度里。与
       // markCredentialQuotaExhausted 同一语义：冷却到自动恢复窗口结束，
       // 期间刷新报告配额已恢复时由下面的恢复分支清掉。
+      //
+      // 但已经存在的冷却更可信：它来自 429 的 rest(vendor 写明的窗口重置，
+      // 比如 Codex 的 5 小时窗口)。配额刷新不能把那一刻顶回 24 小时的猜测，
+      // 否则路由和客户端都要多等一整天。
+      const now = Date.now()
+      const guessedEnd =
+        (exhaustedAt ?? now) + DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
+      const existingEnd = getConnectionCooldownUntil(conn)
       setConnectionCooldownUntil(
         conn,
-        (exhaustedAt ?? Date.now()) + DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
+        existingEnd !== undefined && existingEnd > now ?
+          Math.min(existingEnd, guessedEnd)
+        : guessedEnd,
       )
     }
     return

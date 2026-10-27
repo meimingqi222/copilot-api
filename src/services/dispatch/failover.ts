@@ -1,5 +1,6 @@
 import type { Context } from "hono"
 
+import type { RestDecision } from "~/lib/route-target"
 import type { RouteTarget } from "~/lib/provider-connections"
 import type { CredentialLease } from "~/services/dispatch/concurrency"
 
@@ -27,6 +28,7 @@ import {
 import { connectionProvider } from "~/lib/provider-connections"
 import {
   checkRateLimit,
+  getRemainingCooldownSeconds,
   RateLimitQueueFullError,
   reportUpstreamSuccess,
 } from "~/lib/rate-limit"
@@ -355,7 +357,7 @@ export async function executeWithFailover<
         && !shouldFailover(error)
       ) {
         await markCooldown(current, error, logPrefix, rest)
-        throw error
+        throw withRetryAdvice(error, current, rest)
       }
 
       logAttemptFailure(logPrefix, current, error)
@@ -369,7 +371,34 @@ export async function executeWithFailover<
         await markCooldown(current, error, logPrefix, rest)
       }
 
-      if (!advanceToNextTarget()) throw error
+      if (!advanceToNextTarget()) throw withRetryAdvice(error, current, rest)
     }
   }
+}
+
+/**
+ * A 429 without retry advice is terminal for clients that wait on `Retry-After`
+ * (Codex ends the turn on one — "exceeded retry limit, last status: 429").
+ * The rest this failure just took is exactly how long routing refuses the
+ * target, so that is what the client is told when the upstream said nothing.
+ */
+function withRetryAdvice(
+  error: unknown,
+  admission: RequestAdmission,
+  rest?: RestDecision,
+): unknown {
+  if (!(error instanceof HTTPError) || error.response.status !== 429) {
+    return error
+  }
+  if (error.response.headers.has("Retry-After")) return error
+  const restMs =
+    rest?.untilMs && rest.untilMs > Date.now() ? rest.untilMs - Date.now() : 0
+  const gateMs = getRemainingCooldownSeconds(admission.connection.id) * 1000
+  const waitMs = Math.max(restMs, gateMs)
+  if (!(waitMs > 0)) return error
+  const seconds = Math.max(1, Math.ceil(waitMs / 1000))
+  error.response.headers.set("Retry-After", String(seconds))
+  error.response.headers.set("retry-after-ms", String(seconds * 1000))
+  error.response.headers.set("x-ratelimit-reset", String(seconds))
+  return error
 }
