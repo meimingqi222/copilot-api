@@ -14,7 +14,6 @@ import { HTTPError } from "~/lib/error"
 import { serializeUpstreamBody } from "~/lib/upstream-performance"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
-import { isChatCompletionResponse } from "~/lib/utils"
 import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"
 import { stripKimiModelPrefix } from "~/services/oauth/kimi"
 import {
@@ -23,6 +22,7 @@ import {
 } from "~/services/protocols/shared"
 
 import { buildKimiHeaders } from "./headers"
+import { readChatCompletion } from "~/services/protocols/chat-once-result"
 
 const KIMI_CHAT_URL = "https://api.kimi.com/coding/v1/chat/completions"
 
@@ -96,9 +96,8 @@ export async function createKimiChatCompletionsOnce(
     return openAiSseToCopilotEvents(stream, model)
   }
 
-  const body = (await response.json()) as ChatCompletionResponse
-  if (!isChatCompletionResponse(body)) {
-    throw new Error("Kimi upstream returned invalid chat completion response")
-  }
-  return body
+  return readChatCompletion(
+    response,
+    "Kimi upstream returned invalid chat completion response",
+  )
 }

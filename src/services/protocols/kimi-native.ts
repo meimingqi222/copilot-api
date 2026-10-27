@@ -7,17 +7,9 @@
 
 import { createKimiChatCompletionsOnce } from "~/services/kimi/create-chat-completions-once"
 
-import type { AdapterChatResult, ProtocolAdapter } from "./types"
+import { createOnceAdapter } from "./once-adapter"
 
-export const kimiNativeAdapter: ProtocolAdapter = {
+export const kimiNativeAdapter = createOnceAdapter({
   protocol: "kimi-native",
-
-  async createChatCompletions({ connection, credential, payload, signal }) {
-    const response = await createKimiChatCompletionsOnce(
-      { connection, credential },
-      payload,
-      signal,
-    )
-    return { credentialId: credential.id, response } as AdapterChatResult
-  },
-}
+  chat: createKimiChatCompletionsOnce,
+})

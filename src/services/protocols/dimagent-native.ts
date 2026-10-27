@@ -21,7 +21,7 @@ import {
 import { connectionFetchInit } from "~/services/protocols/shared"
 
 import { openAICompatibleAdapter } from "./openai-compatible"
-import type { ProtocolAdapter } from "./types"
+import { createRewrittenAdapter } from "./rewritten-adapter"
 
 function withDimagent(
   connection: ProviderConnection,
@@ -35,35 +35,27 @@ function withDimagent(
   }
   return {
     connection: { ...connection, baseUrl: `${DIMAGENT_BASE}/v1`, headers },
+    // DimAgent 的 token 走 Bearer；补齐前缀让 compatible adapter 拼出
+    // `Authorization: Bearer <token>`。
     credential: { ...credential, authMode: "bearer" },
   }
 }
 
-export const dimagentNativeAdapter: ProtocolAdapter = {
+export const dimagentNativeAdapter = createRewrittenAdapter({
   protocol: "dimagent-native",
 
-  createChatCompletions(params) {
-    const { connection, credential } = withDimagent(
-      params.connection,
-      params.credential,
-    )
-    return openAICompatibleAdapter.createChatCompletions!({
-      ...params,
-      connection,
-      credential,
-    })
-  },
+  rewrite: (_wire, { connection, credential }) =>
+    withDimagent(connection, credential),
 
-  async discoverModels({ connection, credential, signal }) {
-    const { connection: conn, credential: cred } = withDimagent(
-      connection,
-      credential,
-    )
+  wires: ["chat"],
+  adapters: () => ({ chat: openAICompatibleAdapter }),
+
+  discoverModels: async ({ connection, credential, signal }) => {
     const response = await fetch(
       `${DIMAGENT_BASE}/v1/models?type=dim`,
       connectionFetchInit(connection, {
         headers: {
-          authorization: `Bearer ${cred.value}`,
+          authorization: `Bearer ${credential.value}`,
           "user-agent": DIMAGENT_CHAT_UA,
           "x-title": "DimCode",
           "http-referer": DIMAGENT_REFERER,
@@ -76,7 +68,6 @@ export const dimagentNativeAdapter: ProtocolAdapter = {
       data?: Array<{ id?: string }>
       models?: Array<{ id?: string }>
     }
-    void conn
     const ids = body.data ?? body.models ?? []
     return ids
       .filter((m) => typeof m.id === "string" && m.id)
@@ -88,4 +79,4 @@ export const dimagentNativeAdapter: ProtocolAdapter = {
         pickerEnabled: true,
       }))
   },
-}
+})

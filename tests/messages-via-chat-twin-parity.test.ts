@@ -146,7 +146,7 @@ async function runWith(
     connection,
     credential,
     payload,
-    chatExecutor: () =>
+    executor: () =>
       Promise.resolve({ credentialId: "cred-1", response: toStream(events) }),
   })
   const out: Array<AnthropicSseFrame> = []

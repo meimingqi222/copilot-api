@@ -1,61 +1,15 @@
 /**
  * xAI Native Protocol Adapter。
  *
- * Phase 2d:纯 (connection, credential) 热路径,不再经由
- * connectionToAccount 派生 Account。
+ * 上游是 Responses API；协议差异（protocol 名 + 发请求实现）交给
+ * `createResponsesNativeAdapter`，与 Codex 共用同一份适配器骨架。
  */
 
 import { createXaiResponsesOnce } from "~/services/xai/create-responses-once"
 
-import type { AdapterResponsesResult, ProtocolAdapter } from "./types"
+import { createResponsesNativeAdapter } from "./responses-native"
 
-import { createChatViaResponses } from "./chat-via-responses"
-
-export const xaiNativeAdapter: ProtocolAdapter = {
-  protocol: "xai-native",
-
-  async createChatCompletions({
-    target,
-    connection,
-    credential,
-    payload,
-    signal,
-    ctx,
-  }) {
-    return createChatViaResponses({
-      target,
-      connection,
-      credential,
-      payload,
-      signal,
-      ctx,
-      responsesExecutor: async ({
-        connection: conn,
-        payload: responsesPayload,
-        signal: sig,
-        ctx: context,
-      }) => {
-        const response = await createXaiResponsesOnce(
-          { connection: conn, credential },
-          responsesPayload,
-          sig,
-          context,
-        )
-        return {
-          credentialId: credential.id,
-          response,
-        } as AdapterResponsesResult
-      },
-    })
-  },
-
-  async createResponses({ connection, credential, payload, signal, ctx }) {
-    const response = await createXaiResponsesOnce(
-      { connection, credential },
-      payload,
-      signal,
-      ctx,
-    )
-    return { credentialId: credential.id, response } as AdapterResponsesResult
-  },
-}
+export const xaiNativeAdapter = createResponsesNativeAdapter(
+  "xai-native",
+  createXaiResponsesOnce,
+)

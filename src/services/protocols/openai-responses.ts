@@ -58,6 +58,7 @@ import {
   sanitizeStatelessInputItems,
   snoopResponsesStreamForTranscript,
 } from "./openai-responses-transcript"
+import { discoverJsonModels } from "./discover-models"
 
 function buildHeaders(
   connection: ProviderConnection,
@@ -80,32 +81,13 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
   protocol: "openai-responses-compatible",
 
   async discoverModels({ connection, credential, signal }) {
-    const endpoint =
-      connection.modelDiscovery?.endpoint
-      ?? joinUrl(connection.baseUrl, "/models")
-    const url =
-      /^https?:/i.test(endpoint) ? endpoint : (
-        joinUrl(connection.baseUrl, endpoint)
-      )
-
-    const response = await fetch(
-      url,
-      connectionFetchInit(connection, {
-        headers: buildHeaders(connection, credential),
-        signal,
-      }),
-    )
-
-    if (!response.ok) {
-      await handleUpstreamFailure(
-        response,
-        credential,
-        "Failed to discover models",
-        "openai-responses-compatible",
-      )
-    }
-
-    const body = (await response.json()) as {
+    const body = (await discoverJsonModels({
+      connection,
+      credential,
+      signal,
+      headers: buildHeaders(connection, credential),
+      providerLabel: "openai-responses-compatible",
+    })) as {
       data?: Array<{ id: string; object?: string; owned_by?: string }>
     }
     if (!body.data || !Array.isArray(body.data)) {

@@ -123,7 +123,7 @@ const createPreparedResponses = async (
         c: options.c,
         memoryTraceId: options.memoryTraceId,
       },
-      chatExecutor: ({ payload: chatPayload }) =>
+      executor: ({ payload: chatPayload }) =>
         createChat({
           target,
           connection,

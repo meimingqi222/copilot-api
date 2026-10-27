@@ -72,7 +72,7 @@ describe("service tier translation", () => {
           ...subject(),
           signal,
           payload: { model: "test", input: "hi", stream, service_tier: tier },
-          chatExecutor: async ({ payload, signal: receivedSignal }) => {
+          executor: async ({ payload, signal: receivedSignal }) => {
             expect(payload.service_tier).toBe(tier)
             expect(payload.stream).toBe(stream)
             expect(receivedSignal).toBe(signal)

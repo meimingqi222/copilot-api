@@ -211,7 +211,7 @@ describe("Responses IR request codec", () => {
             ],
           },
         ]),
-        chatExecutor: async () => {
+        executor: async () => {
           called = true
           throw new Error("must not call upstream")
         },

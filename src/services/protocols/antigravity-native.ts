@@ -7,24 +7,9 @@
 
 import { createAntigravityChatCompletionsOnce } from "~/services/antigravity/create-chat-completions-once"
 
-import type { AdapterChatResult, ProtocolAdapter } from "./types"
+import { createOnceAdapter } from "./once-adapter"
 
-export const antigravityNativeAdapter: ProtocolAdapter = {
+export const antigravityNativeAdapter = createOnceAdapter({
   protocol: "antigravity-native",
-
-  async createChatCompletions({
-    connection,
-    credential,
-    payload,
-    signal,
-    ctx,
-  }) {
-    const response = await createAntigravityChatCompletionsOnce(
-      { connection, credential },
-      payload,
-      signal,
-      ctx,
-    )
-    return { credentialId: credential.id, response } as AdapterChatResult
-  },
-}
+  chat: createAntigravityChatCompletionsOnce,
+})

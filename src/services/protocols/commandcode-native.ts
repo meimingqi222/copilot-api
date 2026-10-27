@@ -6,11 +6,8 @@
  *   - Responses : /provider/v1/responses
  *   - Anthropic : /provider/v1/messages
  *
- * 鉴权用铸出的 key，**同时**带：
- *   - `Authorization: Bearer <key>`
- *   - `x-api-key: <key>`
- *
- * 复用既有 compatible adapter 的传输，只替换 baseUrl 与补 `x-api-key`。
+ * 鉴权用铸出的 key，**同时**带 `Authorization: Bearer <key>` 与
+ * `x-api-key: <key>`。复用既有 compatible adapter，只替换 baseUrl 与补头。
  */
 
 import type {
@@ -24,7 +21,7 @@ import { connectionFetchInit } from "~/services/protocols/shared"
 import { anthropicCompatibleAdapter } from "./anthropic-compatible"
 import { openAICompatibleAdapter } from "./openai-compatible"
 import { openAIResponsesCompatibleAdapter } from "./openai-responses"
-import type { ProtocolAdapter } from "./types"
+import { createRewrittenAdapter } from "./rewritten-adapter"
 
 function withCommandCode(
   connection: ProviderConnection,
@@ -44,16 +41,25 @@ function withCommandCode(
   }
 }
 
-export const commandCodeNativeAdapter: ProtocolAdapter = {
+export const commandCodeNativeAdapter = createRewrittenAdapter({
   protocol: "commandcode-native",
 
-  // 模型列表在 Provider API 的 /models（`api.commandcode.ai/provider/v1/models`），
-  // key 同时进 Authorization: Bearer + x-api-key。
-  async discoverModels({
+  rewrite: (_wire, { connection, credential }) =>
+    withCommandCode(connection, credential),
+
+  wires: ["chat", "responses", "messages"],
+  adapters: () => ({
+    chat: openAICompatibleAdapter,
+    responses: openAIResponsesCompatibleAdapter,
+    messages: anthropicCompatibleAdapter,
+  }),
+
+  // 模型列表在 Provider API 的 /models，key 同时进两个鉴权头。
+  discoverModels: async ({
     connection,
     credential,
     signal,
-  }): Promise<Array<ModelMapping>> {
+  }): Promise<Array<ModelMapping>> => {
     const response = await fetch(
       `${COMMANDCODE_PROVIDER_BASE}/models`,
       connectionFetchInit(connection, {
@@ -81,40 +87,4 @@ export const commandCodeNativeAdapter: ProtocolAdapter = {
         pickerEnabled: true,
       }))
   },
-
-  createMessages(params) {
-    const { connection, credential } = withCommandCode(
-      params.connection,
-      params.credential,
-    )
-    return anthropicCompatibleAdapter.createMessages!({
-      ...params,
-      connection,
-      credential,
-    })
-  },
-
-  createResponses(params) {
-    const { connection, credential } = withCommandCode(
-      params.connection,
-      params.credential,
-    )
-    return openAIResponsesCompatibleAdapter.createResponses!({
-      ...params,
-      connection,
-      credential,
-    })
-  },
-
-  createChatCompletions(params) {
-    const { connection, credential } = withCommandCode(
-      params.connection,
-      params.credential,
-    )
-    return openAICompatibleAdapter.createChatCompletions!({
-      ...params,
-      connection,
-      credential,
-    })
-  },
-}
+})

@@ -1059,7 +1059,7 @@ describe("createChatViaMessages (wrapper)", () => {
       connection,
       credential,
       payload: basePayload(),
-      messagesExecutor: (params) => {
+      executor: (params) => {
         expect(params.payload.model).toBe("claude-sonnet-4")
         expect(params.payload.max_tokens).toBe(128)
         return Promise.resolve({
@@ -1090,7 +1090,7 @@ describe("createChatViaMessages (wrapper)", () => {
           { role: "user", content: "turn 2" },
         ],
       }),
-      messagesExecutor: (params) => {
+      executor: (params) => {
         sent = params.payload
         return Promise.resolve({
           credentialId: "cred-1",
@@ -1137,7 +1137,7 @@ describe("createChatViaMessages (wrapper)", () => {
           { role: "user", content: "next" },
         ],
       }),
-      messagesExecutor: (params) => {
+      executor: (params) => {
         sent = params.payload
         return Promise.resolve({
           credentialId: "cred-1",
@@ -1166,7 +1166,7 @@ describe("createChatViaMessages (wrapper)", () => {
           { role: "user", content: "turn 1" },
         ],
       }),
-      messagesExecutor: (params) => {
+      executor: (params) => {
         sent = params.payload
         return Promise.resolve({
           credentialId: "cred-1",

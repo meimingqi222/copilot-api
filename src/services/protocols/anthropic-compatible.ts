@@ -29,6 +29,7 @@ import {
 } from "~/services/protocols/shared"
 
 import type { AdapterMessagesResult, ProtocolAdapter } from "./types"
+import { discoverJsonModels } from "./discover-models"
 
 function buildHeaders(
   connection: ProviderConnection,
@@ -124,27 +125,13 @@ export const anthropicCompatibleAdapter: ProtocolAdapter = {
     // 官方 Anthropic 与兼容供应商（Kimi Coding 等）都在 /v1 下提供该
     // 列表,而预设声明了 fetchable:true 就该真的能拉模型。不支持的上游
     // 会 404/405,由调用方把状态码报给用户,好过静默返回空列表。
-    const endpoint = connection.modelDiscovery?.endpoint || "/models"
-    const url =
-      /^https?:/i.test(endpoint) ? endpoint : (
-        joinUrl(connection.baseUrl, endpoint)
-      )
-    const response = await fetch(
-      url,
-      connectionFetchInit(connection, {
-        headers: buildHeaders(connection, credential),
-        signal,
-      }),
-    )
-    if (!response.ok) {
-      await handleUpstreamFailure(
-        response,
-        credential,
-        "Failed to discover models",
-        "anthropic-compatible",
-      )
-    }
-    const body = (await response.json()) as {
+    const body = (await discoverJsonModels({
+      connection,
+      credential,
+      signal,
+      headers: buildHeaders(connection, credential),
+      providerLabel: "anthropic-compatible",
+    })) as {
       data?: Array<{ id: string }>
       models?: Array<{ id: string }>
     }

@@ -12,8 +12,7 @@
  * `User-Agent: factory-cli/<ver>`，活动 org 走 `X-Factory-Org-Id`。
  * 鉴权是 WorkOS access token（`Authorization: Bearer`）。
  *
- * 本 adapter 不重新实现 wire：它把每个端点委托给既有的 compatible adapter，
- * 只替换 baseUrl（按 wire 选前缀）与请求头，并把凭证归一成 bearer。
+ * 不重新实现 wire：按 wire 选路径前缀后委托给既有 compatible adapter。
  */
 
 import type {
@@ -26,7 +25,7 @@ import { FACTORY_CLI_VERSION, factoryApiBase } from "~/services/oauth/factory"
 import { anthropicCompatibleAdapter } from "./anthropic-compatible"
 import { openAICompatibleAdapter } from "./openai-compatible"
 import { openAIResponsesCompatibleAdapter } from "./openai-responses"
-import type { ProtocolAdapter } from "./types"
+import { createRewrittenAdapter, type RewrittenWire } from "./rewritten-adapter"
 
 /** Anthropic Messages 的 base 前缀（compatible adapter 会再拼 /messages）。 */
 const FACTORY_MESSAGES_PREFIX = "/api/llm/a/v1"
@@ -60,58 +59,21 @@ function withFactory(
   }
 }
 
-export const factoryNativeAdapter: ProtocolAdapter = {
+function prefixFor(wire: RewrittenWire): string {
+  return wire === "messages" ? FACTORY_MESSAGES_PREFIX : FACTORY_OPENAI_PREFIX
+}
+
+export const factoryNativeAdapter = createRewrittenAdapter({
   protocol: "factory-native",
 
-  createMessages(params) {
-    const { connection, credential } = withFactory(
-      params.connection,
-      params.credential,
-      FACTORY_MESSAGES_PREFIX,
-    )
-    return anthropicCompatibleAdapter.createMessages!({
-      ...params,
-      connection,
-      credential,
-    })
-  },
+  rewrite: (wire, { connection, credential }) =>
+    withFactory(connection, credential, prefixFor(wire)),
 
-  createResponses(params) {
-    const { connection, credential } = withFactory(
-      params.connection,
-      params.credential,
-      FACTORY_OPENAI_PREFIX,
-    )
-    return openAIResponsesCompatibleAdapter.createResponses!({
-      ...params,
-      connection,
-      credential,
-    })
-  },
-
-  createChatCompletions(params) {
-    const { connection, credential } = withFactory(
-      params.connection,
-      params.credential,
-      FACTORY_OPENAI_PREFIX,
-    )
-    return openAICompatibleAdapter.createChatCompletions!({
-      ...params,
-      connection,
-      credential,
-    })
-  },
-
-  createEmbeddings(params) {
-    const { connection, credential } = withFactory(
-      params.connection,
-      params.credential,
-      FACTORY_OPENAI_PREFIX,
-    )
-    return openAICompatibleAdapter.createEmbeddings!({
-      ...params,
-      connection,
-      credential,
-    })
-  },
-}
+  wires: ["chat", "responses", "messages", "embeddings"],
+  adapters: () => ({
+    chat: openAICompatibleAdapter,
+    responses: openAIResponsesCompatibleAdapter,
+    messages: anthropicCompatibleAdapter,
+    embeddings: openAICompatibleAdapter,
+  }),
+})

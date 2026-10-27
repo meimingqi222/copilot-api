@@ -7,17 +7,9 @@
 
 import { createCodebuffChatCompletionsOnce } from "~/services/codebuff/create-chat-completions"
 
-import type { AdapterChatResult, ProtocolAdapter } from "./types"
+import { createOnceAdapter } from "./once-adapter"
 
-export const codebuffNativeAdapter: ProtocolAdapter = {
+export const codebuffNativeAdapter = createOnceAdapter({
   protocol: "codebuff-native",
-
-  async createChatCompletions({ connection, credential, payload, signal }) {
-    const response = await createCodebuffChatCompletionsOnce(
-      { connection, credential },
-      payload,
-      signal,
-    )
-    return { credentialId: credential.id, response } as AdapterChatResult
-  },
-}
+  chat: createCodebuffChatCompletionsOnce,
+})

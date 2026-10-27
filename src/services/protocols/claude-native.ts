@@ -7,18 +7,9 @@
 
 import { createClaudeMessagesOnce } from "~/services/claude/create-messages-once"
 
-import type { AdapterMessagesResult, ProtocolAdapter } from "./types"
+import { createOnceAdapter } from "./once-adapter"
 
-export const claudeNativeAdapter: ProtocolAdapter = {
+export const claudeNativeAdapter = createOnceAdapter({
   protocol: "claude-native",
-
-  async createMessages({ connection, credential, payload, signal, ctx }) {
-    const response = await createClaudeMessagesOnce(
-      { connection, credential },
-      payload,
-      signal,
-      ctx,
-    )
-    return { credentialId: credential.id, response } as AdapterMessagesResult
-  },
-}
+  messages: createClaudeMessagesOnce,
+})

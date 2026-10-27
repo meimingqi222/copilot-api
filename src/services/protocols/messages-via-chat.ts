@@ -5,62 +5,15 @@
  * hint (`collectChatStreamTwin`) is applied by `wire-pairs.ts` for `messages -> chat`.
  */
 
-import type {
-  ApiCredential,
-  ProviderConnection,
-  RouteTarget,
-} from "~/lib/provider-connections"
+import type { AnthropicMessagesPayload } from "~/services/protocols/anthropic"
 import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
-import type { RequestExecutionContext } from "~/services/providers/runtime"
 
-import { createTranslatedCall } from "./wire-pairs"
-
-import type { AnthropicMessagesPayload } from "./anthropic"
 import type { AdapterChatResult, AdapterMessagesResult } from "./types"
+import { createWireDelegate } from "./wire-delegate"
 
-interface ChatExecutorParams {
-  target: RouteTarget
-  connection: ProviderConnection
-  credential: ApiCredential
-  payload: ChatCompletionsPayload
-  signal?: AbortSignal
-  ctx?: RequestExecutionContext
-}
-
-type ChatExecutor = (params: ChatExecutorParams) => Promise<AdapterChatResult>
-
-interface MessagesViaChatParams {
-  target: RouteTarget
-  connection: ProviderConnection
-  credential: ApiCredential
-  payload: AnthropicMessagesPayload
-  signal?: AbortSignal
-  ctx?: RequestExecutionContext
-  chatExecutor: ChatExecutor
-}
-
-export async function createMessagesViaChat(
-  params: MessagesViaChatParams,
-): Promise<AdapterMessagesResult> {
-  const { target, connection, credential, payload, signal, ctx, chatExecutor } =
-    params
-  return (await createTranslatedCall({
-    source: "messages",
-    target: "chat",
-    targetPayload: payload,
-    connection,
-    credential,
-    routeTarget: target,
-    signal,
-    ctx,
-    executor: (p) =>
-      chatExecutor({
-        target: p.target,
-        connection: p.connection,
-        credential: p.credential,
-        payload: p.payload as ChatCompletionsPayload,
-        signal: p.signal,
-        ctx: p.ctx,
-      }),
-  })) as unknown as AdapterMessagesResult
-}
+export const createMessagesViaChat = createWireDelegate<
+  AnthropicMessagesPayload,
+  ChatCompletionsPayload,
+  AdapterChatResult,
+  AdapterMessagesResult
+>("messages", "chat")

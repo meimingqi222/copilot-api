@@ -7,28 +7,10 @@
 
 import { createWindsurfChatCompletionsOnce } from "~/services/windsurf/create-chat-completions"
 
-import type { AdapterChatResult, ProtocolAdapter } from "./types"
+import { createOnceAdapter } from "./once-adapter"
 
-export const windsurfNativeAdapter: ProtocolAdapter = {
+export const windsurfNativeAdapter = createOnceAdapter({
   protocol: "windsurf-native",
-
-  resolveDispatchModel(target) {
-    return target.publicModelId
-  },
-
-  async createChatCompletions({
-    connection,
-    credential,
-    payload,
-    signal,
-    ctx,
-  }) {
-    const response = await createWindsurfChatCompletionsOnce(
-      { connection, credential },
-      payload,
-      signal,
-      ctx,
-    )
-    return { credentialId: credential.id, response } as AdapterChatResult
-  },
-}
+  resolveDispatchModel: (target) => target.publicModelId,
+  chat: createWindsurfChatCompletionsOnce,
+})
