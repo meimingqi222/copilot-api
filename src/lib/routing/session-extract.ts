@@ -14,6 +14,7 @@
  */
 
 import { createHash } from "node:crypto"
+import { asRecord } from "~/lib/json-shape"
 
 const CLAUDE_SESSION_SUFFIX = /_session_([a-f0-9-]+)$/i
 
@@ -407,13 +408,6 @@ function normalizeHeaders(
     }
   }
   return out
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return value as Record<string, unknown>
-  }
-  return undefined
 }
 
 function readTrimmedString(value: unknown): string | undefined {

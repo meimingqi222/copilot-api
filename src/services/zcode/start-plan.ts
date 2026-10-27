@@ -44,6 +44,7 @@ import {
   getConnectionProxyUrl,
   getCredentialContextString,
 } from "~/lib/provider-connections"
+import { asRecord } from "~/lib/json-shape"
 import { oauthFetch, type OAuthFetchOptions } from "~/services/oauth/fetch"
 import {
   ZCODE_API,
@@ -163,13 +164,6 @@ export interface ZcodeStartBalance {
   plans: Array<ZcodeStartBalancePlan>
   balances: Array<ZcodeStartBalanceBucket>
 }
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : undefined
-}
-
 function asNum(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) return value
   if (typeof value === "string" && value.trim()) {

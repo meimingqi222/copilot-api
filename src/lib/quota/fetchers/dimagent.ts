@@ -12,6 +12,7 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { getConnectionProvider } from "~/lib/provider-connections"
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
+import { asNumber, asRecord } from "~/lib/json-shape"
 import {
   DIMAGENT_BASE,
   DIMAGENT_CHAT_UA,
@@ -23,22 +24,6 @@ interface DimagentQuotaWindow {
   usedPercent: number
   display: string
 }
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : undefined
-}
-
-function num(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) return value
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value)
-    if (Number.isFinite(parsed)) return parsed
-  }
-  return undefined
-}
-
 /** 宽松解析：从常见字段里找 used/total/percent。 */
 export function parseDimagentQuota(raw: unknown): {
   plan?: string
@@ -52,10 +37,16 @@ export function parseDimagentQuota(raw: unknown): {
     || (typeof data.subscription === "string" && data.subscription)
     || undefined
 
-  const used = num(data.used) ?? num(data.used_amount) ?? num(data.usedCredits)
-  const total = num(data.total) ?? num(data.total_amount) ?? num(data.quota)
+  const used =
+    asNumber(data.used)
+    ?? asNumber(data.used_amount)
+    ?? asNumber(data.usedCredits)
+  const total =
+    asNumber(data.total) ?? asNumber(data.total_amount) ?? asNumber(data.quota)
   const percent =
-    num(data.used_percent) ?? num(data.percentage) ?? num(data.percent)
+    asNumber(data.used_percent)
+    ?? asNumber(data.percentage)
+    ?? asNumber(data.percent)
 
   const windows: Array<DimagentQuotaWindow> = []
   if (percent !== undefined) {

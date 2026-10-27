@@ -30,6 +30,7 @@ import {
   setConnectionCredentialExtra,
   setCredentialContextField,
 } from "~/lib/provider-connections"
+import { asRecord } from "~/lib/json-shape"
 
 import { applyOAuthBundleToCredential } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
@@ -126,13 +127,6 @@ interface ZedMe {
   org?: string
   plan?: string
 }
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : undefined
-}
-
 function str(value: unknown): string {
   return typeof value === "string" ? value : ""
 }

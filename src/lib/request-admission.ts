@@ -43,7 +43,7 @@ import {
   classifyIntent,
   EFFORT_LEVELS,
   getRoutingGroup,
-  isEffortLevel,
+  isGroupEffortLevel,
   memberEffort,
   memberFast,
   type GroupAffinityMode,
@@ -393,7 +393,7 @@ export async function resolveGroupDecision(
       provider: classifier.provider,
       model: classifier.model,
     })
-    if (typeof level === "string" && isEffortLevel(level))
+    if (typeof level === "string" && isGroupEffortLevel(level))
       automaticEffort = level
   }
   const effort = lead.effort ?? automaticEffort

@@ -23,6 +23,7 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 import { HTTPError } from "~/lib/error"
 import { getCredentialContextString } from "~/lib/provider-connections"
 import { iterateLines } from "~/lib/stream-lines"
+import { asRecord } from "~/lib/json-shape"
 import {
   GEMINI_CODE_ASSIST_BASE,
   geminiUserAgent,
@@ -35,13 +36,6 @@ import type { AdapterGeminiResult, ProtocolAdapter } from "./types"
 function randomId(): string {
   return Math.random().toString(36).slice(2, 14)
 }
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : undefined
-}
-
 /** 把 SSE 的 `data:` 行拆出来，去掉 `{response}` 外层，产出内层 Gemini 事件。 */
 async function* unwrapCodeAssistStream(
   response: Response,

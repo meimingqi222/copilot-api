@@ -59,7 +59,7 @@ export {
 } from "./time-window"
 export {
   EFFORT_LEVELS,
-  isEffortLevel,
+  isGroupEffortLevel,
   type GroupAffinityMode,
   type RoutingGroup,
 } from "./types"

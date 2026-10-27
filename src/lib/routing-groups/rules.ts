@@ -10,7 +10,9 @@
  * member leads instead.
  */
 
-import { EFFORT_ANY, effortRank, isEffortLevel, readEffort } from "./types"
+import { effortRank } from "~/lib/effort-levels"
+
+import { EFFORT_ANY, isGroupEffortLevel, readEffort } from "./types"
 import type { Rule, RoutingGroup } from "./types"
 
 import { holds } from "./time-window"
@@ -63,7 +65,7 @@ function effortSatisfies(required: string, actual?: string): boolean {
   const reading = readEffort(actual)
   if (!reading.reasoning) return false
   if (wanted === EFFORT_ANY) return true
-  if (!isEffortLevel(wanted)) return false
+  if (!isGroupEffortLevel(wanted)) return false
   if (reading.rank === 0) return true
   return reading.rank >= effortRank(wanted)
 }

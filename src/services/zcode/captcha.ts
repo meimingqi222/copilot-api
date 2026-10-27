@@ -24,6 +24,7 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { getConnectionProxyUrl } from "~/lib/provider-connections"
 import { logger } from "~/lib/logger"
+import { asRecord } from "~/lib/json-shape"
 import { oauthFetch } from "~/services/oauth/fetch"
 import { ZCODE_API, ZCODE_APP_VERSION } from "~/services/oauth/zcode"
 
@@ -80,13 +81,6 @@ let cachedToken:
   | { param: string; region: string; sceneId: string; at: number }
   | undefined
 let tokenTask: Promise<{ param: string; region: string }> | undefined
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : undefined
-}
-
 function str(value: unknown): string {
   return typeof value === "string" ? value.trim() : ""
 }

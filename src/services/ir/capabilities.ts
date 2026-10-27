@@ -152,9 +152,6 @@ interface TargetCapabilities {
    * checking that a searcher connection exists — `planTranslation` stays pure.
    */
   orchestratedWebSearch?: boolean
-  acceptedEfforts?: ReadonlyArray<
-    "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "auto"
-  >
 }
 
 function scanPart(
@@ -707,20 +704,6 @@ function recordEffortLoss(
   request: RequestIR,
 ): void {
   const effort = request.generation?.reasoning?.effort
-  if (
-    effort
-    && target.acceptedEfforts
-    && !target.acceptedEfforts.includes(effort)
-  ) {
-    record(
-      records,
-      target.wire,
-      feature,
-      "reject",
-      "requested reasoning effort is unsupported by target model",
-    )
-    return
-  }
   if (target.wire === "messages") {
     if (effort === "minimal" || effort === "xhigh" || effort === "max") {
       record(

@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from "node:util"
 
 import type { ProviderConnection } from "~/lib/provider-connections"
 import { setConnectionAuthStatus } from "~/lib/provider-connections"
+import { asRecordOrEmpty } from "~/lib/json-shape"
 import type { OAuthFetchOptions } from "~/services/oauth/fetch"
 import type { OAuthRefreshFn } from "~/services/oauth/strategy-types"
 
@@ -27,12 +28,6 @@ export type OAuthRefreshOperation = (
   refreshToken: string,
   options: OAuthFetchOptions,
 ) => Promise<void>
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : {}
-}
 
 function recordUpdate(
   previous: Record<string, unknown>,
@@ -76,12 +71,12 @@ export function prepareOAuthRefresh(
       ...(credential.value !== updated.value ? { value: updated.value } : {}),
       context: recordUpdate(credential.context ?? {}, updated.context ?? {}),
       credentialExtras: recordUpdate(
-        asRecord(oldMeta.credentialExtras),
-        asRecord(newMeta.credentialExtras),
+        asRecordOrEmpty(oldMeta.credentialExtras),
+        asRecordOrEmpty(newMeta.credentialExtras),
       ),
       settings: recordUpdate(
-        asRecord(oldMeta.settings),
-        asRecord(newMeta.settings),
+        asRecordOrEmpty(oldMeta.settings),
+        asRecordOrEmpty(newMeta.settings),
       ),
       routing: recordUpdate(
         {
@@ -151,7 +146,7 @@ export function applyProviderAuthUpdate(
   ] as const) {
     if (Object.keys(patch.set).length === 0 && patch.remove.length === 0)
       continue
-    const target = asRecord(metadata[key])
+    const target = asRecordOrEmpty(metadata[key])
     metadata[key] = target
     applyRecordUpdate(target, patch)
   }

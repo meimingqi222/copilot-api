@@ -14,6 +14,7 @@ import {
   numberFrom,
   readDottedPath,
 } from "~/lib/balance/parse"
+import { asRecord } from "~/lib/json-shape"
 
 /** Hosts a connection may be pointed at, split by protocol. */
 export interface BalanceHosts {
@@ -24,13 +25,6 @@ export interface BalanceHosts {
 
 /** new-api style relays price a dollar as 500000 quota units. */
 const NEW_API_QUOTA_PER_USD = 500000
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : undefined
-}
-
 function parseJson(body: string): unknown {
   try {
     return JSON.parse(body)

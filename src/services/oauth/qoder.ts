@@ -29,6 +29,7 @@ import {
   setConnectionCredentialExtra,
   setCredentialContextField,
 } from "~/lib/provider-connections"
+import { asRecordOrEmpty } from "~/lib/json-shape"
 import {
   QODER_DEVICE_SELECT_ACCOUNTS_PATH,
   QODER_DEVICE_TOKEN_POLL_PATH,
@@ -82,12 +83,6 @@ interface QoderUserInfo {
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : ""
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : {}
 }
 
 /**
@@ -197,7 +192,7 @@ export async function pollQoderDeviceToken(params: {
     const body = await response.text()
     if (response.status === 200) {
       try {
-        const token = mapDeviceToken(asRecord(JSON.parse(body)))
+        const token = mapDeviceToken(asRecordOrEmpty(JSON.parse(body)))
         if (token.token.trim()) return token
       } catch {
         // 非 JSON：还没好，继续轮询。
@@ -233,7 +228,7 @@ export async function exchangeQoderJobToken(
       body,
     )
   }
-  const raw = asRecord(safeJson(body))
+  const raw = asRecordOrEmpty(safeJson(body))
   const token = asString(raw.token)
   if (!token) {
     throw new Error("Qoder job token exchange returned an empty token")
@@ -278,7 +273,7 @@ export async function refreshQoderJobToken(
       body,
     )
   }
-  const raw = asRecord(safeJson(body))
+  const raw = asRecordOrEmpty(safeJson(body))
   const token = asString(raw.token)
   const nextRefresh = asString(raw.refresh_token)
   if (!token || !nextRefresh) {
@@ -324,7 +319,7 @@ export async function refreshQoderDeviceToken(
       body,
     )
   }
-  const token = mapDeviceToken(asRecord(safeJson(body)))
+  const token = mapDeviceToken(asRecordOrEmpty(safeJson(body)))
   if (!token.token || !token.refreshToken) {
     throw new Error(
       "Qoder device token refresh returned an incomplete token pair",
@@ -369,7 +364,7 @@ export async function fetchQoderUserInfo(
       `Qoder userinfo failed (${response.status}): ${body.slice(0, 300)}`,
     )
   }
-  const raw = asRecord(safeJson(body))
+  const raw = asRecordOrEmpty(safeJson(body))
   return {
     id: asString(raw.id),
     name: asString(raw.name),

@@ -34,6 +34,7 @@ import { getProtocolAdapter } from "~/services/protocols/registry"
 import type { SearchAnswer, SearchHit, Searcher } from "./types"
 
 import { describeSearcher } from "./searcher"
+import { isAsyncIterable } from "~/services/protocols/result-shape"
 
 const SEARCH_TIMEOUT_MS = 120_000
 
@@ -175,12 +176,6 @@ function buildResponsesPayload(
     stream: false,
     store: false,
   } as unknown as ResponsesPayload
-}
-
-function isAsyncIterable(value: unknown): boolean {
-  return (
-    typeof value === "object" && value !== null && Symbol.asyncIterator in value
-  )
 }
 
 async function callOnce(

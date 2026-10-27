@@ -21,6 +21,7 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { getConnectionProvider } from "~/lib/provider-connections"
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
+import { asRecord } from "~/lib/json-shape"
 import {
   lobsteraiClientVersion,
   lobsteraiServerRoot,
@@ -54,13 +55,6 @@ interface ParsedLobsteraiQuota {
   profile?: LobsteraiProfileSummary
   quota?: LobsteraiUserQuota
 }
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : undefined
-}
-
 function finiteNumber(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) return value
   if (typeof value === "string" && value.trim()) {

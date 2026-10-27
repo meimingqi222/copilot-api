@@ -18,6 +18,7 @@ import {
   getCredentialContextString,
 } from "~/lib/provider-connections"
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
+import { asNumber, asRecord } from "~/lib/json-shape"
 import {
   ZCODE_APP_VERSION,
   ZCODE_BIGMODEL_BIZ_API,
@@ -42,22 +43,6 @@ interface ParsedZcodeQuota {
   level?: string
   windows: Array<ZcodeQuotaWindow>
 }
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : undefined
-}
-
-function num(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) return value
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value)
-    if (Number.isFinite(parsed)) return parsed
-  }
-  return undefined
-}
-
 function zcodeSiteRoot(site: string | undefined): string {
   return site === "bigmodel" ? ZCODE_BIGMODEL_BIZ_API : ZCODE_ZAI_BIZ_API
 }
@@ -78,12 +63,12 @@ export function parseZcodeQuota(raw: unknown): ParsedZcodeQuota | undefined {
   for (const item of limits) {
     const x = asRecord(item)
     if (!x) continue
-    const unit = num(x.unit) ?? 0
-    const number = num(x.number) ?? 0
-    const total = num(x.usage)
-    const remaining = num(x.remaining)
-    const current = num(x.currentValue)
-    const percent = num(x.percentage)
+    const unit = asNumber(x.unit) ?? 0
+    const number = asNumber(x.number) ?? 0
+    const total = asNumber(x.usage)
+    const remaining = asNumber(x.remaining)
+    const current = asNumber(x.currentValue)
+    const percent = asNumber(x.percentage)
     let used = percent ?? 0
     // 与 valueText/进度条的「剩余」口径一致：剩余 / 总量（或剩余%）。
     let display = `${(100 - used).toFixed(0)}%`
@@ -97,7 +82,7 @@ export function parseZcodeQuota(raw: unknown): ParsedZcodeQuota | undefined {
         display = `${Math.max(0, total - current).toFixed(0)} / ${total.toFixed(0)}`
       }
     }
-    const reset = num(x.nextResetTime)
+    const reset = asNumber(x.nextResetTime)
     windows.push({
       name: windowName(unit, number),
       usedPercent: Math.min(Math.max(used, 0), 100),

@@ -20,6 +20,7 @@ import {
   getCredentialContextString,
 } from "~/lib/provider-connections"
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
+import { asNumber, asRecord } from "~/lib/json-shape"
 import { FACTORY_CLI_VERSION, factoryApiBase } from "~/services/oauth/factory"
 
 interface FactoryQuotaWindow {
@@ -35,22 +36,6 @@ interface ParsedFactoryQuota {
   windows: Array<FactoryQuotaWindow>
   extraBalanceCents?: number
 }
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : undefined
-}
-
-function num(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) return value
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value)
-    if (Number.isFinite(parsed)) return parsed
-  }
-  return undefined
-}
-
 /** windowEnd：ISO 时间串或 epoch 毫秒 → 毫秒；其余 undefined。 */
 function readWindowEnd(value: unknown): number | undefined {
   if (typeof value === "string" && value) {
@@ -79,7 +64,7 @@ function readPool(
   for (const [key, label, spanMs] of WINDOW_SPANS) {
     const win = asRecord(pool[key])
     if (!win) continue
-    const used = num(win.usedPercent)
+    const used = asNumber(win.usedPercent)
     if (used === undefined) continue
     const clamped = Math.min(Math.max(used, 0), 100)
     out.push({
@@ -103,7 +88,7 @@ export function parseFactoryQuota(
   const windows: Array<FactoryQuotaWindow> = []
   readPool(asRecord(limits?.standard), "", windows)
   readPool(asRecord(limits?.core), "Droid Core · ", windows)
-  const extra = num(root.extraUsageBalanceCents)
+  const extra = asNumber(root.extraUsageBalanceCents)
   return {
     windows,
     extraBalanceCents:

@@ -1,12 +1,13 @@
 import type { Context } from "hono"
 
 import type { RequestLogContext } from "~/lib/request-log"
-import type {
-  LossAction,
-  LossRecord,
-  LossReport,
-  LossStage,
-  IRWire,
+import {
+  isIRWire,
+  type IRWire,
+  type LossAction,
+  type LossRecord,
+  type LossReport,
+  type LossStage,
 } from "./types"
 
 import { logger } from "~/lib/logger"
@@ -116,10 +117,7 @@ function sanitizeLossRecord(record: LossRecord): SafeLossRecord {
         record.action
       : "drop",
     reason: SAFE_REASONS[record.reason] ?? "unspecified",
-    target:
-      ["chat", "messages", "responses", "gemini"].includes(record.target) ?
-        record.target
-      : "chat",
+    target: isIRWire(record.target) ? record.target : "chat",
     stage:
       (
         [

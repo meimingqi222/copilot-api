@@ -26,6 +26,7 @@ import os from "node:os"
 import path from "node:path"
 
 import { logger } from "~/lib/logger"
+import { asRecordOrEmpty } from "~/lib/json-shape"
 import { parseJwtPayload } from "~/services/oauth/jwt"
 
 /** kv 表中与凭证相关的键。 */
@@ -61,12 +62,6 @@ function readKv(db: Database, key: string): unknown {
     // auth_tokens 等是 JSON；installation_uuid 之类的裸字符串走这里。
     return raw
   }
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : {}
 }
 
 function asString(value: unknown): string | undefined {
@@ -110,7 +105,7 @@ export async function parseLobsteraiClientDatabase(
     // 读写模式（见文件头注释：只读模式需要 -shm，会在 CANTOPEN 上失败）。
     db = new Database(dbPath)
 
-    const tokens = asRecord(readKv(db, KV_KEYS.authTokens))
+    const tokens = asRecordOrEmpty(readKv(db, KV_KEYS.authTokens))
     const accessToken = asString(tokens.accessToken)
     if (!accessToken) {
       throw new Error(
@@ -118,8 +113,8 @@ export async function parseLobsteraiClientDatabase(
       )
     }
 
-    const user = asRecord(readKv(db, KV_KEYS.authUser))
-    const keyfrom = asRecord(readKv(db, KV_KEYS.keyfrom))
+    const user = asRecordOrEmpty(readKv(db, KV_KEYS.authUser))
+    const keyfrom = asRecordOrEmpty(readKv(db, KV_KEYS.keyfrom))
     const installationUuid = readKv(db, KV_KEYS.installationUuid)
 
     // userId 在客户端库里叫 `id`（数字），部分版本叫 `userId`。

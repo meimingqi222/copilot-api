@@ -24,6 +24,7 @@ import {
   setCredentialContextField,
 } from "~/lib/provider-connections"
 import { getConnectionProxyUrl } from "~/lib/provider-connections"
+import { asRecordOrEmpty } from "~/lib/json-shape"
 
 import { applyOAuthBundleToCredential } from "~/services/oauth/apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "~/services/oauth/fetch"
@@ -52,12 +53,6 @@ export {
 } from "~/services/trae-cn/constants"
 
 // ── 小工具 ──────────────────────────────────────────────────────
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : {}
-}
 
 function asStr(value: unknown): string {
   return typeof value === "string" ? value.trim() : ""
@@ -196,12 +191,12 @@ export async function parseTraeCnCallbackCode(
   let info: Record<string, unknown> = {}
   let jwt: Record<string, unknown> = {}
   try {
-    info = asRecord(JSON.parse(infoRaw || "{}"))
+    info = asRecordOrEmpty(JSON.parse(infoRaw || "{}"))
   } catch {
     /* userInfo 可能缺失 */
   }
   try {
-    jwt = asRecord(JSON.parse(jwtRaw))
+    jwt = asRecordOrEmpty(JSON.parse(jwtRaw))
   } catch {
     throw new HTTPError(
       "Trae CN callback carries a malformed userJwt",
@@ -450,15 +445,15 @@ async function readTraeCnTokenExchange(
   const text = await response.text()
   let v: Record<string, unknown> = {}
   try {
-    v = asRecord(JSON.parse(text))
+    v = asRecordOrEmpty(JSON.parse(text))
   } catch {
     v = {}
   }
-  const r = asRecord(v.Result ?? v.result ?? v)
+  const r = asRecordOrEmpty(v.Result ?? v.result ?? v)
   const token = asStr(r.Token ?? r.token)
   if (response.ok && token) {
     const userInfo = r.UserInfo ?? r.userInfo
-    const info = asRecord(
+    const info = asRecordOrEmpty(
       typeof userInfo === "string" ? JSON.parse(userInfo || "{}") : userInfo,
     )
     return {
@@ -559,20 +554,20 @@ export function traeCnErrorOf(raw: unknown): {
     typeof raw === "string" ?
       ((): Record<string, unknown> => {
         try {
-          return asRecord(JSON.parse(raw))
+          return asRecordOrEmpty(JSON.parse(raw))
         } catch {
           return {}
         }
       })()
-    : asRecord(raw)
-  const meta = asRecord(asRecord(v.ResponseMetadata).Error)
+    : asRecordOrEmpty(raw)
+  const meta = asRecordOrEmpty(asRecordOrEmpty(v.ResponseMetadata).Error)
   if (meta.Code || meta.Message) {
     return {
       code: (meta.Code as string | number) ?? "",
       message: String(meta.Message ?? meta.Code ?? ""),
     }
   }
-  const e = asRecord(v.error).code ? asRecord(v.error) : v
+  const e = asRecordOrEmpty(v.error).code ? asRecordOrEmpty(v.error) : v
   const code = (e.code ?? e.Code ?? v.code ?? "") as string | number
   const message =
     e.message

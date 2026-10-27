@@ -24,6 +24,7 @@ import {
   getCredentialContextString,
 } from "~/lib/provider-connections"
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
+import { asNumber, asRecord } from "~/lib/json-shape"
 import {
   applyQoderDeviceTokenRefresh,
   refreshQoderDeviceToken,
@@ -49,23 +50,6 @@ interface ParsedQoderQuota {
   plan?: string
   windows: Array<QoderQuotaWindow>
 }
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : undefined
-}
-
-/** JSON number（也容忍数字字符串）；其余返回 undefined。 */
-function num(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) return value
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value)
-    if (Number.isFinite(parsed)) return parsed
-  }
-  return undefined
-}
-
 /** 双拼写字段查找（`userQuota` / `user_quota`）。 */
 function field(
   usage: Record<string, unknown>,
@@ -83,9 +67,9 @@ function pushWindow(
 ): void {
   const block = asRecord(raw)
   if (!block) return
-  const total = num(block.total) ?? num(block.cap)
-  const usedRaw = num(block.used)
-  const remaining = num(block.remaining)
+  const total = asNumber(block.total) ?? asNumber(block.cap)
+  const usedRaw = asNumber(block.used)
+  const remaining = asNumber(block.remaining)
   if (total === undefined || total <= 0) return
   if (usedRaw === undefined && remaining === undefined) return
   const used = usedRaw ?? total - (remaining ?? 0)

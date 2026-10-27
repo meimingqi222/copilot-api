@@ -4,7 +4,13 @@ import type {
 } from "~/lib/service-tier"
 
 /** The IR is used only when translating between public wire protocols. */
-export type IRWire = "chat" | "messages" | "responses" | "gemini"
+export const IR_WIRES = ["chat", "messages", "responses", "gemini"] as const
+
+export type IRWire = (typeof IR_WIRES)[number]
+
+export function isIRWire(value: unknown): value is IRWire {
+  return (IR_WIRES as ReadonlyArray<string>).includes(value as string)
+}
 
 export interface IRSource {
   wire: IRWire

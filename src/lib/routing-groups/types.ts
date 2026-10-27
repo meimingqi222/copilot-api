@@ -11,10 +11,18 @@
  * `time-window.ts`, evaluation in `rules.ts`, persistence in `store.ts`.
  */
 
-/** Reasoning effort levels, lowest first. */
+import { EFFORT_RANK } from "~/lib/effort-levels"
+
+/**
+ * 路由组能写进规则/成员的档位：`low` … `max`。
+ *
+ * 全局档位表是 `~/lib/effort-levels` 的 `EFFORT_RANK`（含 `none`/`minimal`/
+ * `ultra`）；这里只取其中一个子集——`minimal` 太弱、`ultra` 不是任何上游
+ * API 的档位，都不作为规则值。
+ */
 export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const
 
-export type EffortLevel = (typeof EFFORT_LEVELS)[number]
+export type GroupEffortLevel = (typeof EFFORT_LEVELS)[number]
 
 /**
  * `on` is not a level: it means "reasoning is on, at whatever level the other
@@ -24,7 +32,7 @@ export type EffortLevel = (typeof EFFORT_LEVELS)[number]
 export const EFFORT_ANY = "on"
 
 /** What a rule's `effort` condition may ask for. */
-type EffortSpec = EffortLevel | typeof EFFORT_ANY
+type EffortSpec = GroupEffortLevel | typeof EFFORT_ANY
 
 /** Spellings that mean "no reasoning": neither satisfies an effort rule. */
 export const EFFORT_OFF_VALUES = ["off", "none", "disabled"] as const
@@ -95,7 +103,7 @@ export function isGroupEffortSource(
   )
 }
 
-export function isEffortLevel(value: unknown): value is EffortLevel {
+export function isGroupEffortLevel(value: unknown): value is GroupEffortLevel {
   return (
     typeof value === "string"
     && (EFFORT_LEVELS as readonly string[]).includes(value.trim().toLowerCase())
@@ -133,14 +141,10 @@ export function readEffort(value?: string | null): EffortReading {
   }
   const normalized = value.trim().toLowerCase()
   if (isEffortOff(normalized)) return { reasoning: false, rank: 0 }
-  const index = (EFFORT_LEVELS as readonly string[]).indexOf(normalized)
-  if (index >= 0) return { reasoning: true, rank: index + 1 }
+  const index = (EFFORT_RANK as ReadonlyArray<string>).indexOf(normalized)
+  if (index >= 0 && (EFFORT_LEVELS as readonly string[]).includes(normalized))
+    return { reasoning: true, rank: index }
   return { reasoning: true, rank: 0 }
-}
-
-/** Where a level sits among {@link EFFORT_LEVELS}, lowest first. */
-export function effortRank(level: EffortLevel): number {
-  return (EFFORT_LEVELS as readonly string[]).indexOf(level) + 1
 }
 
 /** A local-time window a rule may be restricted to. */

@@ -23,8 +23,9 @@
  */
 
 import type { ModelEndpoint } from "~/lib/provider-connections"
+import { asRecord } from "~/lib/json-shape"
 
-import { isEffortLevel } from "./types"
+import { isGroupEffortLevel } from "./types"
 
 /** The service tier a `:fast` member asks for. */
 export const FAST_SERVICE_TIER = "priority"
@@ -100,17 +101,6 @@ function carriesServiceTier(endpoint: ModelEndpoint | undefined): boolean {
 }
 
 /** The payload as a mutable record, or undefined when it is not one. */
-function asRecord(payload: unknown): Record<string, unknown> | undefined {
-  if (
-    payload === null
-    || typeof payload !== "object"
-    || Array.isArray(payload)
-  ) {
-    return undefined
-  }
-  return payload as Record<string, unknown>
-}
-
 /**
  * Write `overrides` onto `payload`, returning what was written.
  *
@@ -144,7 +134,7 @@ export function applyGroupOverrides(
     typeof overrides.effort === "string" ?
       overrides.effort.trim().toLowerCase()
     : ""
-  if (effort !== "" && isEffortLevel(effort) && carriesEffort(endpoint)) {
+  if (effort !== "" && isGroupEffortLevel(effort) && carriesEffort(endpoint)) {
     if (endpoint === "responses") {
       // Preserve whatever else the request put there (`summary`, …).
       const reasoning = asRecord(record["reasoning"]) ?? {}

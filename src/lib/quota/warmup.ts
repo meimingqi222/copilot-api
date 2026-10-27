@@ -29,6 +29,7 @@ import { createClaudeMessagesOnce } from "~/services/claude/create-messages-once
 import { createCodexResponsesOnce } from "~/services/codex/create-responses-once"
 import { lowestCodexReasoningEffort } from "~/services/codex/client-models"
 import { createAntigravityChatCompletionsOnce } from "~/services/antigravity/create-chat-completions-once"
+import { IR_WIRES } from "~/services/ir/types"
 
 const logger = createLogger("quota")
 
@@ -245,7 +246,7 @@ function ineligibleReason(connection: ProviderConnection): string | undefined {
   if (credential === undefined) return "connection has no credential"
   if (!isCredentialAvailable(credential))
     return `credential is resting (status ${credential.status ?? "unknown"})`
-  const busy = ["chat", "messages", "responses", "gemini"].find(
+  const busy = IR_WIRES.find(
     (endpoint) =>
       routeTargetLoad(`${connection.id}::${credential.id}::${endpoint}`) !== 0,
   )

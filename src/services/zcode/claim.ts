@@ -30,6 +30,7 @@ import {
 } from "~/lib/provider-connections"
 import { refreshManagedQuota } from "~/lib/quota/refresh"
 import { getSystemSettings } from "~/lib/system-config"
+import { asRecord } from "~/lib/json-shape"
 import { oauthFetch } from "~/services/oauth/fetch"
 import { ZCODE_API, ZCODE_APP_VERSION } from "~/services/oauth/zcode"
 
@@ -108,13 +109,6 @@ const FAIL_MESSAGES: Record<number, string> = {
   3001: "The claim was rejected (parameter error).",
   3007: "The captcha was rejected; it will be refreshed on the next attempt.",
 }
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : undefined
-}
-
 function asStr(value: unknown): string {
   return typeof value === "string" ? value.trim() : ""
 }

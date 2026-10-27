@@ -28,6 +28,7 @@ import type {
 
 import { logger } from "~/lib/logger"
 import { globalTimers } from "~/lib/timer-registry"
+import { asRecord } from "~/lib/json-shape"
 import { buildResponsesTranscriptInput } from "~/services/codex/ws-transcript-cache"
 
 interface StatelessTranscript {
@@ -267,13 +268,6 @@ function parseEventData(data: unknown): Record<string, unknown> | undefined {
   } catch {
     return undefined
   }
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return value as Record<string, unknown>
-  }
-  return undefined
 }
 
 /** output item 去重键(与 sse-collector 一致): replay 不能出现重复 id。 */

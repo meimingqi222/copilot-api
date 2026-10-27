@@ -1,6 +1,7 @@
 import type { ResponsesResponse } from "~/services/protocols/responses/types"
 
 import { sanitizeDiagnosticSnippet } from "~/lib/security-sanitizer"
+import { asRecord } from "~/lib/json-shape"
 
 type ResponsesLogOutcome = "success" | "incomplete" | "failed"
 
@@ -103,12 +104,6 @@ function hasMeaningfulValue(value: unknown): boolean {
 
 function hasNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" ?
-      (value as Record<string, unknown>)
-    : undefined
 }
 
 /**

@@ -24,8 +24,39 @@
  *   GET    /admin/api/routing-groups/meta         optional hints (levels, agents)
  */
 function routingGroupsView() {
-  /** Reasoning levels, lowest first — mirrors EFFORT_LEVELS in the backend. */
-  const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"]
+  /**
+   * 兜底档位（弱到强），只在 `/meta` 还没公布后端档位时使用。后端是唯一
+   * 事实来源：`/meta` 的 `effortLevels` 一到就整体替换这份表。
+   */
+  const DEFAULT_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"]
+  /** `/meta` 公布的档位（小写、非空），加载前为空。 */
+  let announcedEffortLevels = []
+
+  function knownEffortLevels() {
+    return announcedEffortLevels.length > 0 ?
+        announcedEffortLevels
+      : DEFAULT_EFFORT_LEVELS
+  }
+
+  function isEffortLevel(level) {
+    return knownEffortLevels().includes(level)
+  }
+
+  /** `/meta` 里的档位（`effortLevels`，字符串或 `{ id }` 记录）。 */
+  function announcedLevelsOf(meta) {
+    if (!meta || typeof meta !== "object") return []
+    const raw = meta.effortLevels ?? meta.levels ?? meta.efforts
+    if (!Array.isArray(raw)) return []
+    return raw
+      .map((entry) =>
+        typeof entry === "object" && entry !== null ?
+          (entry.id ?? entry.name ?? entry.value)
+        : entry,
+      )
+      .map((level) => String(level ?? ""))
+      .map((level) => level.trim().toLowerCase())
+      .filter(Boolean)
+  }
   /** Not a level: it accepts any request that asked for reasoning at all. */
   const EFFORT_ANY = "on"
   /** Day names in display order (Monday first), spelled the way the store does. */
@@ -60,7 +91,7 @@ function routingGroupsView() {
         .slice(colon + 1)
         .trim()
         .toLowerCase()
-      if (suffix !== "fast" && !EFFORT_LEVELS.includes(suffix)) break
+      if (suffix !== "fast" && !isEffortLevel(suffix)) break
       if (!isMemberShape(model)) break
       bare = model
     }
@@ -256,7 +287,7 @@ function routingGroupsView() {
       const colon = str.lastIndexOf(":")
       if (colon > 0) {
         const suf = str.slice(colon + 1).toLowerCase()
-        if (EFFORT_LEVELS.includes(suf)) return suf
+        if (isEffortLevel(suf)) return suf
       }
       return ""
     },
@@ -266,7 +297,7 @@ function routingGroupsView() {
       const bare = bareMember(raw)
       const isFast = this.form.fastFlags[index]
       let next = bare
-      if (effort && EFFORT_LEVELS.includes(effort)) {
+      if (effort && isEffortLevel(effort)) {
         next += `:${effort}`
       }
       if (isFast) {
@@ -317,9 +348,8 @@ function routingGroupsView() {
     // ── derived values ───────────────────────────────────────────────
 
     get effortLevels() {
-      const announced = this.normalizedMetaList(["levels", "efforts"])
-      const known = announced.filter((level) => EFFORT_LEVELS.includes(level))
-      return known.length > 0 ? known : EFFORT_LEVELS
+      const announced = announcedLevelsOf(this.meta)
+      return announced.length > 0 ? announced : DEFAULT_EFFORT_LEVELS
     },
 
     /** Member options grouped by provider, for the picker's optgroups. */
@@ -668,6 +698,7 @@ function routingGroupsView() {
       } catch {
         this.meta = null
       }
+      announcedEffortLevels = announcedLevelsOf(this.meta)
     },
 
     /**

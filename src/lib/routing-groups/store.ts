@@ -28,7 +28,7 @@ import {
 } from "./member"
 import {
   EFFORT_ANY,
-  isEffortLevel,
+  isGroupEffortLevel,
   isGroupAffinityMode,
   isGroupEffortSource,
   isRoutingMode,
@@ -141,7 +141,7 @@ function validateRule(
   }
   if (
     rule.effort !== undefined
-    && !isEffortLevel(rule.effort)
+    && !isGroupEffortLevel(rule.effort)
     && rule.effort !== EFFORT_ANY
   ) {
     problems.push(`${label}.effort is not a known effort level: ${rule.effort}`)
@@ -323,7 +323,7 @@ export function validateGroup(
       levels = []
       for (const [index, raw] of group.levels.entries()) {
         const level = typeof raw === "string" ? raw.trim().toLowerCase() : ""
-        if (!isEffortLevel(level)) {
+        if (!isGroupEffortLevel(level)) {
           problems.push(
             `levels[${index}] is not a known effort level: ${String(raw)}`,
           )

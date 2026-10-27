@@ -1,3 +1,5 @@
+import { asRecord } from "~/lib/json-shape"
+
 export function isMessagesOutputEvent(event: {
   content_block?: unknown
   delta?: unknown
@@ -38,10 +40,4 @@ function hasMeaningfulObject(value: unknown): boolean {
   return Boolean(
     value && typeof value === "object" && Object.keys(value).length > 0,
   )
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" ?
-      (value as Record<string, unknown>)
-    : undefined
 }

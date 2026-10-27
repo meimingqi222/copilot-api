@@ -16,8 +16,8 @@
 import {
   EFFORT_OFF_VALUES,
   EFFORT_ANY,
-  isEffortLevel,
-  type EffortLevel,
+  isGroupEffortLevel,
+  type GroupEffortLevel,
 } from "./types"
 
 /** Members that point at another routing group instead of a connection. */
@@ -32,7 +32,7 @@ type KnownModelCheck = (id: string) => boolean
 interface ParsedMemberEffort {
   /** The member without its effort suffix. */
   model: string
-  effort: EffortLevel
+  effort: GroupEffortLevel
 }
 
 interface ParsedMemberFast {
@@ -71,7 +71,7 @@ function splitSuffix(
 interface MemberSuffixes {
   /** The bare `provider/model`. */
   bare: string
-  effort?: EffortLevel
+  effort?: GroupEffortLevel
   fast: boolean
 }
 
@@ -91,7 +91,7 @@ function stripSuffixes(
   if (knownModel(trimmed, isKnownModel)) return { bare: trimmed, fast: false }
 
   let bare = trimmed
-  let effort: EffortLevel | undefined
+  let effort: GroupEffortLevel | undefined
   let fast = false
 
   for (let pass = 0; pass < 2; pass++) {
@@ -102,7 +102,7 @@ function stripSuffixes(
       bare = split.model
       continue
     }
-    if (isEffortLevel(split.suffix) && effort === undefined) {
+    if (isGroupEffortLevel(split.suffix) && effort === undefined) {
       effort = split.suffix
       bare = split.model
       continue
@@ -131,10 +131,14 @@ export function memberEffort(
   const trimmed = id.trim()
   if (knownModel(trimmed, isKnownModel)) return undefined
   const split = splitSuffix(trimmed)
-  if (!split || !isEffortLevel(split.suffix) || !isMemberShape(split.model)) {
+  if (
+    !split
+    || !isGroupEffortLevel(split.suffix)
+    || !isMemberShape(split.model)
+  ) {
     return undefined
   }
-  return { model: split.model, effort: split.suffix as EffortLevel }
+  return { model: split.model, effort: split.suffix as GroupEffortLevel }
 }
 
 /** Split a trailing `:fast` off a member, by the same rules as {@link memberEffort}. */
@@ -195,7 +199,7 @@ export function withMemberEffort(model: string, effort: string): string {
   ) {
     return `${stripped.bare}${tail}`
   }
-  if (isEffortLevel(normalized) || normalized === EFFORT_ANY) {
+  if (isGroupEffortLevel(normalized) || normalized === EFFORT_ANY) {
     return `${stripped.bare}:${normalized}${tail}`
   }
   throw new Error(`Unknown reasoning effort: ${effort}`)

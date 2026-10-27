@@ -35,6 +35,7 @@ import {
   MINIMAX_USER_EXTRA_INFO_PATH,
 } from "~/lib/quota/constants"
 import { executeUpstreamProxyCall } from "~/lib/quota/upstream-proxy"
+import { asRecord } from "~/lib/json-shape"
 import {
   MINIMAX_REGIONS,
   MINIMAX_USER_AGENT,
@@ -55,13 +56,6 @@ interface MinimaxQuotaModel {
   unlimited: boolean
   windows: Array<MinimaxQuotaWindow>
 }
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : undefined
-}
-
 function numberOr(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback
 }

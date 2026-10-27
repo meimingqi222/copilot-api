@@ -22,6 +22,7 @@
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { HTTPError } from "~/lib/error"
+import { asRecord } from "~/lib/json-shape"
 
 import { applyOAuthBundleToCredential } from "./apply-bundle"
 import { oauthFetch, type OAuthFetchOptions } from "./fetch"
@@ -208,13 +209,6 @@ async function codeAssistCall(
     return {}
   }
 }
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : undefined
-}
-
 function projectId(value: unknown): string {
   if (typeof value === "string") return value
   const obj = asRecord(value)

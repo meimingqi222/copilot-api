@@ -6,6 +6,7 @@ import type {
   AnthropicToolResultBlock,
 } from "~/services/protocols/anthropic/types"
 
+import { EFFORT_RANK } from "~/lib/effort-levels"
 import { parseModelReference } from "~/lib/route-target/model-reference"
 
 export function hoistToolResultImages(
@@ -72,9 +73,10 @@ export function translateToCopilotMessages(
     }
 
     if (outputConfig?.effort) {
-      const effortOrder = ["low", "medium", "high", "xhigh", "max"] as const
-      const currentIdx = effortOrder.indexOf(outputConfig.effort)
-      const mediumIdx = effortOrder.indexOf("medium")
+      const currentIdx = (EFFORT_RANK as ReadonlyArray<string>).indexOf(
+        outputConfig.effort,
+      )
+      const mediumIdx = (EFFORT_RANK as ReadonlyArray<string>).indexOf("medium")
       if (currentIdx > mediumIdx) {
         outputConfig = { ...outputConfig, effort: "medium" }
       }

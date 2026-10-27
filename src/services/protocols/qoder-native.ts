@@ -24,6 +24,7 @@ import { setDecodeTpsEligible } from "~/lib/request-performance"
 import { maskUpstream } from "~/lib/redaction/context"
 import type { ModelMapping } from "~/lib/provider-connections"
 import { getConnectionProvider } from "~/lib/provider-connections"
+import { asRecord } from "~/lib/json-shape"
 import { buildCosyHeaders, type QoderUser } from "~/services/qoder/cosy"
 import { encodeRequestBody } from "~/services/qoder/codec"
 import {
@@ -83,13 +84,6 @@ interface QoderInnerChunk {
   }>
   usage?: Record<string, unknown>
 }
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : undefined
-}
-
 function safeJson(text: string): unknown {
   try {
     return JSON.parse(text)

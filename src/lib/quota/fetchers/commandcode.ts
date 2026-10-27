@@ -16,6 +16,7 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { getConnectionProvider } from "~/lib/provider-connections"
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
+import { asNumber, asRecord } from "~/lib/json-shape"
 import { COMMANDCODE_API } from "~/services/oauth/commandcode"
 
 interface CommandCodeQuotaWindow {
@@ -32,22 +33,6 @@ interface ParsedCommandCodeQuota {
   purchasedCredits?: number
   freeCredits?: number
 }
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : undefined
-}
-
-function num(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) return value
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value)
-    if (Number.isFinite(parsed)) return parsed
-  }
-  return undefined
-}
-
 function readWindow(
   raw: unknown,
   name: string,
@@ -55,10 +40,10 @@ function readWindow(
 ): void {
   const w = asRecord(raw)
   if (!w) return
-  const used = num(w.used) ?? 0
-  const cap = num(w.cap) ?? 0
+  const used = asNumber(w.used) ?? 0
+  const cap = asNumber(w.cap) ?? 0
   const percent = cap > 0 ? (100 * used) / cap : 0
-  const reset = num(w.resetAt)
+  const reset = asNumber(w.resetAt)
   out.push({
     name,
     usedPercent: Math.min(Math.max(percent, 0), 100),
@@ -85,9 +70,9 @@ export function parseCommandCodeQuota(
   return {
     planId: typeof credits?.planId === "string" ? credits.planId : undefined,
     windows,
-    monthlyCredits: num(credits?.monthlyCredits),
-    purchasedCredits: num(credits?.purchasedCredits),
-    freeCredits: num(credits?.freeCredits),
+    monthlyCredits: asNumber(credits?.monthlyCredits),
+    purchasedCredits: asNumber(credits?.purchasedCredits),
+    freeCredits: asNumber(credits?.freeCredits),
   }
 }
 
