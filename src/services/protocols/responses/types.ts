@@ -180,6 +180,20 @@ export function isResponsesServerTool(
   return typeof tool.type === "string" && tool.type.startsWith("web_search")
 }
 
+/**
+ * 客户端在 `reasoning.effort` 里可以出现的档位。比 OpenAI 的
+ * low/medium/high 宽：Codex 目录给模型列了 `minimal`/`xhigh`/`max`，
+ * 客户端会照单发送；服务端按模型公布的清单钳制后原样转发。
+ */
+export type ResponsesReasoningEffort =
+  | "none"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max"
+
 export interface ResponsesPayload {
   model: string
   input: string | Array<ResponsesInputItem>
@@ -201,7 +215,7 @@ export interface ResponsesPayload {
   truncation?: "auto" | "disabled" | null
   user?: string | null
   reasoning?: {
-    effort: "low" | "medium" | "high"
+    effort: ResponsesReasoningEffort
     summary?: "auto" | "concise" | "detailed" | null
   }
 }

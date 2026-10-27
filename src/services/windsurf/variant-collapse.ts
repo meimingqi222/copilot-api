@@ -410,7 +410,7 @@ export function collapseWindsurfModelVariants(
       byEffort,
     }
 
-    mappings.push({
+    const collapsed: ModelMapping = {
       publicId,
       upstreamId,
       name,
@@ -422,7 +422,12 @@ export function collapseWindsurfModelVariants(
       metadata: {
         [WINDSURF_VARIANTS_METADATA_KEY]: variants,
       },
-    })
+    }
+    // 折叠后这一族能接受的档位就是变体键；写进 mapping，让档位元信息跟
+    // 其它 provider 走同一条投影/钳制路径。
+    const efforts = listWindsurfSupportedEfforts(collapsed)
+    if (efforts) collapsed.efforts = efforts
+    mappings.push(collapsed)
 
     for (const [legacyPublicId, entry] of entriesByPublicId) {
       if (legacyPublicId === publicId) continue

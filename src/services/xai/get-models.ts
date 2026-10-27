@@ -9,6 +9,7 @@ import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { getXaiFallbackModels } from "~/services/providers/model-catalogs/xai"
 import { xaiChatBaseUrl, xaiUsesApi } from "~/services/xai/endpoint"
+import { getXaiCatalogHints } from "~/services/xai/model-metadata"
 import { buildXaiHeaders } from "~/services/xai/headers"
 
 function parseXaiModels(payload: unknown): Array<ModelMapping> {
@@ -45,6 +46,7 @@ function parseXaiModels(payload: unknown): Array<ModelMapping> {
     const publicId = canonicalNativeModelId(id)
     if (seen.has(publicId)) continue
     seen.add(publicId)
+    const levels = getXaiCatalogHints(id).reasoningLevels
     models.push({
       publicId,
       upstreamId: id,
@@ -56,6 +58,7 @@ function parseXaiModels(payload: unknown): Array<ModelMapping> {
       enabled: true,
       pickerEnabled: true,
       endpoints: endpointsById.get(publicId) ?? ["responses"],
+      ...(levels && levels.length > 0 ? { efforts: [...levels] } : {}),
     })
   }
   if (models.length === 0) throw new Error("xAI listed no Responses models")

@@ -26,6 +26,7 @@ import {
   rememberCodexClientModels,
 } from "~/services/codex/client-models"
 import { getCodexModelsForConnection } from "~/services/codex/get-models"
+import { accountModelsToMappings } from "~/services/providers/model-catalogs/account-mapping"
 
 const originalPath = PATHS.APP_DIR
 const originalModels = state.models
@@ -416,4 +417,32 @@ test("unknown reasoning levels cannot make the native catalog undecodable", asyn
     { effort: "low", description: "Low" },
   ])
   expect(model.default_reasoning_level).toBe("low")
+})
+
+test("native reasoning levels survive Codex model discovery", async () => {
+  globalThis.fetch = (async () =>
+    Response.json({
+      models: [
+        {
+          slug: "gpt-5.6-sol",
+          display_name: "Sol",
+          supported_reasoning_levels: [
+            { effort: "low", description: "Low" },
+            { effort: "high", description: "High" },
+          ],
+        },
+        { slug: "gpt-5.5", display_name: "5.5" },
+      ],
+    })) as unknown as typeof fetch
+
+  const connection = getMutableProviderConnection("codex-test")!
+  const mappings = accountModelsToMappings(
+    await getCodexModelsForConnection(connection),
+  )
+  expect(
+    mappings.find((model) => model.publicId === "gpt-5.6-sol")?.efforts,
+  ).toEqual(["low", "high"])
+  expect(
+    mappings.find((model) => model.publicId === "gpt-5.5")?.efforts,
+  ).toBeUndefined()
 })

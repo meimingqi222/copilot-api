@@ -20,6 +20,8 @@
 
 import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
 
+import { isEffortLevel, nearestEffort } from "~/lib/effort-levels"
+
 import { QODER_COSY_VERSION } from "./endpoints"
 import { newQoderId } from "./ids"
 
@@ -36,48 +38,10 @@ export interface QoderModelInfo {
   config: unknown
 }
 
-/** effort 顺序（含 none / ultra）。 */
-const EFFORT_RANK = [
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-  "ultra",
-]
-
 const QODER_SYS =
   "You are a Qoder agent. Use the instructions below and the tools available to you to assist the user."
 
 const DEFAULT_MAX_TOKENS = 32000
-
-/** fitEffort：取模型自身最接近所要求的那一档；平局往上取。 */
-function fitEffort(want: string, levels: Array<string>): string {
-  if (want === "ultra" && !levels.includes(want)) {
-    want = "max"
-  }
-  if (levels.length === 0 || levels.includes(want)) {
-    return want
-  }
-  const at = EFFORT_RANK.indexOf(want)
-  if (at < 0) {
-    return want
-  }
-  let best = want
-  let dist = EFFORT_RANK.length
-  for (const l of levels) {
-    const i = EFFORT_RANK.indexOf(l)
-    if (i < 0 || l === "none") continue
-    const d = Math.abs(i - at)
-    if (d < dist || (d === dist && i > at)) {
-      best = l
-      dist = d
-    }
-  }
-  return best
-}
 
 /**
  * qoderEffort：是否思考、以及用模型自身的哪一档 effort（"" 表示不发）。
@@ -89,7 +53,7 @@ function qoderEffort(
   model: QoderModelInfo,
 ): { thinking: boolean; effort: string } {
   let want = asked.toLowerCase()
-  if (!EFFORT_RANK.includes(want)) {
+  if (!isEffortLevel(want)) {
     want = ""
   }
   if (!model.thinks || (want === "none" && !model.alwaysThinks)) {
@@ -104,7 +68,8 @@ function qoderEffort(
     case "none":
       return { thinking: true, effort: model.efforts[0] }
     default:
-      return { thinking: true, effort: fitEffort(want, model.efforts) }
+      // 取模型自身最接近的那一档，平局往上（与全局钳制同一套语义）。
+      return { thinking: true, effort: nearestEffort(want, model.efforts) }
   }
 }
 

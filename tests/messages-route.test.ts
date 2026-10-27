@@ -298,3 +298,82 @@ test("POST /v1/messages strips provider prefix before forwarding upstream", asyn
     messages: [{ role: "user", content: "hi" }],
   })
 })
+
+test("POST /v1/messages clamps reasoning effort to the model's advertised levels", async () => {
+  state.models = {
+    object: "list",
+    data: [
+      {
+        id: "claude-sonnet-4",
+        object: "model",
+        name: "Claude Sonnet 4",
+        preview: false,
+        vendor: "Anthropic",
+        version: "1",
+        model_picker_enabled: true,
+        supported_endpoints: ["/v1/messages"],
+        capabilities: {
+          family: "claude",
+          object: "capabilities",
+          supports: { reasoning_effort: ["low", "medium"] },
+          tokenizer: "claude",
+          type: "chat",
+        },
+      },
+    ],
+  }
+
+  const fetchMock = mock(
+    (
+      url: string,
+      opts: { body?: string; headers?: Record<string, string> },
+    ) => ({
+      ok: true,
+      json: () => ({
+        id: "msg_123",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text: "ok" }],
+        model: "claude-sonnet-4",
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+      text: () => Promise.resolve(""),
+      status: 200,
+      headers: opts.headers ?? {},
+      url,
+    }),
+  )
+  globalThis.fetch = fetchMock as unknown as typeof fetch
+
+  const post = (body: Record<string, unknown>) =>
+    server.fetch(
+      new Request("http://localhost/v1/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4",
+          max_tokens: 64,
+          messages: [{ role: "user", content: "hi" }],
+          ...body,
+        }),
+      }),
+    )
+
+  // 后缀档位 max 在只有 low/medium 的模型上落回 medium。
+  expect((await post({ model: "claude-sonnet-4(max)" })).status).toBe(200)
+  // 客户端自带 output_config.effort 同样钳制。
+  expect((await post({ output_config: { effort: "max" } })).status).toBe(200)
+
+  const sent = fetchMock.mock.calls.map(
+    (call) =>
+      JSON.parse(call[1]?.body ?? "{}") as {
+        output_config?: { effort?: string }
+      },
+  )
+  expect(sent.map((body) => body.output_config?.effort)).toEqual([
+    "medium",
+    "medium",
+  ])
+})

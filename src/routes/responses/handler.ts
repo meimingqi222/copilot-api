@@ -7,11 +7,13 @@ import { markPerformanceDispatch } from "~/lib/request-performance"
 import type {
   CopilotStreamEventLike,
   ResponsesPayload,
+  ResponsesReasoningEffort,
   ResponsesResponse,
 } from "~/services/protocols/responses/types"
 
 import { HTTPError } from "~/lib/error"
 import { extractErrorMessage, resolveRetryableCode } from "~/lib/error-builder"
+import { clampEffortForModel } from "~/lib/reasoning-effort"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { readJsonBody } from "~/lib/request-body"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
@@ -69,19 +71,31 @@ export async function handleResponses(c: Context) {
     parsedThinkingModel.config ?
       thinkingConfigToResponsesEffort(parsedThinkingModel.config)
     : undefined
+  const effectiveModel =
+    parsedThinkingModel.config ? parsedThinkingModel.model : payload.model
+  // 后缀档位优先，其次客户端自带的 reasoning.effort。两者都钳制到模型
+  // 公布的档位（未公布则原样转发）。
+  const reasoningEffort = clampEffortForModel(
+    effectiveModel,
+    parsedThinkingModel.config ? suffixEffort : payload.reasoning?.effort,
+  ) as ResponsesReasoningEffort | undefined
   let effectivePayload: ResponsesPayload = payload
-  if (parsedThinkingModel.config) {
+  if (
+    parsedThinkingModel.config
+    || reasoningEffort !== payload.reasoning?.effort
+  ) {
     effectivePayload = {
       ...payload,
-      model: parsedThinkingModel.model,
+      model: effectiveModel,
     }
     effectivePayload.reasoning =
-      suffixEffort ?
+      reasoningEffort ?
         {
-          effort: suffixEffort,
+          effort: reasoningEffort,
           summary: payload.reasoning?.summary,
         }
-      : undefined
+      : parsedThinkingModel.config ? undefined
+      : payload.reasoning
   }
   const messageContent =
     extractMessageContentFromResponsesPayload(effectivePayload)

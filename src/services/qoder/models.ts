@@ -12,11 +12,16 @@
  * 原样回传为 `model_config`，并且需要 `source` 作为 `X-Model-Source` 头。
  */
 
+import { EFFORT_RANK, effortRank } from "~/lib/effort-levels"
 import type { ModelMapping } from "~/lib/provider-connections"
+import { asRecord } from "~/lib/json-shape"
 import type { QoderModelInfo } from "./envelope"
 
-/** Qoder 自己给 effort 档位排序的顺序（不含 none / ultra）。 */
-const EFFORT_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"]
+/** 按全局档位顺序排序；不认识的档位排在最后。 */
+function sortRank(name: string): number {
+  const index = effortRank(name)
+  return index < 0 ? EFFORT_RANK.length : index
+}
 
 interface QoderModelEntry {
   key: string
@@ -37,24 +42,12 @@ interface QoderModelEntry {
   /** model/list 中该条目的原始配置，原样回传为 `model_config`。 */
   config: Record<string, unknown>
 }
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : undefined
-}
-
 function stringOr(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback
 }
 
 function numberOr(value: unknown, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback
-}
-
-function effortRank(name: string): number {
-  const index = EFFORT_ORDER.indexOf(name)
-  return index < 0 ? EFFORT_ORDER.length : index
 }
 
 /**
@@ -96,7 +89,7 @@ function readThinking(
     }
   }
   efforts.sort((a, b) => {
-    const rank = effortRank(a) - effortRank(b)
+    const rank = sortRank(a) - sortRank(b)
     return rank !== 0 ? rank : a.localeCompare(b)
   })
   return { thinks, alwaysThinks, defaultEffort, efforts }
@@ -220,6 +213,7 @@ export function qoderModelMappings(
     endpoints: ["chat"],
     enabled: true,
     pickerEnabled: true,
+    ...(entry.efforts.length > 0 ? { efforts: [...entry.efforts] } : {}),
     metadata: {
       qoderSource: entry.source,
       qoderModelConfig: entry.config,

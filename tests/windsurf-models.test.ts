@@ -414,6 +414,11 @@ test("listWindsurfSupportedEfforts emits the default first, then ascending", () 
   // entry as the default, so ascending order would default GLM to "no thinking".
   expect(listWindsurfSupportedEfforts(head)).toEqual(["high", "none", "max"])
   expect(listWindsurfSupportedEfforts(undefined)).toBeUndefined()
+  // 折叠时同一份清单也写进 mapping，供 /v1/models 投影与请求钳制共用。
+  expect(head?.efforts).toEqual(["high", "none", "max"])
+  expect(
+    mappings.find((m) => m.publicId === "glm-5-2-max")?.efforts,
+  ).toBeUndefined()
 })
 
 test("windsurfContextWindow only advertises the 1m tier", () => {

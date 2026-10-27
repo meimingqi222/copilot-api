@@ -587,3 +587,70 @@ test("POST /v1/responses streaming sends ping while the stream is stalled mid-re
     body.indexOf("response.completed"),
   )
 }, 12_000)
+
+test("POST /v1/responses clamps reasoning.effort to the model's advertised levels", async () => {
+  state.models = {
+    object: "list",
+    data: [
+      {
+        id: "gpt-responses",
+        object: "model",
+        name: "GPT Responses",
+        preview: false,
+        vendor: "OpenAI",
+        version: "1",
+        model_picker_enabled: true,
+        supported_endpoints: ["/responses"],
+        capabilities: {
+          family: "gpt-5",
+          object: "capabilities",
+          supports: { reasoning_effort: ["low", "high"] },
+          tokenizer: "o200k_base",
+          type: "chat",
+        },
+      },
+    ],
+  }
+
+  const fetchMock = mock((url: string, opts: { body?: string }) => ({
+    ok: true,
+    json: () => ({
+      id: "resp_123",
+      object: "response",
+      model: "gpt-responses",
+      status: "completed",
+      output: [
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "ok" }],
+        },
+      ],
+      output_text: "ok",
+    }),
+    text: () => Promise.resolve(""),
+    status: 200,
+    url,
+    headers: opts,
+  }))
+  globalThis.fetch = fetchMock as unknown as typeof fetch
+
+  const response = await server.fetch(
+    new Request("http://localhost/v1/responses", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-responses",
+        input: "hi",
+        reasoning: { effort: "max" },
+      }),
+    }),
+  )
+
+  expect(response.status).toBe(200)
+  const [, options] = fetchMock.mock.calls[0] as [string, { body?: string }]
+  expect(JSON.parse(options.body ?? "{}")).toMatchObject({
+    model: "gpt-responses",
+    reasoning: { effort: "high" },
+  })
+})

@@ -5,6 +5,7 @@ import type {
 } from "~/lib/provider-connections"
 
 import {
+  endpointsFromSupported,
   getConnectionCopilotToken,
   getConnectionProvider,
   setConnectionModels,
@@ -16,7 +17,8 @@ import { getModelsForConnection } from "~/services/copilot/get-models"
 
 import type { ProviderRuntime } from "~/services/providers/runtime"
 
-function toModelMappings(connection: ProviderConnection): Array<ModelMapping> {
+/** 刷新失败/未登录时沿用的已存映射。 */
+function storedMappings(connection: ProviderConnection): Array<ModelMapping> {
   return connection.models ?? []
 }
 
@@ -31,7 +33,7 @@ export const copilotProviderRuntime: ProviderRuntime = {
       return []
     }
     if (!getConnectionCopilotToken(connection)) {
-      return toModelMappings(connection)
+      return storedMappings(connection)
     }
     const models = await getModelsForConnection(connection)
     const seen = new Set<string>()
@@ -42,16 +44,23 @@ export const copilotProviderRuntime: ProviderRuntime = {
         seen.add(model.id)
         return true
       })
-      .map((model) => ({
-        publicId: canonicalNativeModelId(model.id),
-        upstreamId: model.id,
-        name: model.name,
-        vendor: model.vendor,
-        enabled: true,
-        pickerEnabled: model.model_picker_enabled,
-        pickerCategory: model.model_picker_category,
-        endpoints: toModelEndpoints(model.supported_endpoints ?? []),
-      }))
+      .map((model) => {
+        // Copilot lists the levels the model actually takes; the catalog
+        // dropped them before, which left every Copilot model unable to say
+        // which effort it accepts.
+        const efforts = model.capabilities?.supports?.reasoning_effort
+        return {
+          publicId: canonicalNativeModelId(model.id),
+          upstreamId: model.id,
+          name: model.name,
+          vendor: model.vendor,
+          enabled: true,
+          pickerEnabled: model.model_picker_enabled,
+          pickerCategory: model.model_picker_category,
+          endpoints: endpointsFromSupported(model.supported_endpoints ?? []),
+          ...(efforts && efforts.length > 0 ? { efforts: [...efforts] } : {}),
+        }
+      })
     setConnectionModels(connection, mappings)
     return mappings
   },
@@ -61,20 +70,4 @@ export const copilotProviderRuntime: ProviderRuntime = {
   async refreshAuth(connection) {
     await refreshCopilotTokenForConnection(connection)
   },
-}
-
-function toModelEndpoints(
-  supported: Array<string>,
-): Array<ModelMapping["endpoints"][number]> {
-  const endpoints: Array<ModelMapping["endpoints"][number]> = []
-  for (const ep of supported) {
-    if (ep.includes("chat/completions")) endpoints.push("chat")
-    else if (ep.includes("messages")) endpoints.push("messages")
-    else if (ep.includes("responses")) endpoints.push("responses")
-    else if (ep.includes("embeddings")) endpoints.push("embeddings")
-    else if (ep.includes("images")) endpoints.push("images")
-    else if (ep.includes("videos")) endpoints.push("videos")
-  }
-  if (endpoints.length === 0) endpoints.push("chat")
-  return endpoints
 }

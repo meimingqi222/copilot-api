@@ -10,6 +10,7 @@ import {
   updateMemoryTrace,
 } from "~/lib/memory-diagnostics"
 import { connectionProvider } from "~/lib/provider-connections"
+import { clampEffortForModel } from "~/lib/reasoning-effort"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import {
   markPerformanceDispatch,
@@ -92,10 +93,19 @@ async function handleCompletionWithTrace(c: Context, memoryTraceId: string) {
     : undefined
   const normalizedModel =
     payload.model ? canonicalModelId(parsedThinkingModel.model) : ""
+  const targetModel = normalizedModel || "gpt-5-mini"
+  // 后缀档位优先；没有后缀时沿用客户端自己带的 reasoning_effort。
+  // 两者都按模型公布的档位钳制（未公布则原样转发）。
+  const reasoningEffort = clampEffortForModel(
+    targetModel,
+    parsedThinkingModel.config ? suffixEffort : payload.reasoning_effort,
+  ) as ChatCompletionsPayload["reasoning_effort"]
   payload = {
     ...payload,
-    model: normalizedModel || "gpt-5-mini",
-    ...(parsedThinkingModel.config ? { reasoning_effort: suffixEffort } : {}),
+    model: targetModel,
+    ...(reasoningEffort === undefined ?
+      {}
+    : { reasoning_effort: reasoningEffort }),
   }
 
   const messageContent =

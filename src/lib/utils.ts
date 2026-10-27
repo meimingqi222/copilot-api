@@ -16,7 +16,11 @@ import {
   upsertProviderConnection,
 } from "~/lib/provider-connections"
 import { hasEnabledCredential } from "~/lib/provider-connections/anonymous-credential"
-import { listExposedPublicModels } from "~/lib/route-target/build"
+import type { ModelEndpoint } from "~/lib/provider-connections/types"
+import {
+  listExposedPublicModels,
+  type ExposedPublicModel,
+} from "~/lib/route-target/build"
 import { onStateChange } from "~/lib/state-events"
 import { everyMs, runJob } from "~/lib/jobs"
 import { globalTimers } from "~/lib/timer-registry"
@@ -99,6 +103,8 @@ export function cacheModels(): void {
         model: (typeof connectionModels)[number]["model"]
         conn: (typeof connectionModels)[number]["conn"]
         publicId: string
+        /** 同一 publicId 各连接档位的交集;任一连接未知时按“未知”处理。 */
+        efforts?: Array<string>
       }
     >()
     for (const entry of connectionModels) {
@@ -107,53 +113,35 @@ export function cacheModels(): void {
       // by sending a prefixed id (prefix/model), resolved via
       // buildAccountModelAliases - but it is not listed here.
       const publicId = entry.model.publicId
-      if (!merged.has(publicId)) {
+      // 折叠变体的连接(历史上)只在 metadata 里记档位,没有 efforts 字段。
+      const levels =
+        entry.model.efforts ?? listWindsurfSupportedEfforts(entry.model)
+      const existing = merged.get(publicId)
+      if (!existing) {
         merged.set(publicId, {
           model: entry.model,
           conn: entry.conn,
           publicId,
+          efforts: levels && levels.length > 0 ? [...levels] : undefined,
         })
+        continue
       }
+      existing.efforts = intersectEfforts(existing.efforts, levels)
     }
 
     accountData = Array.from(merged.values()).map(
-      ({ model, conn, publicId }) => {
-        const reasoningEfforts = listWindsurfSupportedEfforts(model)
-        const contextWindow = windsurfContextWindow(model)
-        return {
+      ({ model, conn, publicId, efforts }) =>
+        buildModelEntry({
           id: publicId,
-          object: "model",
           name: model.name ?? publicId,
-          preview: false,
           vendor: model.vendor ?? "unknown",
-          version: "1",
-          model_picker_enabled: model.pickerEnabled ?? true,
-          model_picker_category: model.pickerCategory,
-          supported_endpoints: (model.endpoints ?? []).map((e) =>
-            endpointToSupported(e),
-          ),
-          capabilities: {
-            family: accountManagedProvider(conn),
-            object: "capabilities",
-            // Only advertised when the catalog names it (the `1m` tier);
-            // standard-tier families carry no window information.
-            ...(contextWindow === undefined ?
-              {}
-            : { limits: { max_context_window_tokens: contextWindow } }),
-            supports: {
-              streaming: true,
-              // Exact effort keys this family accepts (Windsurf collapsed
-              // variants), default first. Clients that honor this list will
-              // not send unsupported tiers.
-              ...(reasoningEfforts ?
-                { reasoning_effort: reasoningEfforts }
-              : {}),
-            },
-            tokenizer: "unknown",
-            type: "chat",
-          },
-        }
-      },
+          family: accountManagedProvider(conn),
+          pickerEnabled: model.pickerEnabled ?? true,
+          pickerCategory: model.pickerCategory,
+          endpoints: model.endpoints ?? [],
+          contextWindow: windsurfContextWindow(model),
+          efforts,
+        }),
     )
   }
 
@@ -168,6 +156,30 @@ export function cacheModels(): void {
 // 注册 models-stale 监听:persistProviderConnections 完成后
 // 自动触发 cacheModels() 重建缓存,消除调用方的手动 cacheModels() 调用。
 onStateChange("models-stale", cacheModels)
+
+/** `/v1/models` 的 `capabilities.supports`，档位未知时不写该字段。 */
+function modelSupports(efforts: Array<string> | undefined) {
+  return {
+    streaming: true,
+    ...(efforts ? { reasoning_effort: efforts } : {}),
+  }
+}
+
+/**
+ * 同一 publicId 背后多个连接时，对外的档位取交集：这样无论路由落到哪个
+ * target，客户端要的档位都被接受。任一侧未知则沿用已知的那一侧——未知只是
+ * “上游没说”，按原样转发请求的行为与旧版本一致。
+ */
+function intersectEfforts(
+  current: Array<string> | undefined,
+  next: ReadonlyArray<string> | undefined,
+): Array<string> | undefined {
+  if (!next || next.length === 0) return current
+  if (!current) return [...next]
+  const kept = current.filter((level) => next.includes(level))
+  // 交集为空说明各连接没有一个共同档位：不公布，也不钳制（按旧行为原样转发）。
+  return kept.length > 0 ? kept : undefined
+}
 
 function endpointToSupported(endpoint: string): string {
   switch (endpoint) {
@@ -189,27 +201,42 @@ function endpointToSupported(endpoint: string): string {
   }
 }
 
-type ExposedModel = ReturnType<typeof listExposedPublicModels>[number]
-
-function buildConnectionModelEntry(
-  id: string,
-  entry: ExposedModel,
-): NonNullable<typeof state.models>["data"][number] {
-  const vendor = entry.vendor ?? entry.connectionId
+/**
+ * `/v1/models` 的一条模型条目。account 连接与 endpoint 连接只在 family、
+ * 上下文窗口来源上不同，条目本身的形状只在这里写一次。
+ */
+function buildModelEntry(input: {
+  id: string
+  name: string
+  vendor: string
+  family: string
+  pickerEnabled: boolean
+  pickerCategory?: string
+  endpoints: Array<ModelEndpoint>
+  /** 目录点名的上下文窗口（Windsurf 的 `1m` 档）；未知时不写 limits。 */
+  contextWindow?: number
+  /** 该 publicId 背后所有连接都能接受的档位（provider 声明的交集）。 */
+  efforts?: Array<string>
+}): NonNullable<typeof state.models>["data"][number] {
   return {
-    id,
+    id: input.id,
     object: "model",
-    name: entry.name ?? id,
+    name: input.name,
     preview: false,
-    vendor,
+    vendor: input.vendor,
     version: "1",
-    model_picker_enabled: entry.pickerEnabled,
-    model_picker_category: entry.pickerCategory,
-    supported_endpoints: entry.endpoints.map((e) => endpointToSupported(e)),
+    model_picker_enabled: input.pickerEnabled,
+    model_picker_category: input.pickerCategory,
+    supported_endpoints: input.endpoints.map((endpoint) =>
+      endpointToSupported(endpoint),
+    ),
     capabilities: {
-      family: vendor.toLowerCase(),
+      family: input.family,
       object: "capabilities",
-      supports: { streaming: true },
+      ...(input.contextWindow === undefined ?
+        {}
+      : { limits: { max_context_window_tokens: input.contextWindow } }),
+      supports: modelSupports(input.efforts),
       tokenizer: "unknown",
       type: "chat",
     },
@@ -223,24 +250,44 @@ function buildConnectionModelEntry(
 function buildProviderConnectionEntries(
   existing: Set<string>,
 ): NonNullable<typeof state.models>["data"] {
-  const exposed = listExposedPublicModels()
-  const additions: NonNullable<typeof state.models>["data"] = []
-  const autoLbSeen = new Set<string>()
-
-  for (const entry of exposed) {
-    // Auto-LB entry: bare publicId (added once, load-balanced across all
-    // providers). Provider-pinned ids (connectionId/publicId) are not listed;
-    // clients may still send one to target a specific connection, resolved
-    // via the route-target build path.
-    if (!autoLbSeen.has(entry.publicId)) {
-      autoLbSeen.add(entry.publicId)
-      if (!existing.has(entry.publicId)) {
-        existing.add(entry.publicId)
-        additions.push(buildConnectionModelEntry(entry.publicId, entry))
-      }
+  // Auto-LB entry: bare publicId (added once, load-balanced across all
+  // providers). Provider-pinned ids (connectionId/publicId) are not listed;
+  // clients may still send one to target a specific connection, resolved
+  // via the route-target build path. 同一 publicId 的档位取交集后再公布。
+  const byPublicId = new Map<
+    string,
+    { entry: ExposedPublicModel; efforts?: Array<string> }
+  >()
+  for (const entry of listExposedPublicModels()) {
+    const merged = byPublicId.get(entry.publicId)
+    if (!merged) {
+      byPublicId.set(entry.publicId, {
+        entry,
+        efforts: entry.efforts ? [...entry.efforts] : undefined,
+      })
+      continue
     }
+    merged.efforts = intersectEfforts(merged.efforts, entry.efforts)
   }
 
+  const additions: NonNullable<typeof state.models>["data"] = []
+  for (const [publicId, { entry, efforts }] of byPublicId) {
+    if (existing.has(publicId)) continue
+    existing.add(publicId)
+    const vendor = entry.vendor ?? entry.connectionId
+    additions.push(
+      buildModelEntry({
+        id: publicId,
+        name: entry.name ?? publicId,
+        vendor,
+        family: vendor.toLowerCase(),
+        pickerEnabled: entry.pickerEnabled,
+        pickerCategory: entry.pickerCategory,
+        endpoints: entry.endpoints,
+        efforts,
+      }),
+    )
+  }
   return additions
 }
 

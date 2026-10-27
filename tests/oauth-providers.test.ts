@@ -113,6 +113,12 @@ describe("OAuth model prefix helpers", () => {
       model: "provider/model",
       config: { mode: "level", effort: "high" },
     })
+    // `max` 是 Windsurf/Qoder 目录里的最高档:它也必须被当成思考后缀,
+    // 否则整个字符串会被当成模型名,路由直接找不到模型。
+    expect(parseThinkingModel("deepseek-v4.1-flash(max)")).toEqual({
+      model: "deepseek-v4.1-flash",
+      config: { mode: "level", effort: "max" },
+    })
     expect(parseThinkingModel("gpt-5")).toEqual({ model: "gpt-5" })
     expect(parseThinkingModel("gpt-5(unknown)")).toEqual({
       model: "gpt-5(unknown)",

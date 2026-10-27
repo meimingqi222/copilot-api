@@ -2,11 +2,13 @@ import type { Context } from "hono"
 
 import type {
   ResponsesPayload,
+  ResponsesReasoningEffort,
   ResponsesResponse,
 } from "~/services/protocols/responses/types"
 import type { ResponsesCompactPayload } from "~/services/responses/compact"
 
 import { HTTPError } from "~/lib/error"
+import { clampEffortForModel } from "~/lib/reasoning-effort"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { readJsonBody } from "~/lib/request-body"
 import { patchRequestLog } from "~/lib/request-log"
@@ -62,14 +64,27 @@ export async function handleResponsesCompact(c: Context) {
     : undefined
   const effectiveModel =
     parsedThinkingModel.config ? parsedThinkingModel.model : raw.model
+  const rawReasoning = (
+    typeof raw.reasoning === "object" && raw.reasoning !== null ?
+      raw.reasoning
+    : undefined) as
+    | { effort?: ResponsesReasoningEffort; summary?: unknown }
+    | undefined
+  // 与 /v1/responses 一致：后缀档位优先，其次客户端自带的 reasoning.effort，
+  // 都按模型公布的档位钳制。
+  const reasoningEffort = clampEffortForModel(
+    effectiveModel,
+    parsedThinkingModel.config ? suffixEffort : rawReasoning?.effort,
+  ) as ResponsesReasoningEffort | undefined
   // dispatch 复用 responses 通道：payload 形态与 ResponsesPayload 兼容。
   const effectivePayload = {
     ...raw,
     model: effectiveModel,
     stream: false,
-    ...(parsedThinkingModel.config && {
-      reasoning: suffixEffort ? { effort: suffixEffort } : undefined,
-    }),
+    ...(reasoningEffort ?
+      { reasoning: { effort: reasoningEffort, summary: rawReasoning?.summary } }
+    : parsedThinkingModel.config ? { reasoning: undefined }
+    : {}),
   } as unknown as ResponsesPayload
 
   const forwardedHeaders = collectForwardedSessionHeaders(c)

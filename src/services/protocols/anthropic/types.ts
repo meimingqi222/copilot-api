@@ -45,6 +45,8 @@ export interface AnthropicMessagesPayload {
     | "medium"
     | "high"
     | "xhigh"
+    /** Windsurf/GLM discrete top tier — independent of xhigh. */
+    | "max"
     | "none"
     | "auto"
     | null

@@ -119,6 +119,9 @@ export function getQoderFallbackModels(site: QoderSite): Array<ModelMapping> {
     endpoints: ["chat"],
     enabled: true,
     pickerEnabled: true,
+    ...(entry.efforts && entry.efforts.length > 0 ?
+      { efforts: [...entry.efforts] }
+    : {}),
     metadata: {
       qoderSource: "",
       qoderModelConfig: syntheticConfig(entry),

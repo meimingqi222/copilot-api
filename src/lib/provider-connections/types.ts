@@ -237,6 +237,12 @@ export interface ModelMapping {
   enabled: boolean
   pickerEnabled?: boolean
   pickerCategory?: string
+  /**
+   * 上游声明的思考档位，弱到强（`minimal` … `max`）。provider 发现自己那
+   * 个模型的档位后写在这里；未声明即未知，请求原样转发。对外投影与请求钳制
+   * 都只看这一份（见 `~/lib/reasoning-effort`）。
+   */
+  efforts?: Array<string>
   metadata?: Record<string, unknown>
 }
 

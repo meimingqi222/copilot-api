@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto"
 import type { RequestAdmission } from "~/lib/request-admission"
 import type {
   ResponsesPayload,
+  ResponsesReasoningEffort,
   ResponsesResponse,
 } from "~/services/protocols/responses/types"
 
@@ -52,6 +53,7 @@ import {
   parseThinkingModel,
   thinkingConfigToResponsesEffort,
 } from "~/lib/thinking"
+import { clampEffortForModel } from "~/lib/reasoning-effort"
 import { getClientIp, isAbortError } from "~/lib/utils"
 import { clearResponsesTranscriptsByExecutionId } from "~/services/codex/ws-transcript-cache"
 import { createResponses } from "~/services/copilot/create-responses"
@@ -175,6 +177,22 @@ export function createResponsesWebSocketSession(c: Context) {
         wsParsedThinking.config ?
           thinkingConfigToResponsesEffort(wsParsedThinking.config)
         : undefined
+      // 客户端自带的档位按模型公布的清单钳制（未公布则原样转发）。WS 路径
+      // 不注入后缀档位，保持既有语义。
+      const wsClampedEffort = clampEffortForModel(
+        wsParsedThinking.model || payload.model,
+        payload.reasoning?.effort,
+      ) as ResponsesReasoningEffort | undefined
+      if (
+        payload.reasoning
+        && wsClampedEffort !== undefined
+        && wsClampedEffort !== payload.reasoning.effort
+      ) {
+        payload.reasoning = {
+          ...payload.reasoning,
+          effort: wsClampedEffort,
+        }
+      }
       const wsReasoningEffort = payload.reasoning?.effort ?? wsSuffixEffort
 
       updateMemoryTrace(memoryTraceId, "payload_ready", {

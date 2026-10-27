@@ -32,12 +32,8 @@ import {
   getConnectionSettings,
   getPrimaryTokenKey,
 } from "./connection-metadata"
-import type {
-  ApiCredential,
-  ModelEndpoint,
-  ModelMapping,
-  ProviderConnection,
-} from "./types"
+import { endpointsFromSupported } from "./model-endpoints"
+import type { ApiCredential, ModelMapping, ProviderConnection } from "./types"
 
 /**
  * admin `/admin/api/accounts` 响应的 `availableModels` 条目形状。
@@ -54,6 +50,12 @@ export interface AccountModel {
   supportedEndpoints: Array<string>
   provider?: ProviderId
   upstreamId?: string
+  /**
+   * 上游声明的思考档位（Codex catalog 的 `supported_reasoning_levels`），
+   * 原样带进 `ModelMapping.efforts`。`mappingToAccountModel` 不回写它：
+   * admin API 的模型 JSON 形状保持冻结。
+   */
+  efforts?: Array<string>
 }
 
 /** 创建 account-managed connection 时的运行态最小子集。 */
@@ -167,17 +169,7 @@ function refresherTypeOf(provider: ProviderId): CredentialRefresherType {
 
 /** AccountModel → ModelMapping。 */
 function accountModelToMapping(model: AccountModel): ModelMapping {
-  const endpoints: Array<ModelEndpoint> = []
-  for (const ep of model.supportedEndpoints) {
-    if (ep.includes("chat/completions")) endpoints.push("chat")
-    else if (ep.includes("messages")) endpoints.push("messages")
-    else if (ep.includes("responses")) endpoints.push("responses")
-    else if (ep === "gemini") endpoints.push("gemini")
-    else if (ep.includes("embeddings")) endpoints.push("embeddings")
-    else if (ep.includes("images")) endpoints.push("images")
-    else if (ep.includes("videos")) endpoints.push("videos")
-  }
-  if (endpoints.length === 0) endpoints.push("chat")
+  const endpoints = endpointsFromSupported(model.supportedEndpoints)
 
   return {
     publicId: model.id,
@@ -188,6 +180,9 @@ function accountModelToMapping(model: AccountModel): ModelMapping {
     enabled: true,
     pickerEnabled: model.pickerEnabled,
     pickerCategory: model.pickerCategory,
+    ...(model.efforts && model.efforts.length > 0 ?
+      { efforts: [...model.efforts] }
+    : {}),
   }
 }
 

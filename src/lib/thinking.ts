@@ -6,6 +6,8 @@
  * and Windsurf translation layers.
  */
 
+import { isReasoningLevel, type ReasoningLevel } from "~/lib/effort-levels"
+
 /**
  * Extracts a thinking signature under any of the spellings the various proxy
  * implementations use.
@@ -107,8 +109,15 @@ export function extractReasoningPartsText(
   return text
 }
 
-/** Standard reasoning effort levels from lowest to highest. */
-type ReasoningEffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh"
+/**
+ * Standard reasoning effort levels, ordered by the shared vocabulary in
+ * `~/lib/effort-levels`. `max` is the top tier some catalogs name (Windsurf's
+ * collapsed variants, Qoder); `xhigh` and `max` are independent tiers, so both
+ * are kept as levels rather than folded together. Adapters that have no `max`
+ * fold it themselves (Copilot → `xhigh`, Gemini → `xhigh`, Messages/Responses
+ * → `high`).
+ */
+type ReasoningEffortLevel = ReasoningLevel
 
 export type ReasoningEffort = ReasoningEffortLevel | "none" | "auto"
 
@@ -145,13 +154,7 @@ export function parseThinkingModel(model: string): ParsedThinkingModel {
   if (suffix === "auto" || suffix === "-1") {
     return { model: baseModel, config: { mode: "auto", effort: "auto" } }
   }
-  if (
-    suffix === "minimal"
-    || suffix === "low"
-    || suffix === "medium"
-    || suffix === "high"
-    || suffix === "xhigh"
-  ) {
+  if (isReasoningLevel(suffix)) {
     return {
       model: baseModel,
       config: { mode: "level", effort: suffix },

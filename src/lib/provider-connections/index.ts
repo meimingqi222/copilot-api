@@ -1,3 +1,4 @@
+export { endpointsFromSupported } from "./model-endpoints"
 /**
  * Provider Connection 模块公共入口。
  *

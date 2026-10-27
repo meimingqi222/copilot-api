@@ -413,9 +413,7 @@ function resolveEndpoints(
  * 列出所有 connections 中可暴露给客户端的 publicId 与 alias 集合。
  * 用于聚合到 `/v1/models` 响应中。
  */
-export function listExposedPublicModels(
-  connections: Array<ProviderConnection> = listProviderConnections(),
-): Array<{
+export interface ExposedPublicModel {
   publicId: string
   connectionId: string
   endpoints: Array<ModelEndpoint>
@@ -423,16 +421,14 @@ export function listExposedPublicModels(
   pickerCategory?: string
   name?: string
   vendor?: string
-}> {
-  const out: Array<{
-    publicId: string
-    connectionId: string
-    endpoints: Array<ModelEndpoint>
-    pickerEnabled: boolean
-    pickerCategory?: string
-    name?: string
-    vendor?: string
-  }> = []
+  /** 连接自己声明的思考档位（provider 发现写入），未知时省略。 */
+  efforts?: Array<string>
+}
+
+export function listExposedPublicModels(
+  connections: Array<ProviderConnection> = listProviderConnections(),
+): Array<ExposedPublicModel> {
+  const out: Array<ExposedPublicModel> = []
   for (const connection of connections) {
     if (!connection.enabled) continue
     // 手动禁用全部 credential 的 connection 不可路由,也不应暴露模型:
@@ -457,6 +453,9 @@ export function listExposedPublicModels(
           pickerCategory: model.pickerCategory,
           name: model.name,
           vendor: model.vendor,
+          ...(model.efforts && model.efforts.length > 0 ?
+            { efforts: model.efforts }
+          : {}),
         })
       }
     }

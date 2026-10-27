@@ -22,6 +22,28 @@ interface CodexModelPayload {
   name?: string
   display_name?: string
   displayName?: string
+  /** Codex 目录的思考档位：`[{ effort: "low" }, …]` 或裸字符串。 */
+  supported_reasoning_levels?: Array<unknown>
+}
+
+/**
+ * 读 Codex 目录声明的档位。两种写法都出现过：Codex 自己写对象，CPA 镜像
+ * 也有裸字符串，和 magpie 的 `levelsOf` 一样两种都吃。
+ */
+function effortsOf(entry: CodexModelPayload): Array<string> | undefined {
+  const raw = entry.supported_reasoning_levels
+  if (!Array.isArray(raw)) return undefined
+  const levels: Array<string> = []
+  for (const item of raw) {
+    const level =
+      typeof item === "string" ? item
+      : item && typeof item === "object" && "effort" in item ?
+        (item as { effort?: unknown }).effort
+      : undefined
+    if (typeof level !== "string" || !level) continue
+    if (!levels.includes(level)) levels.push(level)
+  }
+  return levels.length > 0 ? levels : undefined
 }
 
 // CPA-maintained mirror of the Codex client model catalog. This catalog is
@@ -72,6 +94,7 @@ function parseCodexModelsPayload(
       continue
     }
     seen.add(id)
+    const efforts = effortsOf(entry)
     models.push({
       id,
       name: entry.display_name ?? entry.displayName ?? entry.name ?? id,
@@ -79,6 +102,7 @@ function parseCodexModelsPayload(
       pickerEnabled: true,
       supportedEndpoints: endpointsForCodexModel(id),
       provider: "codex",
+      ...(efforts ? { efforts } : {}),
     })
   }
 

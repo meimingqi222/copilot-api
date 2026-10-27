@@ -1,4 +1,8 @@
-export { buildRouteTargets, listExposedPublicModels } from "./build"
+export {
+  buildRouteTargets,
+  listExposedPublicModels,
+  type ExposedPublicModel,
+} from "./build"
 export { buildGroupRouteTargets, selectGroupRouteTarget } from "./group-select"
 export {
   quotaWindowsOf,

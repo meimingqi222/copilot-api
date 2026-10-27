@@ -1,6 +1,8 @@
 import type { Context } from "hono"
 
+import { isReasoningLevel } from "~/lib/effort-levels"
 import { logger } from "~/lib/logger"
+import { clampEffortForModel } from "~/lib/reasoning-effort"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { readJsonBody } from "~/lib/request-body"
 import {
@@ -22,17 +24,44 @@ export async function handleCompletion(c: Context) {
     c.req.raw,
   )
   const parsedThinkingModel = parseThinkingModel(anthropicPayload.model)
-  const effectivePayload: AnthropicMessagesPayload =
+  const effectiveModel =
     parsedThinkingModel.config ?
-      {
-        ...anthropicPayload,
-        model: parsedThinkingModel.model,
-        ...thinkingConfigToAnthropic(parsedThinkingModel.config),
-        reasoning_effort: thinkingConfigToReasoningEffort(
-          parsedThinkingModel.config,
-        ),
-      }
-    : anthropicPayload
+      parsedThinkingModel.model
+    : anthropicPayload.model
+  // 后缀档位优先，其次客户端自带的 reasoning_effort / output_config.effort；
+  // 都按模型公布的档位钳制。
+  const requestedEffort =
+    parsedThinkingModel.config ?
+      thinkingConfigToReasoningEffort(parsedThinkingModel.config)
+    : (anthropicPayload.reasoning_effort
+      ?? anthropicPayload.output_config?.effort)
+  const reasoningEffort = clampEffortForModel(
+    effectiveModel,
+    requestedEffort,
+  ) as AnthropicMessagesPayload["reasoning_effort"]
+  const anthropicThinking =
+    parsedThinkingModel.config ?
+      thinkingConfigToAnthropic(parsedThinkingModel.config)
+    : undefined
+  // `output_config.effort` 是 Anthropic 侧的档位字段，必须与钳制后的
+  // `reasoning_effort` 一致，否则 messages 路由上会出现“钳了但没钳”。
+  const outputConfig =
+    anthropicThinking?.output_config ?? anthropicPayload.output_config
+  const clampedOutputEffort =
+    reasoningEffort === "minimal" ? "low"
+    : reasoningEffort && isReasoningLevel(reasoningEffort) ? reasoningEffort
+    : undefined
+  const effectivePayload: AnthropicMessagesPayload = {
+    ...anthropicPayload,
+    model: effectiveModel,
+    ...anthropicThinking,
+    ...(outputConfig && clampedOutputEffort ?
+      { output_config: { ...outputConfig, effort: clampedOutputEffort } }
+    : {}),
+    ...(reasoningEffort === undefined ?
+      {}
+    : { reasoning_effort: reasoningEffort }),
+  }
   const messageContent =
     extractMessageContentFromAnthropicPayload(effectivePayload)
 
