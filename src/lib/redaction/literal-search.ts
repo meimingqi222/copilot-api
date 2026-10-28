@@ -5,9 +5,40 @@ export class LiteralSearchLimitError extends Error {
   }
 }
 
-const MAX_NODES = 256 * 1024
-const MAX_MATCHES = 64 * 1024
-const MAX_WORK = 8 * 1024 * 1024
+interface LiteralSearchLimits {
+  maxNodes: number
+  maxMatches: number
+  maxWork: number
+  /**
+   * Upper bound for `text.length * values.size` on the native-search path.
+   * Native `indexOf` is much cheaper per byte than the trie, so a small value
+   * set with long literals (a handful of pasted credentials) must not build a
+   * 100 MB index. The multiplier is a work estimate, not an exact cost: it
+   * keeps the fast path bounded while staying far above ordinary requests.
+   */
+  nativeWork: number
+}
+
+const DEFAULT_LIMITS: LiteralSearchLimits = {
+  maxNodes: 256 * 1024,
+  maxMatches: 64 * 1024,
+  maxWork: 8 * 1024 * 1024,
+  nativeWork: 256 * 1024 * 1024,
+}
+
+let limits: LiteralSearchLimits = DEFAULT_LIMITS
+
+/** Test seam: shrink a budget so the capacity paths can be exercised cheaply. */
+export function __setLiteralSearchLimitsForTest(
+  overrides: Partial<LiteralSearchLimits>,
+): void {
+  limits = { ...limits, ...overrides }
+}
+
+/** Test seam: restore the production budgets. */
+export function __resetLiteralSearchLimitsForTest(): void {
+  limits = DEFAULT_LIMITS
+}
 
 interface Node {
   next: Map<string, number>
@@ -24,21 +55,29 @@ function node(): Node {
  * Aho-Corasick: scan once for many distinct literals, including overlapping
  * prefixes and suffixes. Output links avoid copying every suffix into each node.
  * Work, index size and output are bounded independently of tenant storage.
+ *
+ * The visitor may return `false` to reject a candidate (a HOME match that is
+ * only a path prefix, for example). Rejected candidates do not consume the
+ * match budget; only matches the caller actually accepts count toward it.
  */
 export function scanLiterals<T>(
   text: string,
   values: ReadonlyMap<string, T>,
-  visit: (value: T, start: number, end: number) => void,
+  visit: (value: T, start: number, end: number) => boolean | void,
 ): void {
   if (values.size === 0) return
   let hits = 0
   const emit = (value: T, start: number, end: number) => {
-    if (++hits > MAX_MATCHES) throw new LiteralSearchLimitError()
-    visit(value, start, end)
+    if (visit(value, start, end) === false) return
+    if (++hits > limits.maxMatches) throw new LiteralSearchLimitError()
   }
   // A constant number of native searches is faster and avoids building a huge
-  // trie for a single long secret field. Never scale this branch with entries.
-  if (values.size <= 8) {
+  // trie for a single long secret field. The same applies when `values` is
+  // large but the text is short: `text.length * values.size` is a work estimate
+  // for the native path, and below the budget it is cheaper than a 100 MB trie.
+  // The bound is the same for every value count; a large text with many values
+  // goes through the trie (or a capacity error) instead.
+  if (text.length * values.size <= limits.nativeWork) {
     for (const [literal, value] of values) {
       if (!literal) continue
       let from = 0
@@ -52,11 +91,19 @@ export function scanLiterals<T>(
     return
   }
 
+  const entries = [...values]
+  let totalLiteralLength = 0
+  for (const [literal] of entries) totalLiteralLength += literal.length
+  // A scan that cannot fit the work budget would abort mid-way after the trie
+  // has already been built. Reject it before allocating the index.
+  if (text.length + totalLiteralLength > limits.maxWork) {
+    throw new LiteralSearchLimitError()
+  }
+
   let work = 0
   const step = () => {
-    if (++work > MAX_WORK) throw new LiteralSearchLimitError()
+    if (++work > limits.maxWork) throw new LiteralSearchLimitError()
   }
-  const entries = [...values]
   const nodes = [node()]
   for (let index = 0; index < entries.length; index++) {
     const literal = entries[index][0]
@@ -68,7 +115,7 @@ export function scanLiterals<T>(
       const character = literal[i]
       let next = nodes[state].next.get(character)
       if (next === undefined) {
-        if (nodes.length >= MAX_NODES) throw new LiteralSearchLimitError()
+        if (nodes.length >= limits.maxNodes) throw new LiteralSearchLimitError()
         next = nodes.length
         nodes.push(node())
         nodes[state].next.set(character, next)

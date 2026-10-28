@@ -1,11 +1,17 @@
-import { expect, test } from "bun:test"
+import { afterEach, expect, test } from "bun:test"
 
 import { RedactionError, RedactionScope } from "~/lib/redaction/context"
 import {
+  __resetLiteralSearchLimitsForTest,
+  __setLiteralSearchLimitsForTest,
   LiteralSearchLimitError,
   scanLiterals,
 } from "~/lib/redaction/literal-search"
 import { redactionConfigSchema } from "~/lib/redaction/rules"
+
+afterEach(() => {
+  __resetLiteralSearchLimitsForTest()
+})
 
 function actualMatches(text: string, literals: string[]) {
   const matches: string[] = []
@@ -82,7 +88,7 @@ test("literal search agrees with independent scans on deterministic mixed inputs
   }
 })
 
-test("literal search rejects excessive output and index size", () => {
+test("literal search rejects excessive output", () => {
   for (const literals of [
     ["a"],
     ["a", ...Array.from({ length: 8 }, (_, i) => `needle${i}`)],
@@ -95,19 +101,69 @@ test("literal search rejects excessive output and index size", () => {
       ),
     ).toThrow(LiteralSearchLimitError)
   }
+})
+
+test("small value sets with long literals use the native fallback", () => {
   const literals = Array.from(
     { length: 9 },
     (_, i) => `${i}${"x".repeat(40_000)}`,
   )
-  expect(() => actualMatches("no matches", literals)).toThrow(
+  expect(actualMatches("no matches", literals)).toEqual([])
+})
+
+test("nine values over a large text stay on the native path", () => {
+  const text = " ".repeat(8 * 1024 * 1024 + 1)
+  const literals = Array.from({ length: 9 }, (_, i) => `needle${i}`)
+  expect(actualMatches(text, literals)).toEqual([])
+})
+
+test("a larger value set over the same text still hits the work budget", () => {
+  const text = " ".repeat(8 * 1024 * 1024 + 1)
+  const literals = Array.from({ length: 33 }, (_, i) => `needle${i}`)
+  expect(() => actualMatches(text, literals)).toThrow(LiteralSearchLimitError)
+})
+
+test("rejected candidates do not consume the match budget", () => {
+  expect(() =>
+    scanLiterals("a".repeat(70_000), new Map([["a", 1]]), () => false),
+  ).not.toThrow()
+})
+
+test("Aho-Corasick still agrees with independent scans", () => {
+  __setLiteralSearchLimitsForTest({ nativeWork: 1 })
+  const literals = [
+    "he",
+    "she",
+    "hers",
+    "his",
+    "a",
+    "aa",
+    "aaa",
+    "aaaa",
+    "😀",
+    "😀x",
+    "x😀",
+  ]
+  const text = "ushers his she aaaaa 😀x😀 hers"
+  expect(actualMatches(text, literals)).toEqual(expectedMatches(text, literals))
+})
+
+test("Aho-Corasick node and work budgets still reject", () => {
+  const values = new Map(
+    Array.from({ length: 9 }, (_, i) => [`a${i}`, i] as const),
+  )
+  __setLiteralSearchLimitsForTest({ nativeWork: 1, maxNodes: 8 })
+  expect(() => scanLiterals("x".repeat(10), values, () => {})).toThrow(
     LiteralSearchLimitError,
   )
-  expect(() =>
-    actualMatches(
-      " ".repeat(8 * 1024 * 1024 + 1),
-      Array.from({ length: 9 }, (_, i) => `needle${i}`),
-    ),
-  ).toThrow(LiteralSearchLimitError)
+  __setLiteralSearchLimitsForTest({
+    nativeWork: 1,
+    maxNodes: 1024,
+    maxWork: 29,
+  })
+  expect(() => scanLiterals("x".repeat(10), values, () => {})).toThrow(
+    LiteralSearchLimitError,
+  )
 })
 
 test("known literals preserve JSON spelling, HOME boundaries and placeholder spans", () => {
@@ -147,4 +203,14 @@ test("known literal capacity errors reject the request instead of returning part
   )
   scope.maskText("abcd", false, true)
   expect(() => scope.maskText("abcd ".repeat(70_000))).toThrow(RedactionError)
+})
+
+test("nine long secrets in one session do not stick a 503 on later requests", () => {
+  const scope = new RedactionScope(
+    redactionConfigSchema.parse({ enabled: true }),
+  )
+  for (let i = 0; i < 9; i++) {
+    scope.maskText(`${i}${"x".repeat(30_000)}`, false, true)
+  }
+  expect(() => scope.maskText("ordinary text")).not.toThrow()
 })

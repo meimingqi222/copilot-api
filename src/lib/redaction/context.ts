@@ -30,6 +30,7 @@ import {
   type RedactionConfig,
   type RedactionMatch,
 } from "~/lib/redaction/rules"
+import { asRecord } from "~/lib/json-shape"
 import {
   base32,
   canonicalToken,
@@ -38,7 +39,6 @@ import {
 } from "~/lib/redaction/token"
 import {
   coveredContent,
-  record,
   transformContent,
   type SignedContent,
 } from "~/lib/redaction/wire"
@@ -596,6 +596,8 @@ export class RedactionScope {
     if (!this.memoizable) return
     if (text.length < MIN_MASK_MEMO_TEXT || text.length > MAX_MASK_MEMO_TEXT)
       return
+    // A JS string is at most 2 bytes per UTF-16 code unit. Buffer.byteLength
+    // counts UTF-8 and would overestimate BMP text without making this safer.
     const bytes = 2 * value.length + hits.length * 64 + 64
     if (bytes > MAX_MASK_MEMO_ENTRY_BYTES) return
     const key = this.memoKey(text, slot)
@@ -718,12 +720,13 @@ export class RedactionScope {
     }
     try {
       scanLiterals(text, known, (entries, start, end) => {
+        let accepted = false
         for (const entry of entries) {
           const pathBoundary =
             entry.kind !== "HOME"
             || end === text.length
             || /[/\\\s"'<>]/.test(text[end])
-          if (pathBoundary)
+          if (pathBoundary) {
             matches.push({
               start,
               end,
@@ -732,7 +735,10 @@ export class RedactionScope {
               label: entry.label,
               source: "known",
             })
+            accepted = true
+          }
         }
+        return accepted
       })
     } catch (error) {
       if (error instanceof LiteralSearchLimitError)
@@ -758,7 +764,7 @@ export class RedactionScope {
     return output + text.slice(cursor)
   }
 
-  restoreText(text: string, json = false, _toolInput = false): string {
+  restoreText(text: string, json = false): string {
     this.tenant.touched = Date.now()
     // Models sometimes echo a placeholder with spaces inside the braces or in
     // another case; those still map back to the exact placeholder sent.
@@ -857,25 +863,22 @@ export class RedactionScope {
   restore<T>(value: T, issuer: string): T {
     const restored = transformContent(
       value,
-      (text, json, _secret, toolInput) =>
-        this.restoreText(text, json, toolInput),
+      (text, json) => this.restoreText(text, json),
       (node, signed) => {
-        const visible = transformContent(
-          node,
-          (text, json, _secret, toolInput) =>
-            this.restoreText(text, json, toolInput),
+        const visible = transformContent(node, (text, json) =>
+          this.restoreText(text, json),
         ) as Record<string, unknown>
         this.rememberSigned(node, visible, signed, issuer)
         return visible
       },
     ) as T
-    const packet = record(value)
+    const packet = asRecord(value)
     const response =
       (
         packet?.type === "response.completed"
         || packet?.type === "response.incomplete"
       ) ?
-        record(packet.response)
+        asRecord(packet.response)
       : packet
     if (typeof response?.id === "string" && Array.isArray(response.output))
       this.rememberResponse(response.id)
@@ -1169,7 +1172,7 @@ export async function runRedactedCall<P, R extends { response: unknown }>(
     publish(status)
   }
   try {
-    const previousId = record(payload)?.previous_response_id
+    const previousId = asRecord(payload)?.previous_response_id
     if (typeof previousId === "string") scope.inheritResponse(previousId.trim())
     const prepared = scope.mask(payload)
     publish()

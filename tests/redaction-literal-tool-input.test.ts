@@ -37,9 +37,9 @@ test("source literals round-trip in tool arguments without granting another call
   expect(scope.diagnostics().restored).toBe(0)
   expect(scope.inspectionMappings([literal, foreign])).toEqual([])
   const unseen = `{{HOME_${"b".repeat(32)}}}`
-  expect(scope.restoreText(unseen, false, true)).toBe(unseen)
+  expect(scope.restoreText(unseen, false)).toBe(unseen)
   const unrelated = new RedactionScope(config, randomUUID())
-  expect(unrelated.restoreText(literal, false, true)).toBe(literal)
+  expect(unrelated.restoreText(literal, false)).toBe(literal)
 })
 
 test("memoized history preserves literal tool-input provenance on every request", () => {
@@ -51,7 +51,7 @@ test("memoized history preserves literal tool-input provenance on every request"
   const next = new RedactionScope(config, identity)
   expect(next.maskText(input)).toBe(input)
   expect(maskMemoHitsForTest()).toBe(1)
-  expect(next.restoreText(args, true, true)).toBe(args)
+  expect(next.restoreText(args, true)).toBe(args)
 })
 
 test("Responses continuations retain literal provenance without exposing mappings", () => {
@@ -65,10 +65,10 @@ test("Responses continuations retain literal provenance without exposing mapping
   expect(first.restore(response, "issuer")).toEqual(response)
   const next = new RedactionScope(config, identity)
   next.inheritResponse(response.id)
-  expect(next.restoreText(args, true, true)).toBe(args)
+  expect(next.restoreText(args, true)).toBe(args)
   const other = new RedactionScope(config, randomUUID())
   other.inheritResponse(response.id)
-  expect(other.restoreText(args, true, true)).toBe(args)
+  expect(other.restoreText(args, true)).toBe(args)
 })
 
 test("tool argument streams preserve unmapped placeholders across every split", async () => {

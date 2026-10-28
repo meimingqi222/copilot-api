@@ -394,85 +394,85 @@ const PERSONAL_PATTERNS: Array<
 > = [
   [
     "EMAIL",
-    /(?<![\w.%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?![\w-])/g,
+    /(?<![\w.%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?![\w-])/dg,
   ],
   // Mainland China mobile numbers, with or without +86.
-  ["PHONE", /(?<![\d+])(?:\+?86[- ]?)?1[3-9]\d{9}(?!\d)/g],
+  ["PHONE", /(?<![\d+])(?:\+?86[- ]?)?1[3-9]\d{9}(?!\d)/dg],
   [
     "ID_CARD",
-    /(?<![\dA-Za-z])[1-9]\d{5}(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx](?![\dA-Za-z])/g,
+    /(?<![\dA-Za-z])[1-9]\d{5}(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx](?![\dA-Za-z])/dg,
     idCardChecksum,
   ],
   // Card networks start with 3-6; a checksum keeps timestamps and ids out.
   [
     "BANK_CARD",
-    /(?<![\d-])[3-6]\d{3}(?:[ -]?\d{4}){2}[ -]?\d{4,7}(?![\d-])/g,
+    /(?<![\d-])[3-6]\d{3}(?:[ -]?\d{4}){2}[ -]?\d{4,7}(?![\d-])/dg,
     luhn,
   ],
   [
     "IP",
-    /(?<![\d.])(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?![\d.])/g,
+    /(?<![\d.])(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?![\d.])/dg,
     publicIpv4,
   ],
   [
     "IP",
-    /(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![\w:])/g,
+    /(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![\w:])/dg,
     isPublicIPv6,
   ],
-  ["SSN", /\d{3}-\d{2}-\d{4}/g, isSSN],
+  ["SSN", /\d{3}-\d{2}-\d{4}/dg, isSSN],
   [
     "PASSPORT",
-    /(?:passport(?:\s*(?:no\.?|number|num|#))?|reisepass(?:nummer)?|护照(?:号码|号)?|護照(?:號碼|号碼|号码|番号)?|パスポート(?:番号)?)\s*(?:[:：=]\s*)?(?:是\s*|は\s*)?["']?([A-Z0-9]{6,9})/gi,
+    /(?:passport(?:\s*(?:no\.?|number|num|#))?|reisepass(?:nummer)?|护照(?:号码|号)?|護照(?:號碼|号碼|号码|番号)?|パスポート(?:番号)?)\s*(?:[:：=]\s*)?(?:是\s*|は\s*)?["']?([A-Z0-9]{6,9})/dgi,
     isPassport,
   ],
   [
     "IBAN",
-    /\b[A-Z]{2}\d{2}(?:[A-Z0-9]{11,30}|(?: [A-Z0-9]{4}){2,7}(?: [A-Z0-9]{1,3})?)\b/g,
+    /\b[A-Z]{2}\d{2}(?:[A-Z0-9]{11,30}|(?: [A-Z0-9]{4}){2,7}(?: [A-Z0-9]{1,3})?)\b/dg,
     isIBAN,
   ],
   [
     "BIRTHDAY",
-    /(?:date\s+of\s+birth|birth\s*[_-]?date|birthday|birth|dob|d\.o\.b\.?|born(?:\s+on)?|geburtsdatum|geboren(?:\s+am)?|生日|出生日期|出生年月日|出生于|出生於|誕生日|生年月日)\s*[:：=]?\s*(?:(?:is|was)\s+|是\s*|为\s*|為\s*|は\s*)?["']?(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日?|\d{1,2}[-/.]\d{1,2}[-/.]\d{4}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}|\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*,?\s+\d{4})/gi,
+    /(?:date\s+of\s+birth|birth\s*[_-]?date|birthday|birth|dob|d\.o\.b\.?|born(?:\s+on)?|geburtsdatum|geboren(?:\s+am)?|生日|出生日期|出生年月日|出生于|出生於|誕生日|生年月日)\s*[:：=]?\s*(?:(?:is|was)\s+|是\s*|为\s*|為\s*|は\s*)?["']?(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日?|\d{1,2}[-/.]\d{1,2}[-/.]\d{4}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}|\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*,?\s+\d{4})/dgi,
     isBirthday,
   ],
   [
     "MAC",
-    /\b[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}\b|\b[0-9A-Fa-f]{2}(?:-[0-9A-Fa-f]{2}){5}\b/g,
+    /\b[0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5}\b|\b[0-9A-Fa-f]{2}(?:-[0-9A-Fa-f]{2}){5}\b/dg,
     isMAC,
   ],
   [
     "SERIAL",
-    /(?:serial\s*[_-]?(?:number|num|no\.?|#)?|s\/n|序列号|序列號|シリアル番号|seriennummer)\s*[:#=：]?\s*["']?([A-Za-z0-9][A-Za-z0-9-]{4,39})/gi,
+    /(?:serial\s*[_-]?(?:number|num|no\.?|#)?|s\/n|序列号|序列號|シリアル番号|seriennummer)\s*[:#=：]?\s*["']?([A-Za-z0-9][A-Za-z0-9-]{4,39})/dgi,
     isSerialNumber,
   ],
   [
     "USERNAME",
-    /(?:\/home\/|\/Users\/|[A-Za-z]:\\Users\\)([a-z_][a-z0-9._-]{2,31})(?=[/\\])/gi,
+    /(?:\/home\/|\/Users\/|[A-Za-z]:\\Users\\)([a-z_][a-z0-9._-]{2,31})(?=[/\\])/dgi,
     isUsername,
   ],
   [
     "HOSTNAME",
-    /\bhostname\s*[:=]\s*["']?([A-Za-z0-9][A-Za-z0-9.-]{2,253})/gi,
+    /\bhostname\s*[:=]\s*["']?([A-Za-z0-9][A-Za-z0-9.-]{2,253})/dgi,
     isHostname,
   ],
   [
     "HOSTNAME",
-    /(?<![\w.-])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:internal|local|lan|corp|home|intra))(?![a-z0-9-])/gi,
+    /(?<![\w.-])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:internal|local|lan|corp|home|intra))(?![a-z0-9-])/dgi,
     isHostname,
   ],
   [
     "BUCKET",
-    /\b(?:s3|gs|gcs):\/\/([a-z0-9][a-z0-9.-]{1,61}[a-z0-9])(?=[/?#]|\b)/gi,
+    /\b(?:s3|gs|gcs):\/\/([a-z0-9][a-z0-9.-]{1,61}[a-z0-9])(?=[/?#]|\b)/dgi,
     isBucket,
   ],
   [
     "BUCKET",
-    /\b([a-z0-9][a-z0-9.-]{1,61}[a-z0-9])\.s3(?:[.-][a-z0-9-]+)?\.amazonaws\.com\b/gi,
+    /\b([a-z0-9][a-z0-9.-]{1,61}[a-z0-9])\.s3(?:[.-][a-z0-9-]+)?\.amazonaws\.com\b/dgi,
     isBucket,
   ],
   [
     "BUCKET",
-    /\bstorage\.googleapis\.com\/([a-z0-9][a-z0-9._-]{1,220}[a-z0-9])(?=[/?#]|\b)/gi,
+    /\bstorage\.googleapis\.com\/([a-z0-9][a-z0-9._-]{1,220}[a-z0-9])(?=[/?#]|\b)/dgi,
     isBucket,
   ],
 ]
@@ -717,10 +717,7 @@ export function findRedactions(
       if (!config.personalKinds[label]) continue
       const hint = PERSONAL_HINTS[label]
       if (hint && !hint.test(text)) continue
-      // Capture positions cannot be inferred from repeated text in the match.
-      const indexedPattern =
-        pattern.hasIndices ? pattern : new RegExp(pattern, `${pattern.flags}d`)
-      for (const match of text.matchAll(indexedPattern)) {
+      for (const match of text.matchAll(pattern)) {
         const value = match[1] ?? match[0]
         const start = match.indices?.[1]?.[0] ?? match.index
         if (!valid || valid(value)) add(start, value, "PERSONAL", label)

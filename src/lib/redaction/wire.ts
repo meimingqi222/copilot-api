@@ -1,11 +1,6 @@
 import { isDumpSecretField } from "~/lib/request-dump-sanitizer"
+import { asRecord } from "~/lib/json-shape"
 import { extractSignatureAlias } from "~/lib/thinking"
-
-export function record(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : undefined
-}
 
 const RESERVED = new Set([
   "model",
@@ -78,7 +73,7 @@ function signedContent(
   if (
     Array.isArray(value.reasoning_details)
     && value.reasoning_details.some((detail) => {
-      const block = record(detail)
+      const block = asRecord(detail)
       return block && Boolean(extractSignatureAlias(block))
     })
   )
@@ -124,12 +119,7 @@ export function coveredContent(
 /** Walk values without changing property names, protocol identifiers or opaque media. */
 export function transformContent(
   value: unknown,
-  text: (
-    value: string,
-    json: boolean,
-    secretField?: boolean,
-    toolInput?: boolean,
-  ) => string,
+  text: (value: string, json: boolean, secretField?: boolean) => string,
   sealed?: (value: Record<string, unknown>, signed: SignedContent) => unknown,
   toolData: boolean | "output" | "definition" | "schema-map" = false,
   depth = 0,
@@ -138,14 +128,14 @@ export function transformContent(
   if (typeof value === "string")
     return toolData === "definition" || toolData === "schema-map" ?
         value
-      : text(value, false, false, toolData === true)
+      : text(value, false, false)
   if (Array.isArray(value)) {
     const result = value.map((item) =>
       transformContent(item, text, sealed, toolData, depth + 1),
     )
     return result.every((item, index) => item === value[index]) ? value : result
   }
-  const obj = record(value)
+  const obj = asRecord(value)
   if (!obj) return value
   if (
     Object.getPrototypeOf(obj) !== Object.prototype
@@ -238,7 +228,7 @@ export function transformContent(
         ]
       } catch (error) {
         if (!(error instanceof SyntaxError)) throw error
-        return [key, text(nested, true, false, true)]
+        return [key, text(nested, true, false)]
       }
     }
     const args =
@@ -259,10 +249,7 @@ export function transformContent(
         "output"
       : args
     if (typeof nested === "string")
-      return [
-        key,
-        text(nested, false, isDumpSecretField(key), nestedToolData === true),
-      ]
+      return [key, text(nested, false, isDumpSecretField(key))]
     return [
       key,
       transformContent(

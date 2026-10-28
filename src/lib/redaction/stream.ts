@@ -1,6 +1,6 @@
+import { asRecord } from "~/lib/json-shape"
 import { RedactionError, type RedactionScope } from "~/lib/redaction/context"
 import { pendingTokenSuffix } from "~/lib/redaction/token"
-import { record } from "~/lib/redaction/wire"
 import { extractSignatureAlias } from "~/lib/thinking"
 
 type Packet = Record<string, unknown>
@@ -30,7 +30,6 @@ interface DeltaSpec {
   group: string
   emit: Emit
   json?: boolean
-  toolInput?: boolean
   thinking?: Channel["wire"]
   /** The channel ends in this frame, so nothing may stay held. */
   final?: boolean
@@ -172,7 +171,6 @@ class StreamRestorer {
     object[key] = this.scope.restoreText(
       combined.slice(0, combined.length - channel.tail.length),
       spec.json,
-      spec.toolInput ?? spec.json,
     )
     channel.emit = channel.tail ? spec.emit : undefined
     channel.wrapper = channel.tail ? this.wrapper : undefined
@@ -185,7 +183,7 @@ class StreamRestorer {
     if (!Array.isArray(packet.choices)) return
     const { choices: _choices, usage: _usage, ...meta } = packet
     for (const raw of packet.choices) {
-      const choice = record(raw)
+      const choice = asRecord(raw)
       if (!choice) continue
       const index = choice.index ?? 0
       const group = `chat:${index}`
@@ -196,7 +194,7 @@ class StreamRestorer {
           put((frame.choices as Array<{ delta: Packet }>)[0].delta, tail)
           return frame
         }
-      const change = record(choice.delta)
+      const change = asRecord(choice.delta)
       if (change) this.chatDelta(change, group, final, at)
       if (final) this.end((channel) => channel.group === group)
     }
@@ -238,7 +236,7 @@ class StreamRestorer {
     }
     this.chatParts(change, "content", group, final, at)
     this.chatParts(change, "reasoning_details", group, final, at)
-    const legacyCall = record(change.function_call)
+    const legacyCall = asRecord(change.function_call)
     if (legacyCall)
       this.delta(legacyCall, "arguments", {
         id: `${group}:function_call`,
@@ -250,8 +248,8 @@ class StreamRestorer {
     for (const rawCall of Array.isArray(change.tool_calls) ?
       change.tool_calls
     : []) {
-      const call = record(rawCall)
-      const fn = record(call?.function)
+      const call = asRecord(rawCall)
+      const fn = asRecord(call?.function)
       if (!call || !fn) continue
       const ref =
         call.index === undefined && call.id !== undefined ?
@@ -279,7 +277,7 @@ class StreamRestorer {
     const parts = change[field]
     if (!Array.isArray(parts)) return
     for (const [position, rawPart] of parts.entries()) {
-      const part = record(rawPart)
+      const part = asRecord(rawPart)
       if (!part) continue
       const thinking =
         field === "reasoning_details"
@@ -309,7 +307,7 @@ class StreamRestorer {
 
   private messages(packet: Packet, type: string): void {
     const group = `messages:${packet.index ?? 0}`
-    const block = record(packet.content_block)
+    const block = asRecord(packet.content_block)
     if (type === "content_block_start" && block) {
       for (const key of ["text", "thinking"]) {
         const channel = this.delta(block, key, {
@@ -327,7 +325,7 @@ class StreamRestorer {
         if (channel && key === "thinking") this.sign(channel, block.signature)
       }
     }
-    const change = record(packet.delta)
+    const change = asRecord(packet.delta)
     if (type === "content_block_delta" && change) {
       const { delta: _delta, ...meta } = packet
       for (const key of ["text", "thinking", "partial_json"])
@@ -357,9 +355,6 @@ class StreamRestorer {
         id,
         group: id,
         json: type.includes("arguments"),
-        toolInput:
-          type.includes("arguments")
-          || type === "response.custom_tool_call_input.delta",
         emit: (tail) => {
           const { logprobs: _logprobs, ...meta } = packet
           return { ...meta, delta: tail }
@@ -370,7 +365,7 @@ class StreamRestorer {
     }
     if (type.endsWith(".done")) {
       // An item's .done ends only that item (and part); other items may still be mid-placeholder.
-      const itemId = packet.item_id ?? record(packet.item)?.id
+      const itemId = packet.item_id ?? asRecord(packet.item)?.id
       const output = packet.output_index
       const part = packet.content_index ?? packet.summary_index
       const scoped = itemId !== undefined || output !== undefined
@@ -395,16 +390,16 @@ class StreamRestorer {
     if (!Array.isArray(packet.candidates)) return
     const { candidates: _candidates, usageMetadata: _usage, ...meta } = packet
     for (const raw of packet.candidates) {
-      const candidate = record(raw)
+      const candidate = asRecord(raw)
       if (!candidate) continue
       const index = candidate.index ?? 0
       const group = `gemini:${index}`
       const final = Boolean(candidate.finishReason)
-      const content = record(candidate.content)
+      const content = asRecord(candidate.content)
       const role = content?.role ?? "model"
       const parts = Array.isArray(content?.parts) ? content.parts : []
       for (const [position, rawPart] of parts.entries()) {
-        const part = record(rawPart)
+        const part = asRecord(rawPart)
         if (!part) continue
         const signature = part.thoughtSignature || part.thought_signature
         const sealed = Boolean(part.thought) && typeof signature === "string"
@@ -451,7 +446,7 @@ export async function* restoreRedactionStream(
 ): AsyncIterable<unknown> {
   const restorer = new StreamRestorer(scope, issuer)
   for await (const raw of stream) {
-    const wrapper = record(raw)
+    const wrapper = asRecord(raw)
     if (!wrapper)
       throw new RedactionError("Unsupported redaction stream frame", 502)
     if (wrapper.data === "[DONE]") {
@@ -462,7 +457,7 @@ export async function* restoreRedactionStream(
     let packet: Packet | undefined
     if (typeof wrapper.data === "string") {
       try {
-        packet = record(JSON.parse(wrapper.data))
+        packet = asRecord(JSON.parse(wrapper.data))
       } catch {
         throw new RedactionError(
           "Malformed upstream JSON frame under redaction",
