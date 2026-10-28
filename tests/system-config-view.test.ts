@@ -453,6 +453,11 @@ interface RedactionPreviewView {
     }
   >
   redactionStatsTotal: number
+  redactionTotalRequests: number
+  redactionLanes: {
+    clients: Array<{ id: string; name: string; count: number }>
+    upstreams: Array<{ id: string; name: string; count: number }>
+  }
   redactionStatsError: string
   redactionStatsLoading: boolean
   liveActive: boolean
@@ -735,6 +740,7 @@ test("recent diagnostics retain only metadata, aggregate unique values and ignor
     expect(path).toBe("/system-config/redaction-stats")
     return {
       limit: 100,
+      totalRequests: 42,
       entries: [
         {
           ...previewDiagnostics,
@@ -749,6 +755,7 @@ test("recent diagnostics retain only metadata, aggregate unique values and ignor
   })
   await view.loadRedactionStats()
   expect(view.redactionStats).toHaveLength(2)
+  expect(view.redactionTotalRequests).toBe(42)
   expect(view.redactionStatsTotal).toBe(4)
   expect(view.kindTotal("SECRET")).toBe(2)
   expect(JSON.stringify(view.redactionStats)).not.toContain("must not retain")
@@ -1068,9 +1075,24 @@ const capturedDetail = () => ({
   truncated: true,
 })
 
-test("route endpoints derive only from retained metadata, count request membership, support unknowns and intersecting filters", async () => {
+test("route lanes use server lifetime totals while filters still use retained metadata", async () => {
   const { view } = redactionView(async () => ({
     inspection: inspectionState(),
+    totalRequests: 250,
+    lanes: {
+      clients: [
+        { id: "Claude Code", name: "Claude Code", count: 120 },
+        { id: "Codex", name: "Codex", count: 90 },
+        // No retained entry names this client any more; its lifetime count
+        // must still reach the lane.
+        { id: "Retired client", name: "Retired client", count: 40 },
+      ],
+      upstreams: [
+        { id: upstream.id, name: upstream.name, count: 140 },
+        { id: "fallback", name: "fallback", count: 30 },
+        { id: "", name: "", count: 5 },
+      ],
+    },
     entries: [
       {
         ...capturedEntry(1),
@@ -1093,16 +1115,23 @@ test("route endpoints derive only from retained metadata, count request membersh
   }))
   expect(view.routeGroups("client")).toEqual([])
   await view.loadRedactionStats()
+  expect(view.redactionTotalRequests).toBe(250)
+  // The retained entries name this upstream twice, but the lane shows the
+  // lifetime count the server accumulated past the 100-record window.
   expect(
     view.routeGroups("upstream").find((item) => item.id === upstream.id)?.count,
-  ).toBe(2)
+  ).toBe(140)
   expect(
     view.routeGroups("upstream").find((item) => item.id === "fallback")?.count,
-  ).toBe(1)
+  ).toBe(30)
   expect(
     view.routeGroups("upstream").find((item) => item.id === "")?.count,
-  ).toBe(1)
-  expect(view.routeGroups("client")).toHaveLength(7)
+  ).toBe(5)
+  expect(
+    view.routeGroups("client").find((item) => item.id === "Retired client")
+      ?.count,
+  ).toBe(40)
+  expect(view.routeGroups("client")).toHaveLength(3)
   expect(JSON.stringify(view.redactionStats)).not.toContain("never keep")
   expect(JSON.stringify(view.redactionStats)).not.toContain("__SECRET_1__")
   view.filterRoute("upstream", upstream.id)

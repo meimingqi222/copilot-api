@@ -178,6 +178,11 @@
           class="text-[var(--apple-text-secondary)] flex items-center gap-1.5"
         >
           <span
+            class="font-mono whitespace-nowrap"
+            :title="t('redaction.routes.totalHint')"
+            x-text="t('redaction.routes.total', { count: redactionTotalRequests })"
+          ></span>
+          <span
             class="w-1.5 h-1.5 rounded-full bg-[var(--apple-green)] live-dot"
           ></span>
           <span x-text="t('redaction.routes.newActivity')"></span>

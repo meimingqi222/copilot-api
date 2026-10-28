@@ -66,7 +66,16 @@ export interface RedactionAttempt {
 }
 
 const LIMIT = 100
+// User agents are caller-controlled, so the lane maps need a ceiling. Past it,
+// unknown names are dropped rather than displacing counted lanes: rotating fake
+// names must not be able to evict a real client or upstream from the graph.
+const LANE_LIMIT = 200
 let sequence = 0
+// Every record ever created in this process, including those the recent
+// window has since evicted. The list stays bounded; the totals do not.
+let totalRequests = 0
+const clientTotals = new Map<string, RedactionLane>()
+const upstreamTotals = new Map<string, RedactionLane>()
 const recent: Array<RecentRedaction> = []
 export type RedactionRecordStatus =
   | "in_progress"
@@ -106,6 +115,13 @@ export interface RedactionUpstream {
   name: string
   protocol: string
   model: string
+}
+
+/** Lifetime request count for one client or upstream lane. */
+export interface RedactionLane {
+  id: string
+  name: string
+  count: number
 }
 
 interface InspectionMapping {
@@ -558,6 +574,38 @@ export function getRedactionInspection(id: number, reveal = false) {
   }
 }
 
+/**
+ * Counts one request in each distinct lane. A request that names the same
+ * client or upstream twice counts once, matching the lanes the page draws.
+ * Past the ceiling new names are ignored rather than displacing counted
+ * ones: user agents are caller-controlled, so a rotation of fake names must
+ * not be able to evict a real client from the graph.
+ */
+function countLanes(
+  totals: Map<string, RedactionLane>,
+  lanes: Array<{ id: string; name: string }>,
+): void {
+  const seen = new Set<string>()
+  for (const lane of lanes) {
+    const id = lane.id || ""
+    if (seen.has(id)) continue
+    seen.add(id)
+    const existing = totals.get(id)
+    if (existing) {
+      existing.count++
+      if (lane.name) existing.name = lane.name
+    } else if (totals.size < LANE_LIMIT) {
+      totals.set(id, { id, name: lane.name || id, count: 1 })
+    }
+  }
+}
+
+function laneTotals(totals: Map<string, RedactionLane>): Array<RedactionLane> {
+  return [...totals.values()]
+    .map((lane) => ({ ...lane }))
+    .sort((a, b) => b.count - a.count || a.id.localeCompare(b.id))
+}
+
 /** Lists contain only routing metadata and counters. Content requires a separate explicit read. */
 export function recordRedactionDiagnostics(
   value: RedactionDiagnostics,
@@ -571,6 +619,14 @@ export function recordRedactionDiagnostics(
   const timestamp = route.startedAt ?? Date.now()
   if (status !== "in_progress") appendRedactionHistory(value, route, timestamp)
   const id = ++sequence
+  totalRequests++
+  countLanes(clientTotals, [{ id: route.client, name: route.client }])
+  countLanes(
+    upstreamTotals,
+    route.upstreams.length ?
+      route.upstreams.map(({ id, name }) => ({ id, name }))
+    : [{ id: "", name: "" }],
+  )
   recent.unshift({
     ...structuredClone(value),
     id,
@@ -615,6 +671,11 @@ export function getRedactionDiagnostics() {
   const inspection = getRedactionInspectionState()
   return {
     limit: LIMIT,
+    totalRequests,
+    lanes: {
+      clients: laneTotals(clientTotals),
+      upstreams: laneTotals(upstreamTotals),
+    },
     inspection,
     entries: recent.map(({ captureId, ...entry }) => ({
       ...structuredClone(entry),

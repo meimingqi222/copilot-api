@@ -40,6 +40,21 @@ function redactionAttemptMetadata(attempt) {
   }
 }
 
+function redactionLanes(lanes) {
+  const side = (items) =>
+    (Array.isArray(items) ? items : [])
+      .filter((lane) => lane && typeof lane.id === "string")
+      .map((lane) => ({
+        id: lane.id,
+        name: typeof lane.name === "string" ? lane.name.slice(0, 160) : "",
+        count: typeof lane.count === "number" ? Math.max(0, lane.count) : 0,
+      }))
+  return {
+    clients: side(lanes?.clients),
+    upstreams: side(lanes?.upstreams),
+  }
+}
+
 // Animation state lives outside Alpine's reactive proxy: it holds DOM nodes
 // and is mutated every frame.
 const redactionFlow = {
@@ -235,6 +250,8 @@ function redactionView() {
     redactionStats: [],
     redactionStatsLoading: false,
     redactionStatsError: "",
+    redactionTotalRequests: 0,
+    redactionLanes: { clients: [], upstreams: [] },
     statsUpdatedAt: null,
     statsVersion: 0,
     statsController: null,
@@ -598,8 +615,12 @@ function redactionView() {
             .filter((entry) => entry.status !== "in_progress")
             .map((entry) => entry.id)
             .join(",")
+          const entries = Array.isArray(data.entries) ? data.entries : []
+          const total = Number(data.totalRequests)
+          this.redactionTotalRequests = Number.isFinite(total) ? total : 0
+          this.redactionLanes = redactionLanes(data.lanes)
           this.acceptInspection(data.inspection)
-          this.redactionStats = data.entries.slice(0, 100).map((entry) => ({
+          this.redactionStats = entries.map((entry) => ({
             id: entry.id,
             timestamp: entry.timestamp,
             status:
@@ -768,33 +789,12 @@ function redactionView() {
       })
     },
 
+    // Lifetime lanes come from the server: the recent window below evicts
+    // records, so counting them here would freeze every lane at the limit.
     routeGroups(side) {
-      const groups = new Map()
-      for (const entry of this.redactionStats) {
-        const endpoints =
-          side === "client" ? [{ id: entry.client, name: entry.client }]
-          : entry.upstreams.length ? entry.upstreams
-          : [{ id: "", name: "" }]
-        const seen = new Set()
-        for (const endpoint of endpoints) {
-          const id = endpoint.id || ""
-          if (seen.has(id)) continue
-          seen.add(id)
-          if (!groups.has(id))
-            groups.set(id, {
-              id,
-              name: endpoint.name || id,
-              count: 0,
-              values: 0,
-            })
-          const group = groups.get(id)
-          group.count++
-          group.values += entry.total || 0
-        }
-      }
-      return [...groups.values()].sort(
-        (a, b) => b.count - a.count || a.id.localeCompare(b.id),
-      )
+      return side === "client" ?
+          this.redactionLanes.clients
+        : this.redactionLanes.upstreams
     },
 
     // At most three lanes per side; the rest share one "others" lane so the
@@ -809,7 +809,6 @@ function redactionView() {
           id: REDACTION_MORE_LANE,
           name: I18n.t("redaction.routes.others", { count: rest.length }),
           count: rest.reduce((sum, item) => sum + item.count, 0),
-          values: rest.reduce((sum, item) => sum + item.values, 0),
           more: true,
         },
       ]

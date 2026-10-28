@@ -105,7 +105,9 @@ separately. History distinguishes scans from requests with replacements. New
 durable records use request start time; old on-disk dates remain unchanged and
 are disclosed. Topology labels count associated requests; opening history does
 not replay flow. Particles retain sampled geometry while static lanes redraw or
-weights change.
+weights change. Lane counts come from the server's lifetime lane maps, not from
+the 100-record window: deriving them from `redactionStats` froze every lane at
+the retention limit and silently undercounted a busy client or upstream.
 
 All three modes are selected explicitly. Masked mode does not fetch originals.
 Selecting comparison or mapping restoration fetches retained mapping values on

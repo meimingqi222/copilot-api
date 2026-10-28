@@ -192,6 +192,8 @@ const i18n = {
       "redaction.records.stale":
         "刷新失败；当前为上次成功获取的快照，数据可能已过时。",
       "redaction.routes.associations": "{count} 条关联请求",
+      "redaction.routes.total": "累计 {count} 条请求",
+      "redaction.routes.totalHint": "本次运行以来记录的请求数，重启后重新计数",
       "redaction.routes.activityHint":
         "最近请求关联示意 · 新路由活动触发粒子，非接收确认",
       "redaction.history.title": "历史汇总 · 近 {days} 天（按请求开始日）",
@@ -2015,7 +2017,7 @@ const i18n = {
       "redaction.history.days": "{days} 天",
       "redaction.history.values": "个替换值",
       "redaction.history.hint":
-        "按天保存在本机数据目录，保留 30 天，只记录数量、类型和路由，不记录原值。下方明细和流动图只看内存中最近 100 次请求。新记录按请求开始日归档；旧记录沿用原有归档日期。",
+        "按天保存在本机数据目录，保留 30 天，只记录数量、类型和路由，不记录原值。下方明细只保留内存中最近 100 次请求；关联图两端按本次运行累计计数，重启后重新开始。新记录按请求开始日归档；旧记录沿用原有归档日期。",
       "redaction.history.scanned": "扫描请求 / 有替换的请求",
       "redaction.history.scannedValue": "{scanned} / {replaced} 次",
       "redaction.history.warnedBlocked": "只警告 / 拦截",
@@ -2289,6 +2291,9 @@ const i18n = {
       "redaction.records.stale":
         "Refresh failed. Showing the last successful snapshot; data may be stale.",
       "redaction.routes.associations": "{count} associated requests",
+      "redaction.routes.total": "Total {count} requests",
+      "redaction.routes.totalHint":
+        "Requests recorded since this process started; resets on restart",
       "redaction.routes.activityHint":
         "Recent request associations · Particles indicate new routing activity, not receipt confirmation",
       "redaction.history.title":
@@ -4186,7 +4191,7 @@ const i18n = {
       "redaction.history.days": "{days}d",
       "redaction.history.values": "values masked",
       "redaction.history.hint":
-        "Stored per day in the local data directory for 30 days; only counts, kinds and routes are kept, never original values. The list and flow below use the latest 100 requests in memory. New records are filed by request start date; older records keep their original date.",
+        "Stored per day in the local data directory for 30 days; only counts, kinds and routes are kept, never original values. The list below holds the latest 100 requests in memory; the graph's lanes count every request since this process started and reset on restart. New records are filed by request start date; older records keep their original date.",
       "redaction.history.scanned": "Requests scanned / with replacements",
       "redaction.history.scannedValue": "{scanned} / {replaced}",
       "redaction.history.warnedBlocked": "Warned / blocked",

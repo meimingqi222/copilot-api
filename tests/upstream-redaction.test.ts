@@ -358,6 +358,7 @@ test("recent diagnostics count unique values, finish streams once and retain onl
     }),
   ).rejects.toThrow("synthetic failure")
   expect(getRedactionDiagnostics().entries[0].id).toBe(first.id + 2)
+  const before = getRedactionDiagnostics()
   for (let i = 0; i < 101; i++)
     await runRedactedCall({ text }, undefined, async () => ({
       response: { text: "ok" },
@@ -365,6 +366,21 @@ test("recent diagnostics count unique values, finish streams once and retain onl
   const history = getRedactionDiagnostics()
   expect(history.limit).toBe(100)
   expect(history.entries).toHaveLength(100)
+  expect(history.totalRequests - before.totalRequests).toBe(101)
+  // Lane totals outlive the recent window, so a lane never freezes at 100.
+  const laneDelta = (
+    lanes: typeof history.lanes.clients,
+    previous: typeof history.lanes.clients,
+    id: string,
+  ) =>
+    (lanes.find((lane) => lane.id === id)?.count ?? 0)
+    - (previous.find((lane) => lane.id === id)?.count ?? 0)
+  expect(
+    laneDelta(history.lanes.clients, before.lanes.clients, "Unknown client"),
+  ).toBe(101)
+  expect(laneDelta(history.lanes.upstreams, before.lanes.upstreams, "")).toBe(
+    101,
+  )
   expect(history.entries[0].id - history.entries[99].id).toBe(99)
   expect(Object.keys(history.entries[0]).sort()).toEqual(
     [
