@@ -20,7 +20,8 @@ import {
   setConnectionQuotaState,
 } from "~/lib/provider-connections"
 import { persistProviderConnections } from "~/lib/provider-connections/state"
-import { clearAccountRateLimitState } from "~/lib/rate-limit"
+import { liftRestAfterQuotaRecovery } from "~/lib/quota/recovery"
+import { clearAccountPacingState } from "~/lib/rate-limit"
 import { connectionFetchInit, getHeader } from "~/services/protocols/shared"
 
 import {
@@ -355,7 +356,8 @@ export async function refreshCodebuddyQuota(
   const exhausted = remain <= 0 && packs > 0
   setConnectionQuotaState(connection, exhausted ? "exhausted" : "available")
   if (!exhausted) {
-    clearAccountRateLimitState(connection.id)
+    clearAccountPacingState(connection.id)
+    liftRestAfterQuotaRecovery(connection)
   }
   await persistProviderConnections()
   return snapshot

@@ -23,12 +23,13 @@ import {
   setConnectionQuotaState,
 } from "~/lib/provider-connections"
 import { refreshManagedQuota } from "~/lib/quota/refresh"
+import { liftRestAfterQuotaRecovery } from "~/lib/quota/recovery"
 import { autoResetExpiringCodexQuota } from "~/lib/quota/codex-reset"
 import { runAccountWarmups } from "~/lib/quota/warmup"
 import { initializeProviderRegistry } from "~/services/providers"
 import { runZcodeClaimRound } from "~/services/zcode/claim"
 import { fetchCopilotQuota } from "~/lib/quota/fetchers/copilot"
-import { clearAccountRateLimitState } from "~/lib/rate-limit"
+import { clearAccountPacingState } from "~/lib/rate-limit"
 import { emitStateChange } from "~/lib/state-events"
 import { everyMs, runJob } from "~/lib/jobs"
 import { globalTimers } from "~/lib/timer-registry"
@@ -81,7 +82,9 @@ export async function refreshQuotaForConnection(
   }
   if (!exhausted) {
     // 配额恢复时同步清理内存限流器的残留冷却，否则路由仍会跳过该账号。
-    clearAccountRateLimitState(connection.id)
+    // credential 上持久化的 cooldownUntil 和 rest 注册表同样要解除。
+    clearAccountPacingState(connection.id)
+    liftRestAfterQuotaRecovery(connection)
   }
   if (!skipSave) {
     await saveProviderConnections(listProviderConnections())

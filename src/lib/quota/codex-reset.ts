@@ -5,11 +5,8 @@ import { logger } from "~/lib/logger"
 import {
   getConnectionProvider,
   getConnectionQuotaInfo,
-  getConnectionQuotaState,
   getMutableProviderConnection,
   persistProviderConnections,
-  setConnectionCooldownUntil,
-  setConnectionRateLimitInfo,
 } from "~/lib/provider-connections"
 import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import {
@@ -17,7 +14,6 @@ import {
   consumeCodexRateLimitResetCredit,
 } from "~/lib/quota/codex"
 import { fetchCodexQuota } from "~/lib/quota/fetchers/codex"
-import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { getSystemSettings } from "~/lib/system-config"
 
 type CodexQuotaMeta = ReturnType<typeof buildCodexQuotaMeta>
@@ -141,12 +137,8 @@ export async function resetCodexQuotaForConnection(
       await persistProviderConnections()
     }
     const snapshot = await fetchCodexQuota(connection, signal)
+    // applyOAuthQuotaSnapshot 报告配额可用时会解除本地冷却与 rest。
     applyOAuthQuotaSnapshot(connection, snapshot)
-    if (getConnectionQuotaState(connection) !== "exhausted") {
-      setConnectionCooldownUntil(connection, undefined)
-      setConnectionRateLimitInfo(connection, undefined, undefined)
-      clearAccountRateLimitState(connection.id)
-    }
     return snapshot
   } finally {
     resetting.delete(connection.id)

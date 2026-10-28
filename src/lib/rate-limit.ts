@@ -71,6 +71,20 @@ export function clearAccountRateLimitState(accountId: string): void {
   clearModelCooldownsForConnection(accountId)
 }
 
+/**
+ * Drop only the account-level pacing state: the 429 counter, the arrival
+ * clock and the account cooldown.
+ *
+ * A quota read that says the account has capacity again proves nothing about
+ * a `(credential, model)` rate limit — CodeBuddy's 6004 cools down one model
+ * while the rest of the account works. Quota recovery therefore clears pacing
+ * with this narrower call; deleting the account or importing a duplicate still
+ * uses `clearAccountRateLimitState`, which drops model cooldowns too.
+ */
+export function clearAccountPacingState(accountId: string): void {
+  accountLimiters.delete(accountId)
+}
+
 export class RateLimitQueueFullError extends Error {
   constructor() {
     super("Rate limiter queue is full")

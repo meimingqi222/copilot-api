@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 
-import { liftRestAfterQuotaRecovery } from "~/lib/quota/refresh"
+import { liftRestAfterQuotaRecovery } from "~/lib/quota/recovery"
 import {
   clearRestRegistryForTest,
   clearRestsForCredential,

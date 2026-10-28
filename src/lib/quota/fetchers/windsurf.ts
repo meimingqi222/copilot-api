@@ -11,7 +11,8 @@ import {
   setConnectionQuotaState,
 } from "~/lib/provider-connections"
 import { DEFAULTS } from "~/lib/provider-connections/types"
-import { clearAccountRateLimitState } from "~/lib/rate-limit"
+import { liftRestAfterQuotaRecovery } from "~/lib/quota/recovery"
+import { clearAccountPacingState } from "~/lib/rate-limit"
 import { normalizeWindsurfBaseUrl } from "~/services/windsurf/base-url"
 import {
   buildWindsurfClientMetadata,
@@ -264,7 +265,8 @@ export async function refreshWindsurfQuota(
       )
     }
   } else {
-    clearAccountRateLimitState(connection.id)
+    clearAccountPacingState(connection.id)
+    liftRestAfterQuotaRecovery(connection)
   }
   return snapshot
 }

@@ -6,8 +6,14 @@ import {
   ensureConnectionMetadata,
 } from "~/lib/provider-connections"
 import {
+  isModelCoolingDown,
+  recordModelCooldown,
+  resetModelCooldownsForTest,
+} from "~/lib/model-cooldown"
+import {
   fetchCodebuddyQuota,
   parseCodebuddyResourceData,
+  refreshCodebuddyQuota,
   summarizeCodebuddyPackage,
 } from "~/services/codebuddy/quota"
 import { initializeProviderRegistry } from "~/services/providers"
@@ -17,6 +23,7 @@ const originalFetch = globalThis.fetch
 
 afterEach(() => {
   globalThis.fetch = originalFetch
+  resetModelCooldownsForTest()
   __resetProviderConnectionsForTest()
 })
 
@@ -315,4 +322,54 @@ test("quota transport failure identifies the configured proxy without leaking it
   expect(message).not.toContain("private-user")
   expect(message).not.toContain("private-password")
   expect(connection.credentials[0].status).toBe("ready")
+})
+
+describe("codebuddy quota recovery", () => {
+  test("配额刷新报告可用时保留模型级冷却（6004 不被账号级恢复误清）", async () => {
+    __resetProviderConnectionsForTest()
+    const connection = await createConnection({
+      name: "codebuddy-quota-cooldown",
+      protocol: "codebuddy-native",
+      baseUrl: "https://www.workbuddy.ai/v2",
+      headers: { "X-Domain": "www.workbuddy.ai" },
+      credentials: [
+        { id: "cb-cooldown-cred", value: "access-token", authMode: "bearer" },
+      ],
+      models: [],
+    })
+    ensureConnectionMetadata(connection).provider = "codebuddy"
+    const credential = connection.credentials[0]
+    recordModelCooldown({
+      credentialId: credential.id,
+      connectionId: connection.id,
+      model: "gpt-5",
+      untilMs: Date.now() + 3 * 60 * 60_000,
+      reason: "upstream 6004",
+    })
+
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            code: 0,
+            data: resourceData(
+              [
+                {
+                  CycleCapacitySize: 1000,
+                  CycleCapacityRemain: 800,
+                  CycleCapacityUsed: 200,
+                },
+              ],
+              1000,
+            ),
+          }),
+          { status: 200 },
+        ),
+      ),
+    ) as unknown as typeof fetch
+
+    await refreshCodebuddyQuota(connection)
+
+    expect(isModelCoolingDown(credential.id, "gpt-5")).toBe(true)
+  })
 })

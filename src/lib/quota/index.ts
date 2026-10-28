@@ -8,7 +8,8 @@ import {
   setConnectionQuotaInfo,
   setConnectionQuotaState,
 } from "~/lib/provider-connections"
-import { clearAccountRateLimitState } from "~/lib/rate-limit"
+import { liftRestAfterQuotaRecovery } from "~/lib/quota/recovery"
+import { clearAccountPacingState } from "~/lib/rate-limit"
 
 const PERCENTAGE_QUOTA_EXHAUSTION_THRESHOLD = 0
 const COUNT_QUOTA_EXHAUSTION_THRESHOLD = 5
@@ -79,7 +80,9 @@ export function applyOAuthQuotaSnapshot(
   if (!exhausted) {
     // 配额恢复时同步清理内存限流器的残留冷却，否则即使 credential 已
     // 恢复为 ready，getRemainingCooldownSeconds 仍会报告旧的 24h 冷却，
-    // 路由照样跳过该账号。
-    clearAccountRateLimitState(connection.id)
+    // 路由照样跳过该账号。credential 上持久化的 cooldownUntil 和 rest
+    // 注册表由 liftRestAfterQuotaRecovery 一并解除。
+    clearAccountPacingState(connection.id)
+    liftRestAfterQuotaRecovery(connection)
   }
 }

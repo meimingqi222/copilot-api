@@ -6,10 +6,21 @@ import { currentLogContext } from "~/lib/log-context"
 import {
   __resetProviderConnectionsForTest,
   createConnection,
+  getConnectionRoutability,
+  markCredentialCooldown,
   type ProviderConnection,
 } from "~/lib/provider-connections"
 import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import { refreshManagedQuota } from "~/lib/quota/refresh"
+import {
+  clearRestRegistryForTest,
+  recordRest,
+  restInfoFor,
+} from "~/lib/route-target/rest-registry"
+import {
+  reportUpstreamRateLimitMs,
+  resetAdaptiveRateLimiterForTest,
+} from "~/lib/rate-limit"
 import { refreshAllQuotas } from "~/lib/quota/scheduler"
 import { routeEvidenceFor } from "~/lib/route-target/evidence"
 import { initializeProviderRegistry } from "~/services/providers"
@@ -26,6 +37,8 @@ let fail = false
 
 beforeEach(() => {
   __resetProviderConnectionsForTest()
+  clearRestRegistryForTest()
+  resetAdaptiveRateLimiterForTest()
   reads = 0
   fail = false
   for (const original of [originalCodex, originalClaude]) {
@@ -232,4 +245,32 @@ test("failed refresh keeps the last snapshot and does not retry every scheduler 
   expect(connection.credentials[0]?.quota).toBe(previous)
   await refreshManagedQuota(connection, { now: now + 60_000 })
   expect(reads).toBe(2)
+})
+
+test("配额恢复立即解除 429 留下的持久冷却和 rest（Codex 5 小时窗口）", async () => {
+  const connection = await account()
+  const credential = connection.credentials[0]
+  const fourHours = 4 * 60 * 60 * 1000
+  await reportUpstreamRateLimitMs(connection.id, fourHours)
+  markCredentialCooldown(credential, {
+    retryAfterMs: fourHours,
+    reason: "upstream 429",
+  })
+  recordRest({
+    credentialId: credential.id,
+    credentialCreatedAt: credential.createdAt,
+    reason: "rate",
+    by: "retry-after",
+    untilMs: Date.now() + fourHours,
+  })
+  expect(getConnectionRoutability(connection).routable).toBe(false)
+
+  await refreshAllQuotas()
+
+  expect(getConnectionRoutability(connection)).toEqual({
+    routable: true,
+    reason: "available",
+    retryAfterSeconds: 0,
+  })
+  expect(restInfoFor(credential.id)).toBeUndefined()
 })
