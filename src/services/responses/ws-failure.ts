@@ -30,6 +30,7 @@
 
 import { HTTPError, LocalConcurrencyLimitError } from "~/lib/error"
 import { classifyUpstreamError } from "~/lib/provider-connections"
+import { readUsageLimitRefusal } from "~/lib/reset-hint"
 import { isAbortLikeError } from "~/services/responses/upstream-ws"
 
 type WsFailureScope =
@@ -67,48 +68,17 @@ const CONNECTION_LIMIT_RE = /websocket_connection_limit_reached/i
 const PREVIOUS_RESPONSE_NOT_FOUND_RE =
   /previous_response_not_found|previous response with id|invalid `previous_response_id`/i
 
-interface WsStreamErrorPayload {
-  type?: unknown
-  code?: unknown
-  resets_at?: unknown
-  resets_in_seconds?: unknown
-}
-
 /**
  * Detects a quota-exhaustion WS error frame whose error payload lives under
  * `response.error` (a `response.failed` frame) or the top-level `error` (an
- * `error` frame). Mirrors `detectResponsesStreamError`'s payload extraction so
- * a `response.failed(usage_limit_reached)` turn is recognized as quota rather
- * than a plain 400 bad request. Returns the retry hint (ms) when present.
+ * `error` frame). Returns the retry hint (ms) when present.
  */
 function detectStreamQuota(body: string): { retryAfterMs?: number } | null {
-  let parsed: {
-    type?: unknown
-    error?: WsStreamErrorPayload
-    response?: { error?: WsStreamErrorPayload }
-  }
-  try {
-    parsed = JSON.parse(body) as typeof parsed
-  } catch {
-    return null
-  }
-  const payload = parsed.response?.error ?? parsed.error
-  const type = payload?.type ?? parsed.type
-  const code = payload?.code
-  if (type !== "usage_limit_reached" && code !== "AccountQuotaExceeded") {
-    return null
-  }
-
-  const resetsAt = payload?.resets_at
-  if (typeof resetsAt === "number" && resetsAt > 0) {
-    const diff = resetsAt * 1000 - Date.now()
-    if (diff > 0) return { retryAfterMs: diff }
-  }
-  const resetsInSeconds = payload?.resets_in_seconds
-  if (typeof resetsInSeconds === "number" && resetsInSeconds > 0) {
-    return { retryAfterMs: resetsInSeconds * 1000 }
-  }
-  return {}
+  const refusal = readUsageLimitRefusal(body)
+  if (!refusal) return null
+  return refusal.resetAtMs === undefined ?
+      {}
+    : { retryAfterMs: Math.max(0, refusal.resetAtMs - Date.now()) }
 }
 
 /**

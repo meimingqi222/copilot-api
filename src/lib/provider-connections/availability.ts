@@ -10,6 +10,7 @@
 import { createLogger } from "~/lib/logger"
 import { isCodebuddyModelFree } from "~/lib/codebuddy-model-pricing"
 import { getRemainingCooldownSeconds } from "~/lib/rate-limit"
+import { parseResetAtFromBody, readUsageLimitRefusal } from "~/lib/reset-hint"
 import { parseRetryAfterMs } from "~/lib/retry-after"
 import { isResting } from "~/lib/route-target/resting"
 import { usageLimitResetMs } from "~/lib/usage-limit"
@@ -339,181 +340,15 @@ type UpstreamErrorKind =
   | "network_error"
   | "unknown"
 
-/**
- * 解析自然语言/半结构化消息体中的重试时间。
- *
- * 支持:
- * - "resets in 57m"
- * - "resets in 4h 6m"
- * - "resets in 3h0m0s"
- * - "resets in 1 day"
- * - "5-hour Clinepass limit" (fallback 5h)
- * - "reset at 2026-07-16 20:27:09 +0800 CST"
- */
-function parseRetryAfterFromJson(body: string): number | undefined {
-  try {
-    const parsed = JSON.parse(body) as Record<string, unknown>
-    const errorObj =
-      typeof parsed.error === "object" && parsed.error !== null ?
-        (parsed.error as Record<string, unknown>)
-      : undefined
-
-    const topLevelResetAt =
-      parsed.resets_at
-      ?? parsed.resetsAt
-      ?? errorObj?.resets_at
-      ?? errorObj?.resetsAt
-    if (typeof topLevelResetAt === "number" && topLevelResetAt > 0) {
-      const resetMs = topLevelResetAt * 1000
-      const diff = resetMs - Date.now()
-      if (diff > 0) {
-        return Math.min(diff, DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS)
-      }
-    }
-
-    const topLevelResetInSeconds =
-      parsed.resets_in_seconds
-      ?? parsed.resetsInSeconds
-      ?? errorObj?.resets_in_seconds
-      ?? errorObj?.resetsInSeconds
-    if (
-      typeof topLevelResetInSeconds === "number"
-      && topLevelResetInSeconds > 0
-    ) {
-      return Math.min(
-        topLevelResetInSeconds * 1000,
-        DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
-      )
-    }
-
-    const retryAfter =
-      parsed.retry_after
-      ?? parsed.retryAfter
-      ?? errorObj?.retry_after
-      ?? errorObj?.retryAfter
-    if (typeof retryAfter === "number") {
-      return retryAfter > 0 ? retryAfter * 1000 : undefined
-    }
-    if (typeof retryAfter === "string") {
-      const headerMs = parseRetryAfterMs(
-        retryAfter,
-        DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
-      )
-      if (headerMs && headerMs > 0) return headerMs
-    }
-
-    const retryAfterMsField =
-      parsed.retry_after_ms
-      ?? parsed.retryAfterMs
-      ?? errorObj?.retry_after_ms
-      ?? errorObj?.retryAfterMs
-    if (typeof retryAfterMsField === "number" && retryAfterMsField > 0) {
-      return Math.min(
-        retryAfterMsField,
-        DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
-      )
-    }
-  } catch {
-    // not JSON — fall through to natural-language parsing
-  }
-  return undefined
-}
-
 function parseRetryAfterFromBody(body?: string): number | undefined {
   if (!body) return undefined
-
-  const jsonMs = parseRetryAfterFromJson(body)
-  if (jsonMs) return jsonMs
-
-  const text = body.toLowerCase()
-
-  // "resets in <duration>" — Clinepass / opencode-go 等常见表述
-  const resetInMatch = text.match(
-    /resets?\s+in\s+((?:\d+(?:\.\d+)?\s*[a-z-]+\s*)+)(?:,|\.|please|$)/i,
+  const now = Date.now()
+  const at = parseResetAtFromBody(body, now)
+  if (at === undefined) return undefined
+  return Math.min(
+    Math.max(at - now, 0),
+    DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
   )
-  if (resetInMatch) {
-    const ms = parseDuration(resetInMatch[1])
-    if (ms && ms > 0) {
-      return Math.min(ms, DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS)
-    }
-  }
-
-  // "reached your 5-hour Clinepass limit" / "5 hour limit" — fallback
-  const hourLimitMatch = text.match(/(\d+(?:\.\d+)?)(?:\s*-\s*|\s+)hour\b/i)
-  if (hourLimitMatch) {
-    const hours = Number.parseFloat(hourLimitMatch[1])
-    if (hours > 0) {
-      return Math.min(
-        hours * 60 * 60 * 1000,
-        DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
-      )
-    }
-  }
-
-  // "reset at 2026-07-16 20:27:09 +0800 CST"
-  // "将在 2026-09-17 09:24:40 UTC+8 重置" (CodeBuddy 6004 频率限制)
-  const resetAtMatch = body.match(
-    /(?:reset at|将在)\s*(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?)\s*(?:UTC\s*)?([+-]\s*\d{1,2}(?::?\d{2})?)?/i,
-  )
-  if (resetAtMatch) {
-    const datePart = resetAtMatch[1].replaceAll(" ", "T")
-    const resetTime = Date.parse(
-      `${datePart}${normalizeUtcOffset(resetAtMatch[2])}`,
-    )
-    if (!Number.isNaN(resetTime)) {
-      const diff = resetTime - Date.now()
-      if (diff > 0) {
-        return Math.min(diff, DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS)
-      }
-    }
-  }
-
-  return undefined
-}
-
-/**
- * 规范化 "UTC+8" / "+8" / "+0800" / "+08:00" 等时区偏移写法为 "+08:00"。
- * 缺失或无法识别时返回 "Z"（与原有逻辑一致：无偏移按 UTC 解析）。
- */
-function normalizeUtcOffset(raw: string | undefined): string {
-  if (!raw) return "Z"
-  const compact = raw.replaceAll(/\s/g, "")
-  const parsed = compact.match(/^([+-])(\d{1,2})(?::?(\d{2}))?$/)
-  if (!parsed) return "Z"
-  return `${parsed[1]}${parsed[2].padStart(2, "0")}:${parsed[3] ?? "00"}`
-}
-
-function parseDuration(input: string): number | undefined {
-  const normalized = input
-    .toLowerCase()
-    .replaceAll(/(\d)([a-z])/g, "$1 $2")
-    .replaceAll(/([a-z])(\d)/g, "$1 $2")
-    .replaceAll(/(\d)-([a-z])/g, "$1 $2")
-
-  const regex =
-    /(\d+(?:\.\d+)?)\s*(milliseconds?|seconds?|minutes?|mins?|hours?|hrs?|days?|ms|[smhd])\b/gi
-  let totalMs = 0
-  let match: RegExpExecArray | null
-  while ((match = regex.exec(normalized)) !== null) {
-    const value = Number.parseFloat(match[1])
-    const unit = match[2].toLowerCase()
-    if (Number.isNaN(value) || value < 0) continue
-    if (unit === "ms" || unit.startsWith("milli")) totalMs += value
-    else if (unit === "s" || unit.startsWith("sec")) totalMs += value * 1000
-    else if (unit === "m" || unit.startsWith("min")) {
-      totalMs += value * 60 * 1000
-    } else if (
-      unit === "h"
-      || unit.startsWith("hr")
-      || unit.startsWith("hour")
-    ) {
-      totalMs += value * 60 * 60 * 1000
-    } else if (unit === "d" || unit.startsWith("day")) {
-      totalMs += value * 24 * 60 * 60 * 1000
-    }
-  }
-
-  return totalMs > 0 ? totalMs : undefined
 }
 
 function retryAfterMsFromHeaders(input: {
@@ -735,21 +570,7 @@ export function isOpenCodeFreeTierBlock(body: string): boolean {
  * Mirrors CPA's isCodexUsageLimitError — checks error.type and top-level type.
  */
 export function isCodexUsageLimitError(body: string): boolean {
-  if (!body) return false
-  try {
-    const parsed = JSON.parse(body) as Record<string, unknown>
-    const errorObj = parsed.error as Record<string, unknown> | undefined
-    const errorType = errorObj?.type
-    const errorCode = errorObj?.code
-    const topLevelType = parsed.type
-    return (
-      errorType === "usage_limit_reached"
-      || errorCode === "AccountQuotaExceeded"
-      || topLevelType === "usage_limit_reached"
-    )
-  } catch {
-    return false
-  }
+  return readUsageLimitRefusal(body) !== undefined
 }
 
 /**

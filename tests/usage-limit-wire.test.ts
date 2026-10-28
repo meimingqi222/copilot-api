@@ -80,6 +80,18 @@ describe("retryableUsageLimit", () => {
     expect(result?.retryAfterMs).toBe(90_000)
   })
 
+  test("reads a millisecond resets_at without treating it as seconds", () => {
+    const now = 1_700_000_000_000
+    const result = retryableUsageLimit({
+      status: 429,
+      body: JSON.stringify({
+        error: { type: "usage_limit_reached", resets_at: now + 90_000 },
+      }),
+      now,
+    })
+    expect(result?.retryAfterMs).toBe(90_000)
+  })
+
   test("reads a streamed response.error payload", () => {
     const result = retryableUsageLimit({
       status: 429,

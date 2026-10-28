@@ -511,6 +511,19 @@ describe("parseCodexUsageLimitRetryAfter", () => {
     expect(result ?? 0).toBeLessThanOrEqual(3_600_000)
   })
 
+  test("parses a millisecond resets_at without treating it as seconds", () => {
+    const body = JSON.stringify({
+      error: {
+        type: "usage_limit_reached",
+        resets_at: Date.now() + 3_600_000,
+      },
+    })
+    const result = parseCodexUsageLimitRetryAfter(body)
+    expect(result).toBeDefined()
+    expect(result ?? 0).toBeGreaterThan(3_500_000)
+    expect(result ?? 0).toBeLessThanOrEqual(3_600_000)
+  })
+
   test("parses resets_in_seconds", () => {
     const body = JSON.stringify({
       error: {

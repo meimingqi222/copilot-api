@@ -14,6 +14,7 @@ import type {
   ApiCredential,
   CredentialStatus,
 } from "~/lib/provider-connections"
+import { parseResetAtFromBody } from "~/lib/reset-hint"
 
 export type RestReason =
   | "credit" // out of credit/balance: until topped up
@@ -93,8 +94,7 @@ const PLANNED_WORDS = new RegExp(
   String.raw`quota|usage.?limit|hit your .*limit|limit.{0,24}resets|per.?(day|week|month)|daily|weekly|monthly|额度|用量|套餐`,
   "i",
 )
-/** Claude Code's "usage limit reached|<unix when it resets>". */
-const RESETS_WORDS = new RegExp(String.raw`limit reached\|(\d{10})\b`, "i")
+/** Claude Code's "usage limit reached|<unix when it resets>" is parsed by reset-hint. */
 /** The vendor wants the account verified before it is served again. */
 const VERIFY_WORDS = new RegExp(
   String.raw`VALIDATION_REQUIRED|verification required|please verify|verify your (account|identity)|unverified|需要验证|验证你的?账户`,
@@ -128,32 +128,7 @@ function resetAtMsFromBody(
   body: string | undefined | null,
   now: number,
 ): number {
-  if (!body) return 0
-  const words = RESETS_WORDS.exec(body)
-  if (words?.[1]) {
-    const at = Number.parseInt(words[1], 10) * 1000
-    if (at > now) return at
-  }
-  try {
-    const parsed = JSON.parse(body) as Record<string, unknown>
-    const error = parsed.error as Record<string, unknown> | undefined
-    const at =
-      parsed.resets_at ?? parsed.resetsAt ?? error?.resets_at ?? error?.resetsAt
-    if (typeof at === "number" && at > 0) {
-      const ms = at < 1e12 ? at * 1000 : at
-      if (ms > now) return ms
-    }
-    const inSeconds =
-      parsed.resets_in_seconds
-      ?? parsed.resetsInSeconds
-      ?? error?.resets_in_seconds
-      ?? error?.resetsInSeconds
-    if (typeof inSeconds === "number" && inSeconds > 0)
-      return now + inSeconds * 1000
-  } catch {
-    // not JSON
-  }
-  return 0
+  return parseResetAtFromBody(body, now) ?? 0
 }
 
 /** Retry-After hint (ms) from headers, if any. */

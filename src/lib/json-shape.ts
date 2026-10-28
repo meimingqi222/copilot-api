@@ -22,6 +22,11 @@ export function asNumber(value: unknown): number | undefined {
   return undefined
 }
 
+/** 非 null 对象（数组也算，供“任意嵌套对象”扫描使用）。 */
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
 /** `asRecord`，缺失时返回空记录：调用方要直接读字段时用。 */
 export function asRecordOrEmpty(value: unknown): Record<string, unknown> {
   return asRecord(value) ?? {}

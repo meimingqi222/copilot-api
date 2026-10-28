@@ -117,6 +117,20 @@ describe("restDecisionFor durations", () => {
     expect(rest.restMs).toBe(8 * 24 * 3_600_000)
   })
 
+  test("quota reads a millisecond resets_at and caps at 8 days", () => {
+    const resetAt = NOW + 30 * 24 * 3_600_000 // 30 days out, milliseconds
+    const rest = restDecisionFor({
+      status: 429,
+      body: JSON.stringify({
+        error: { type: "usage_limit_reached", resets_at: resetAt },
+      }),
+      fallbackMs: 60_000,
+      now: NOW,
+    })
+    expect(rest.reason).toBe("quota")
+    expect(rest.restMs).toBe(8 * 24 * 3_600_000)
+  })
+
   test("quota with no word of when floors at 15 minutes", () => {
     const rest = restDecisionFor({
       status: 429,

@@ -48,6 +48,41 @@ describe("classifyWsFailure — credential scope", () => {
     expect(result.kind).toBe("quota")
   })
 
+  test("a millisecond resets_at is not read as seconds", () => {
+    const body = JSON.stringify({
+      type: "response.failed",
+      response: {
+        error: {
+          type: "usage_limit_reached",
+          resets_at: Date.now() + 60_000,
+        },
+      },
+    })
+    const result = classifyWsFailure(wsFrameError(body, 400))
+    expect(result.scope).toBe("credential")
+    expect(result.kind).toBe("quota")
+    expect(result.retryAfterMs).toBeGreaterThan(55_000)
+    expect(result.retryAfterMs).toBeLessThanOrEqual(60_000)
+  })
+
+  test("a nested response.error refusal wins over a generic outer error", () => {
+    const body = JSON.stringify({
+      type: "response.failed",
+      error: { type: "server_error", message: "outer" },
+      response: {
+        error: {
+          type: "usage_limit_reached",
+          resets_at: Math.floor((Date.now() + 60_000) / 1000),
+        },
+      },
+    })
+    const result = classifyWsFailure(wsFrameError(body, 400))
+    expect(result.scope).toBe("credential")
+    expect(result.kind).toBe("quota")
+    expect(result.retryAfterMs).toBeGreaterThan(55_000)
+    expect(result.retryAfterMs).toBeLessThanOrEqual(60_000)
+  })
+
   test("402 payment required → quota", () => {
     const result = classifyWsFailure(wsFrameError("payment required", 402))
     expect(result.scope).toBe("credential")

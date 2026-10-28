@@ -29,6 +29,12 @@ exhaustion as `rate_limit_exceeded`, never `insufficient_quota` or
 `billing_error`. A refusal with no reset instant keeps its original form rather
 than inventing a deadline.
 
+Reset parsing has one implementation: `src/lib/reset-hint.ts` reads
+`resets_at` as seconds or milliseconds, `resets_in_seconds`, `retry_after`
+(seconds or HTTP-date), `retry_after_ms`, and the vendor's words. The
+usage-limit wire, WebSocket failure classifier, availability classifier and
+rest-reason all call it; each caller keeps its own local cap.
+
 Local wait: a rate or quota rest follows the probe ladder (10, 30, 60, 120
 minutes) and is always bounded by the vendor's own window
 (`src/lib/rate-limit.ts`, `src/lib/route-target/rest-registry.ts`). A failed
@@ -71,6 +77,10 @@ a fabricated deadline.
 ## Verification
 
 - `tests/usage-limit-wire.test.ts::retryableUsageLimit`
+- `tests/usage-limit-wire.test.ts::reads a millisecond resets_at without treating it as seconds`
+- `tests/ws-failure.test.ts::a millisecond resets_at is not read as seconds`
+- `tests/provider-connections.test.ts::parses a millisecond resets_at without treating it as seconds`
+- `tests/rest-reason.test.ts::quota reads a millisecond resets_at and caps at 8 days`
 - `tests/rest-probe-cap.test.ts::限流休息按复核阶梯封顶`
 - `tests/dispatch.test.ts`
 - `tests/quota-admission-wire.test.ts`
@@ -81,3 +91,8 @@ and after an early reset routing still answering the old four-hour window. The
 wire suites now pin 429 + the vendor's reset instant, the probe-cap suite pins
 the ten-minute first probe, and the dispatch test pins a 429 without upstream
 advice carrying our rest as `Retry-After`.
+
+Proved: before the shared reset parser, a WS `usage_limit_reached` frame with a
+millisecond `resets_at` returned `retryAfterMs = 1,791,366,065,361,473` (read as
+seconds); the new millisecond tests fail on the old parser and pass with
+`src/lib/reset-hint.ts`.

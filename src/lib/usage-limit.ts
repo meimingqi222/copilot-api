@@ -12,73 +12,12 @@
  * 按本地猜出来的 24 小时恢复窗口挂住。
  */
 
+import { readUsageLimitRefusal } from "~/lib/reset-hint"
+
 /** 改写后的错误体最长可信多久(周/月窗口留足,再长就当没说)。 */
 const MAX_RESET_HORIZON_MS = 8 * 24 * 60 * 60 * 1000
 /** `Retry-After` 至少一秒,免得客户端 0 秒重试打转。 */
 const MIN_RETRY_AFTER_MS = 1000
-
-interface JsonObject {
-  [key: string]: unknown
-}
-
-function isObject(value: unknown): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
-/** 厂商的错误对象:顶层 `error`,或流式协议里嵌一层 `response.error`。 */
-function errorObjectOf(payload: JsonObject): JsonObject | undefined {
-  if (isObject(payload.error)) return payload.error
-  if (isObject(payload.response) && isObject(payload.response.error)) {
-    return payload.response.error
-  }
-  return undefined
-}
-
-function isUsageLimitRefusal(payload: JsonObject, error: JsonObject): boolean {
-  return (
-    error.type === "usage_limit_reached"
-    || error.code === "usage_limit_reached"
-    || error.code === "AccountQuotaExceeded"
-    || payload.type === "usage_limit_reached"
-  )
-}
-
-/** "reset at 2026-07-16 20:27:09 +0800 CST" 这类文字里的重置时刻。 */
-function resetInstantFromWords(
-  message: string,
-  now: number,
-): number | undefined {
-  const match = message.match(
-    /reset at (\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})(?:\s*([+-]\d{2}:?\d{2}))?/,
-  )
-  if (!match) return undefined
-  const datePart = match[1].replace(" ", "T")
-  const offsetRaw = match[2]
-  const offsetPart =
-    offsetRaw === undefined ? "Z"
-    : offsetRaw.includes(":") ? offsetRaw
-    : `${offsetRaw.slice(0, 3)}:${offsetRaw.slice(3)}`
-  const at = Date.parse(`${datePart}${offsetPart}`)
-  if (Number.isNaN(at) || at <= now) return undefined
-  return Math.min(at, now + MAX_RESET_HORIZON_MS)
-}
-
-/** 拒绝里写明的重置时刻(ms epoch);没写就是 undefined。 */
-function resetInstantOf(error: JsonObject, now: number): number | undefined {
-  const resetsAt = error.resets_at
-  if (typeof resetsAt === "number" && resetsAt > 0) {
-    // 秒与毫秒两种纪元都出现过:小到只可能是秒的就是秒。
-    const at = resetsAt < 1e12 ? resetsAt * 1000 : resetsAt
-    if (at > now) return Math.min(at, now + MAX_RESET_HORIZON_MS)
-  }
-  const resetsInSeconds = error.resets_in_seconds
-  if (typeof resetsInSeconds === "number" && resetsInSeconds > 0) {
-    const ms = Math.min(resetsInSeconds * 1000, MAX_RESET_HORIZON_MS)
-    return now + ms
-  }
-  const message = typeof error.message === "string" ? error.message : ""
-  return resetInstantFromWords(message, now)
-}
 
 /** `Retry-After`(秒或 HTTP-date)换算成的重置时刻。 */
 function resetInstantFromHeader(
@@ -98,36 +37,6 @@ function resetInstantFromHeader(
   return Math.min(at, now + MAX_RESET_HORIZON_MS)
 }
 
-interface UsageLimitRefusal {
-  message: string
-  resetAtMs?: number
-}
-
-function usageLimitRefusalOf(
-  body: string | null | undefined,
-  now: number,
-): UsageLimitRefusal | undefined {
-  if (!body) return undefined
-  let payload: unknown
-  try {
-    payload = JSON.parse(body)
-  } catch {
-    return undefined
-  }
-  if (!isObject(payload)) return undefined
-  // 顶层就是错误对象(有些代理把 type/resets_at 直接摊平)。
-  const error =
-    errorObjectOf(payload)
-    ?? (payload.type === "usage_limit_reached" ? payload : undefined)
-  if (!error || !isUsageLimitRefusal(payload, error)) return undefined
-  const message =
-    typeof error.message === "string" && error.message.trim() ?
-      error.message.trim()
-    : "usage limit reached"
-  const resetAtMs = resetInstantOf(error, now)
-  return resetAtMs === undefined ? { message } : { message, resetAtMs }
-}
-
 /**
  * 额度用尽里写明的重置时刻距现在多久(ms);不是这种拒绝、或没说时间时
  * undefined。调用方自己决定要不要按本地策略截断。
@@ -136,9 +45,9 @@ export function usageLimitResetMs(
   body: string | null | undefined,
   now: number = Date.now(),
 ): number | undefined {
-  const refusal = usageLimitRefusalOf(body, now)
+  const refusal = readUsageLimitRefusal(body, now)
   if (!refusal?.resetAtMs) return undefined
-  return refusal.resetAtMs - now
+  return Math.min(refusal.resetAtMs, now + MAX_RESET_HORIZON_MS) - now
 }
 
 interface RetryableUsageLimit {
@@ -170,10 +79,14 @@ export function retryableUsageLimit(input: {
   // 400 是 codex 流式终态错误的写法(usage_limit_reached 塞在 400 里);
   // 语义上它仍是限流,按 429 交出去客户端才会重试。
   if (input.status !== 429 && input.status !== 400) return undefined
-  const refusal = usageLimitRefusalOf(input.body, now)
+  const refusal = readUsageLimitRefusal(input.body, now)
   if (!refusal) return undefined
+  const bodyReset =
+    refusal.resetAtMs === undefined ?
+      undefined
+    : Math.min(refusal.resetAtMs, now + MAX_RESET_HORIZON_MS)
   const resetAtMs =
-    refusal.resetAtMs ?? resetInstantFromHeader(input.retryAfterHeader, now)
+    bodyReset ?? resetInstantFromHeader(input.retryAfterHeader, now)
   if (resetAtMs === undefined) return undefined
   const retryAfterMs = Math.max(MIN_RETRY_AFTER_MS, resetAtMs - now)
   return {
