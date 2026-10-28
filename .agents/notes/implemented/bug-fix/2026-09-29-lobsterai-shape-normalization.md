@@ -125,9 +125,9 @@ string it already accepts does not.
   the same rewrites, which must keep passing now that they run through the
   shared module.
 
-The upstream matrix itself is re-runnable as a scratch probe (`temp/` is
-gitignored): it reads the local client's token and issues one 16-token request
-per shape per model.
+The upstream matrix itself is re-runnable as a scratch probe (the scratch
+directory is gitignored): it reads the local client's token and issues one
+16-token request per shape per model.
 
 Proved: replaced the LobsterAI adapter's `normalizeOpenAICompatChatPayload(...)`
 call with the previous plain object spread → `tests/lobsterai-provider.test.ts`

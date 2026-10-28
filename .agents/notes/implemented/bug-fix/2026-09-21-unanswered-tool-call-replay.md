@@ -20,7 +20,7 @@ recovery at all and surfaced the raw 400
 
 That mattered because we _construct_ the input that triggers it. On a chained
 turn that falls back to a full replay (fresh socket, account switch, forced
-HTTP), `create-responses-once.ts` rebuilds the request from
+HTTP), `src/services/codex/create-responses-once.ts` rebuilds the request from
 `buildResponsesTranscriptInput(cachedFull, rawDelta)` — and `cachedFull` is
 `appendCodexTranscript`'s accumulated `[...fullInput, ...output]`. If the model
 emitted a tool call and the turn was interrupted before its output existed, the
@@ -40,8 +40,8 @@ Two independent changes, each covering one half of the asymmetry.
 whose `call_id` has no matching `_output` in the same array. It is applied only
 to the replay input we assemble ourselves
 (`pruneUnansweredToolCalls(stripReasoningItems(fullInputThisTurn))` in
-`create-responses-once.ts`, and the analogous xAI replay in
-`create-responses-once.ts`), never to the caller's raw delta — the client owns
+`src/services/codex/create-responses-once.ts`, and the analogous xAI replay in
+`src/services/xai/create-responses-once.ts`), never to the caller's raw delta — the client owns
 the semantics of what it sends. Outputs are never pruned: dropping an output
 while its call remains is the _other_ 400, and the output is the side the
 client is waiting on. Pairing is type-aware (`function_call_output` does not
@@ -119,7 +119,7 @@ interrupted turn in it.
 never answered` (end-to-end: the pruned call is gone from the POSTed body).
 - `tests/upstream-ws.test.ts` — `unanswered tool call is chained-recoverable`.
 
-Proved: replacing the `create-responses-once.ts` prune with a passthrough made
+Proved: replacing the `src/services/codex/create-responses-once.ts` prune with a passthrough made
 `tests/codex-responses-fallback.test.ts` fail (the cached `custom_tool_call`
 reappeared in the posted body); removing the two new `isChainedTurnUpstreamError`
 patterns made `tests/upstream-ws.test.ts` fail. Both were reverted and the full
