@@ -1,0 +1,21 @@
+$ git stash push -- src/lib/client-agent.ts
+$ bun test tests/client-agent.test.ts
+
+(pass) infers client from payload when user-agent is generic
+116 |     expect(inferClientAgent(c, payload)).toBe("Amp")
+error: expect(received).toBe(expected)
+(fail) inferClientAgent > a conversation mentioning another tool does not become that tool
+120 |     expect(inferClientAgent(mockContext({ "x-amp-client-type": "cli" }))).toBe(
+error: expect(received).toBe(expected)
+(fail) inferClientAgent > identifies Amp from its headers and user agent
+
+ 8 pass
+ 2 fail
+ 32 expect() calls
+
+$ git stash pop
+$ bun test tests/client-agent.test.ts
+
+ 10 pass
+ 0 fail
+ 34 expect() calls

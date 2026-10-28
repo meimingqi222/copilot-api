@@ -101,6 +101,43 @@ describe("inferClientAgent", () => {
     expect(inferClientAgent(c, payload)).toBe("OpenCode")
   })
 
+  test("a conversation mentioning another tool does not become that tool", () => {
+    const c = mockContext({ "user-agent": "Amp-CLI/0.0.1793174452-gd75e9a" })
+    const payload = {
+      messages: [
+        { role: "system", content: "You are Amp, a coding agent." },
+        {
+          role: "user",
+          content: "does this proxy support OpenCode and Cursor?",
+        },
+      ],
+    }
+    // The user's own words are not evidence of the client.
+    expect(inferClientAgent(c, payload)).toBe("Amp")
+  })
+
+  test("identifies Amp from its headers and user agent", () => {
+    expect(inferClientAgent(mockContext({ "x-amp-client-type": "cli" }))).toBe(
+      "Amp",
+    )
+    expect(
+      inferClientAgent(mockContext({ "x-amp-installation-id": "abc123" })),
+    ).toBe("Amp")
+    expect(
+      inferClientAgent(
+        mockContext({ "user-agent": "Amp-CLI/0.0.1793174452-gd75e9a" }),
+      ),
+    ).toBe("Amp")
+  })
+
+  test("reads self-description from Anthropic-style system blocks", () => {
+    const c = mockContext({ "user-agent": "undici" })
+    const payload = {
+      system: [{ type: "text", text: "You are Claude Code, Anthropic's CLI." }],
+    }
+    expect(inferClientAgent(c, payload)).toBe("Claude Code")
+  })
+
   test("respects explicit client header", () => {
     const c = mockContext({
       "x-client-name": "MyCustomAgent",

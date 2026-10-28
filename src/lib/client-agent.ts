@@ -1,5 +1,7 @@
 import type { Context } from "hono"
 
+import { asRecord } from "~/lib/json-shape"
+
 /**
  * Normalizes common variations into clean, recognizable Agent display names.
  */
@@ -31,6 +33,7 @@ function normalizeClientName(raw: string): string {
   if (lower === "pi" || lower === "oh-my-pi") return "Pi"
   if (lower === "qoder") return "Qoder"
   if (lower === "grok") return "Grok"
+  if (lower === "amp" || lower === "amp-cli") return "Amp"
   if (lower === "zcode") return "ZCode"
   if (lower === "workbuddy") return "Workbuddy"
   if (lower === "codebuddy") return "Codebuddy"
@@ -48,6 +51,14 @@ function matchHeaderAgent(c: Context | undefined): string | undefined {
     return "OpenCode"
   }
   if (c.req.header("x-claude-code-session-id")) return "Claude Code"
+  // Amp stamps every call with these; without them its `Amp-CLI/<build>`
+  // user agent fell through to the payload scan below.
+  if (
+    c.req.header("x-amp-client-type")
+    || c.req.header("x-amp-installation-id")
+  ) {
+    return "Amp"
+  }
 
   const explicitName =
     c.req.header("x-client-name")
@@ -86,6 +97,7 @@ const KNOWN_AGENTS: Array<{ name: string; pattern: RegExp }> = [
   { name: "Pi", pattern: /oh-my-pi|pi-desktop|\bpi\b/i },
   { name: "Qoder", pattern: /qoder/i },
   { name: "Grok", pattern: /\bgrok\b|grok-pager/i },
+  { name: "Amp", pattern: /^amp-cli\/|^amp\//i },
   { name: "ZCode", pattern: /zcode/i },
   { name: "Workbuddy", pattern: /workbuddy/i },
   { name: "Codebuddy", pattern: /codebuddy/i },
@@ -120,16 +132,49 @@ function matchUserAgent(ua: string): string | undefined {
   return undefined
 }
 
+/**
+ * The system prompt is the one place a client names itself ("You are
+ * OpenCode…"). Scanning the whole body would read the user's own words and
+ * attribute a request to whichever tool the conversation happens to mention.
+ */
+function selfDescription(payload: unknown): string {
+  if (typeof payload === "string") return payload
+  const body = asRecord(payload)
+  if (!body) return ""
+  const system =
+    Array.isArray(body.messages) ?
+      body.messages
+        .filter(
+          (message) =>
+            asRecord(message)?.role === "system"
+            || asRecord(message)?.role === "developer",
+        )
+        .map((message) => textOf(asRecord(message)?.content))
+        .join("\n")
+    : ""
+  return `${textOf(body.system)}\n${textOf(body.instructions)}\n${system}`
+}
+
+/** System fields arrive as a string, a text-part array, or nested blocks. */
+function textOf(value: unknown, depth = 0): string {
+  if (typeof value === "string") return value
+  if (depth > 4 || !value) return ""
+  if (Array.isArray(value))
+    return value.map((item) => textOf(item, depth + 1)).join("\n")
+  const record = asRecord(value)
+  return record ? textOf(record.text ?? record.content, depth + 1) : ""
+}
+
 function matchPayloadAgent(payload: unknown): string | undefined {
   if (!payload) return undefined
   try {
-    const text = typeof payload === "string" ? payload : JSON.stringify(payload)
-    if (!text) return undefined
-    if (/opencode/i.test(text)) return "OpenCode"
-    if (/aider/i.test(text)) return "Aider"
-    if (/devin/i.test(text)) return "Devin"
-    if (/claude[- ]?code/i.test(text)) return "Claude Code"
-    if (/cursor/i.test(text)) return "Cursor"
+    const prompt = selfDescription(payload)
+    if (!prompt) return undefined
+    if (/open[- ]?code/i.test(prompt)) return "OpenCode"
+    if (/\baider\b/i.test(prompt)) return "Aider"
+    if (/\bdevin\b/i.test(prompt)) return "Devin"
+    if (/claude[- ]?code/i.test(prompt)) return "Claude Code"
+    if (/cursor/i.test(prompt)) return "Cursor"
   } catch {
     // Ignore non-stringifiable values
   }
