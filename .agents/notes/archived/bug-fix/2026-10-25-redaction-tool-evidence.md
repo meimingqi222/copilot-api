@@ -1,7 +1,8 @@
 # Agent Note: Mask escaped Windows tool results and retain late match evidence
 
 Status: implemented
-Partly-superseded-by: 2026-10-25-redaction-display-contract.md
+Archived: 2026-10-28
+Superseded-by: 2026-10-25-redaction-display-contract.md
 
 ## Problem
 
@@ -46,10 +47,6 @@ New requests can show late masked directories even when their complete body
 does not fit. Existing lost evidence cannot be recovered. Excerpts remain
 bounded and may omit evidence beyond their own budget; request counters stay
 independent of capture completeness. No retention limits are increased.
-
-## Superseded
-
-Independent escaped-path matching, bounded excerpts and explicit mapping reveal remain. The successor replaces raw-input retention, splits the existing entry budget to reserve mapping space, continuously synchronizes live mappings, and exposes actual collection policy and content unavailability reasons.
 
 ## Verification
 

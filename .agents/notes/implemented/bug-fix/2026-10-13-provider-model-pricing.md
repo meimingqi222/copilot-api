@@ -34,6 +34,6 @@ Unknown or ambiguous endpoint channels require manual prices instead of borrowin
 - `tests/connection-pricing.test.ts::one-hour writes use twice the effective input price, including context tiers`
 - `tests/connection-pricing.test.ts::historical repricing skips insufficient metadata instead of erasing costs`
 
-Proved: natural pre-fix runs failed on all five original channel/rate assertions, both one-hour TTL assertions and the offline GPT-4.1 assertion; observed assertion outputs are recorded in `docs/agent-notes-evidence/pricing-natural-red.txt`. Disabling the Codex historical guard produced a failing null assertion in `docs/agent-notes-evidence/historical-red.txt`; restoring the guard passed the whole test file in `docs/agent-notes-evidence/historical-green.txt`.
+Proved: natural pre-fix runs failed on all five original channel/rate assertions, both one-hour TTL assertions and the offline GPT-4.1 assertion; observed assertion outputs are recorded in `.agents/notes-evidence/pricing-natural-red.txt`. Disabling the Codex historical guard produced a failing null assertion in `.agents/notes-evidence/historical-red.txt`; restoring the guard passed the whole test file in `.agents/notes-evidence/historical-green.txt`.
 
 The catalog audit compares every original provider/model quote and context tier with the real resolver. The audited source has 227 providers, 8114 priced models and 667 context tiers, with zero mismatches. Run `scripts/maintenance/audit-pricing-catalog.ts` against a fresh catalog to repeat the comparison.

@@ -1,6 +1,8 @@
 # Agent Note: Make explicit comparison selection load mapping originals
 
 Status: implemented
+Archived: 2026-10-28
+Superseded-by: 2026-10-25-redaction-display-contract.md
 
 ## Problem
 

@@ -1,6 +1,8 @@
 # Agent Note: Preserve Fast metadata and distinguish request from confirmation
 
 Status: implemented
+Archived: 2026-10-28
+Superseded-by: 2026-10-03-fast-service-tier-contract.md
 
 ## Problem
 

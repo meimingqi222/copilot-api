@@ -1,7 +1,8 @@
 # Agent Note: Identify model-less trace rows by their request path
 
 Status: implemented
-Partly-superseded-by: 2026-10-02-llm-only-request-tracing.md
+Archived: 2026-10-28
+Superseded-by: 2026-10-02-llm-only-request-tracing.md
 
 ## Problem
 
@@ -20,10 +21,6 @@ Preserve group rendering and the existing model and modelUpstream priority. Fall
 ## Consequences
 
 The fallback identifies retained generation records whose model has not resolved. The subtitle can still show a dash when there is no upstream connection.
-
-## Superseded
-
-The original decision to retain non-generation requests such as GET /v1/models in the LLM view is replaced by 2026-10-02-llm-only-request-tracing.md. Generation-only admission and historical filtering now remove these records. The modelRequested and request-path display fallback remains valid for early generation snapshots and errors.
 
 ## Verification
 

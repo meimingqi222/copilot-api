@@ -1,7 +1,8 @@
 # Agent Note: Mask Windows home variants and keep counters independent of captures
 
 Status: implemented
-Partly-superseded-by: 2026-10-25-redaction-tool-evidence.md
+Archived: 2026-10-28
+Superseded-by: 2026-10-25-redaction-display-contract.md
 
 ## Problem
 
@@ -38,14 +39,6 @@ Standard Windows user directories with both slash styles and case variants
 are masked before dispatch. Arbitrary nonstandard home directories still need
 configured prefixes. A truncated inspection cannot recreate unretained text;
 the UI reports counters independently and explains missing evidence.
-
-## Superseded
-
-The new tool-evidence note supersedes the no-extra-retention decision and the
-expectation that a late match has no retained mappings. It adds independently
-bounded hit excerpts without increasing entry/global limits. Request counters
-remain independent of evidence completeness; the historical red-run proof below
-describes the earlier fix.
 
 ## Verification
 

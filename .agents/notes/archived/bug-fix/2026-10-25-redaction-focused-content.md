@@ -1,7 +1,8 @@
 # Agent Note: Render redaction details around known matches
 
 Status: implemented
-Partly-superseded-by: 2026-10-25-redaction-display-contract.md
+Archived: 2026-10-28
+Superseded-by: 2026-10-25-redaction-display-contract.md
 
 ## Problem
 
@@ -38,10 +39,6 @@ can change its shape, so that would misrepresent the evidence.
 Default details emphasize known redaction changes rather than complete prompts.
 Expanding a segment or payload only reveals retained content; truncated or
 expired text cannot be recovered. Missing mappings are not a safety guarantee.
-
-## Superseded
-
-Focused excerpts, folded unchanged fields and mapping-restored outgoing labels remain. The successor replaces the unchanged inspection-policy assumption: raw client input is no longer retained, continuous collection is explicit, and open details follow live content revisions.
 
 ## Verification
 

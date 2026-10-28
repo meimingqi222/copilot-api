@@ -1,7 +1,8 @@
 # Agent Note: Publish redaction diagnostics before upstream completion
 
 Status: implemented
-Partly-superseded-by: 2026-10-25-redaction-display-contract.md
+Archived: 2026-10-28
+Superseded-by: 2026-10-25-redaction-display-contract.md
 
 ## Problem
 
@@ -38,10 +39,6 @@ by recent rows; the view now renders names, IDs or the translated empty fallback
 Snapshots include running requests; durable aggregates include terminal requests.
 Live delivery still depends on browser/network scheduling and the bounded recent
 window. Notifications carry no bodies, original values or mapping content.
-
-## Superseded
-
-Same-ID early records, one terminal history append and invalidation-only SSE remain. The successor replaces the unchanged inspection-policy assumption, distinguishes ordered adapter attempts from receipt evidence, preserves particles during layout updates, and uses request start time for new durable history.
 
 ## Verification
 

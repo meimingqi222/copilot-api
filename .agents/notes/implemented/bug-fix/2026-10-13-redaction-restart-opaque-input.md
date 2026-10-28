@@ -38,14 +38,14 @@ Proved: Before the implementation change, `bun test tests/redaction-restart.test
 
 Proved: Before the literal-provenance fix, all four new tests in
 `tests/redaction-literal-tool-input.test.ts` failed with "Cannot restore redacted
-tool input" at restoration (including a split tool-argument stream). Output is
-retained in `temp/redaction-literal-tool-input-red.log`.
-After the fix the focused suite passes, while cross-caller restoration isolation remains active. The earlier unseen-token
+tool input" at restoration (including a split tool-argument stream). The
+original local red-run log was not retained. After the fix the focused suite
+passes, while cross-caller restoration isolation remains active. The earlier unseen-token
 rejection was subsequently removed because it still aborted generated fixtures.
 
 - `tests/redaction-literal-tool-input.test.ts::unmapped generated placeholders do not abort a tool response or borrow tenant secrets`
 
 Proved: Before removing the unseen-token rejection, the generated-placeholder
-and every-split stream regressions failed with the reported restore error;
-`temp/redaction-unmapped-stream-red.log` retains the local red run. After the
+and every-split stream regressions failed with the reported restore error; the
+original local red-run log was not retained. After the
 change they complete without expanding any unapproved original values.

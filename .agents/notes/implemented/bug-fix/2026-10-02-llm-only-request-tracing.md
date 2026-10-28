@@ -8,9 +8,20 @@ requestLogger used the entire API surface as its admission predicate. Model list
 
 ## Decision
 
-Use isLlmRequest from src/lib/llm-request.ts as the shared generation predicate. Match POST Chat, Messages and Responses endpoints exactly, including Responses compact and Gemini generateContent/streamGenerateContent. Preserve actual Responses WS turns, but not GET handshakes. Historical records missing a method may use a recognized generation path; records without any path are not admitted to history.
+Use `isLlmRequest` from `src/lib/llm-request.ts` as the shared generation
+predicate. Match POST Chat, Messages and Responses endpoints exactly, including
+Responses compact and Gemini generateContent/streamGenerateContent. Preserve
+actual Responses WS turns, but not GET handshakes. Historical records missing a
+method may use a recognized generation path; records without any path are not
+admitted to history.
 
 requestLogger uses this predicate for trace starts, request-log persistence and daily request/error increments. Security guard snapshots remain unchanged. The trace bus rejects non-generation paths even if a publisher attaches a model. Memory and persisted history apply the same filter before the result limit. Existing logs are not deleted and previously accumulated counters are not retroactively rewritten.
+
+Admitted generation records whose model has not resolved keep the display
+fallback: preserve group rendering and the existing model/modelUpstream priority,
+then fall back to `modelRequested`, then the recorded HTTP method and path. Keep
+the dash only when the record has neither a model nor a path. This identifies
+early generation snapshots and errors without admitting control-plane requests.
 
 ## Alternatives considered
 
@@ -22,7 +33,7 @@ requestLogger uses this predicate for trace starts, request-log persistence and 
 
 ## Consequences
 
-Model listing, token counting and other non-generation operations no longer create new request-log rows or increment the middleware's LLM request counters. Live traces and history focus on generations, including failed attempts. The display fallback remains for generation records with unresolved model metadata. Existing diagnostic and guard processing remains available for non-generation requests.
+Model listing, token counting and other non-generation operations no longer create new request-log rows or increment the middleware's LLM request counters. Live traces and history focus on generations, including failed attempts. The display fallback remains for generation records with unresolved model metadata; the subtitle can still show a dash when there is no upstream connection. Existing diagnostic and guard processing remains available for non-generation requests.
 
 ## Verification
 
@@ -34,5 +45,6 @@ Model listing, token counting and other non-generation operations no longer crea
 - `tests/admin-trace.test.ts::merges persisted history and finalized memory records, filters dates and deduplicates`
 - `tests/llm-request.test.ts`
 - `tests/llm-request.test.ts::trace publishers cannot inject non-generation records with a model`
+- `tests/traces-view.test.ts::model-less`
 
-Proved: Before the production change, the middleware and history tests reported 12 failures: model listing and nine other non-generation cases created logs; mixed Gemini/listing produced two records; 501 persisted listing rows displaced generation history. After the change the targeted nine-file suite reports 84 pass and 0 fail, including account-counter spies and WebSocket concurrency. The persistence suite separately reports 4 pass and 0 fail with persistence enabled. Typecheck, lint and changed-file formatting checks pass.
+Proved: Before the production change, the middleware and history tests reported 12 failures: model listing and nine other non-generation cases created logs; mixed Gemini/listing produced two records; 501 persisted listing rows displaced generation history. The model-less row regression failed with `Expected GET /v1/models, Received -` before the fallback. After the change the targeted nine-file suite reports 84 pass and 0 fail, including account-counter spies and WebSocket concurrency. The persistence suite separately reports 4 pass and 0 fail with persistence enabled. Typecheck, lint and changed-file formatting checks pass.
