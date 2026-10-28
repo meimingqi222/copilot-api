@@ -169,9 +169,14 @@ describe("Kimi OAuth", () => {
     expect(bundle.accessToken).toBe("kimi-access-2")
   })
 
-  test("stripKimiModelPrefix removes kimi- prefix", () => {
+  test("stripKimiModelPrefix removes legacy kimi- prefixes but keeps Kimi Code ids", () => {
     expect(stripKimiModelPrefix("kimi-k2")).toBe("k2")
     expect(stripKimiModelPrefix("KIMI-k2-thinking")).toBe("k2-thinking")
+    expect(stripKimiModelPrefix("kimi-for-coding")).toBe("kimi-for-coding")
+    expect(stripKimiModelPrefix("kimi-for-coding-highspeed")).toBe(
+      "kimi-for-coding-highspeed",
+    )
+    expect(stripKimiModelPrefix("k3.1-pro")).toBe("k3.1-pro")
   })
 })
 

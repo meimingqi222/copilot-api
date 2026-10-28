@@ -20,6 +20,7 @@ import {
   BUILTIN_PROVIDER_PRESETS,
   type ProviderPreset,
 } from "~/lib/provider-presets"
+import { getKimiFallbackModels } from "~/services/providers/model-catalogs/kimi"
 
 /** Kimi 官方下线清单里的 ID（见文件头注释）。 */
 const RETIRED_KIMI_IDS = [
@@ -92,6 +93,8 @@ describe("Kimi presets list current model ids", () => {
       (m) => m.publicId,
     )
     for (const id of [
+      "k3.1-pro",
+      "k3.1-pro-highspeed",
       "kimi-for-coding",
       "kimi-for-coding-highspeed",
       "k3",
@@ -101,12 +104,25 @@ describe("Kimi presets list current model ids", () => {
     }
     // /coding 只认 Kimi Code 的模型 ID：列别的一律被上游拒掉
     for (const id of ids) {
-      expect(id).toMatch(/^(kimi-for-coding(-highspeed)?|k3(-256k)?)$/)
+      expect(id).toMatch(
+        /^(k3\.1-pro(-highspeed)?|kimi-for-coding(-highspeed)?|k3(-256k)?)$/,
+      )
     }
     // 模型都在 Anthropic 协议的 /messages 上
     for (const m of preset("moonshot-coding").defaultModels || []) {
       expect(m.endpoints).toEqual(["messages"])
     }
+  })
+
+  test("the OAuth fallback uses the same current Kimi Code ids", () => {
+    expect(getKimiFallbackModels().map((m) => m.publicId)).toEqual([
+      "k3.1-pro",
+      "k3.1-pro-highspeed",
+      "kimi-for-coding",
+      "kimi-for-coding-highspeed",
+      "k3",
+      "k3-256k",
+    ])
   })
 
   test("the open-platform presets list the platform's current ids", () => {
@@ -150,14 +166,16 @@ describe("Kimi presets list current model ids", () => {
         m.tier,
       ]),
     )
-    // kimi-for-coding 全档可用：没有标签（而不是写个 “All” 占位）
+    // kimi-for-coding 保持无标签；新模型按会员档位标提示
     expect(tiers).toEqual({
+      "k3.1-pro": "Plus+",
+      "k3.1-pro-highspeed": "Pro+",
       "kimi-for-coding": undefined,
       "kimi-for-coding-highspeed": "Pro+",
       k3: "Plus+",
       "k3-256k": "Plus+",
     })
     // 档位只是提示，不能变成过滤器：模型仍然一个不少地列出来
-    expect(Object.keys(tiers)).toHaveLength(4)
+    expect(Object.keys(tiers)).toHaveLength(6)
   })
 })

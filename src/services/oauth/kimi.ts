@@ -232,8 +232,10 @@ export function applyKimiOAuthBundle(
 
 export function stripKimiModelPrefix(model: string): string {
   const trimmed = model.trim()
-  if (trimmed.toLowerCase().startsWith("kimi-")) {
-    return trimmed.slice(5)
-  }
+  const lower = trimmed.toLowerCase()
+  // Kimi Code 的稳定 ID 本身以 kimi-for-coding 开头，必须原样发送；
+  // 旧开放平台的 kimi-k2* 才需要去前缀。
+  if (lower.startsWith("kimi-for-coding")) return trimmed
+  if (lower.startsWith("kimi-")) return trimmed.slice(5)
   return trimmed
 }

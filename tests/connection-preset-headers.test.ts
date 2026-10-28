@@ -153,12 +153,14 @@ test("Kimi Code model tiers reach the model list, the Save payload and the next 
   view.selectPreset(kimiPreset())
   // 档位标签来自预设数据：显示在模型列表上，但不挡勾选（能不能用由上游判定）
   expect(view.fetchedModels.map((m) => [m.publicId, m.tier])).toEqual([
+    ["k3.1-pro", "Plus+"],
+    ["k3.1-pro-highspeed", "Pro+"],
     ["kimi-for-coding", undefined],
     ["kimi-for-coding-highspeed", "Pro+"],
     ["k3", "Plus+"],
     ["k3-256k", "Plus+"],
   ])
-  expect(view.selectedModelIds).toHaveLength(4)
+  expect(view.selectedModelIds).toHaveLength(6)
 
   view.connForm.apiKey = "sk-synthetic-test"
   await view.saveConn()

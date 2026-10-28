@@ -58,7 +58,9 @@ describe("OAuth model catalog", () => {
     expect(claude[0]?.endpoints).toContain("messages")
 
     const kimi = getOAuthFallbackModelsForConnection("kimi")
-    expect(kimi.some((model) => model.publicId === "kimi-k2.5")).toBe(true)
+    expect(kimi.some((model) => model.publicId === "kimi-for-coding")).toBe(
+      true,
+    )
     expect(kimi[0]?.endpoints).toContain("chat")
 
     const xai = getOAuthFallbackModelsForConnection("xai")

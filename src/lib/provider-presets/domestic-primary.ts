@@ -23,15 +23,26 @@ const KIMI_CODING_HEADERS: Record<string, string> = {
 }
 
 /**
- * Kimi Code 只有这 4 个模型 ID（kimi.com/code/docs/en 的 Model IDs），写别
+ * Kimi Code 当前 6 个模型 ID（kimi.com/code/docs/en 的 Model IDs），写别
  * 的一律被上游拒。`tier` 是会员档位门槛，只用于在模型列表上标一个标签：
- * `kimi-for-coding` 全档可用，`-highspeed` 需 Pro（旧名 Allegretto）及以上，
- * `k3` / `k3-256k` 需 Plus（旧名 Moderato）及以上；`k3` 的 1M 上下文还要再
- * 高一档，低档只有 262144。
+ * K3.1 Pro / K3 系列需 Plus（旧名 Moderato）及以上，Highspeed 需 Pro
+ * （旧名 Allegretto）及以上；`kimi-for-coding` 保持无标签，兼容旧套餐。
  *
  * 两个 Kimi Code 预设（国内/海外）共用这一份。
  */
-const KIMI_CODING_MODELS: Array<PresetModel> = [
+export const KIMI_CODING_MODELS: Array<PresetModel> = [
+  {
+    publicId: "k3.1-pro",
+    upstreamId: "k3.1-pro",
+    endpoints: ["messages"],
+    tier: "Plus+",
+  },
+  {
+    publicId: "k3.1-pro-highspeed",
+    upstreamId: "k3.1-pro-highspeed",
+    endpoints: ["messages"],
+    tier: "Pro+",
+  },
   {
     publicId: "kimi-for-coding",
     upstreamId: "kimi-for-coding",
