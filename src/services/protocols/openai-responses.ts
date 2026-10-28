@@ -28,11 +28,6 @@ import type {
 
 import { logger } from "~/lib/logger"
 import { currentLogContext } from "~/lib/log-context"
-import {
-  type ApiCredential,
-  type ModelMapping,
-  type ProviderConnection,
-} from "~/lib/provider-connections"
 import { dumpUpstreamResponsesWire } from "~/lib/request-dump"
 import {
   buildBaseHeaders,
@@ -58,14 +53,7 @@ import {
   sanitizeStatelessInputItems,
   snoopResponsesStreamForTranscript,
 } from "./openai-responses-transcript"
-import { discoverJsonModels } from "./discover-models"
-
-function buildHeaders(
-  connection: ProviderConnection,
-  credential: ApiCredential,
-): Record<string, string> {
-  return buildBaseHeaders(connection, credential)
-}
+import { discoverJsonModels, discoveredModelMappings } from "./discover-models"
 
 function classifyDiscoveredModelEndpoints(
   id: string,
@@ -85,7 +73,7 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
       connection,
       credential,
       signal,
-      headers: buildHeaders(connection, credential),
+      headers: buildBaseHeaders(connection, credential),
       providerLabel: "openai-responses-compatible",
     })) as {
       data?: Array<{ id: string; object?: string; owned_by?: string }>
@@ -93,16 +81,7 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
     if (!body.data || !Array.isArray(body.data)) {
       return []
     }
-    return body.data
-      .filter((m) => typeof m.id === "string")
-      .map<ModelMapping>((m) => ({
-        publicId: m.id,
-        upstreamId: m.id,
-        vendor: m.owned_by,
-        endpoints: classifyDiscoveredModelEndpoints(m.id),
-        enabled: true,
-        pickerEnabled: true,
-      }))
+    return discoveredModelMappings(body.data, classifyDiscoveredModelEndpoints)
   },
 
   async createChatCompletions({
@@ -121,7 +100,7 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
       joinUrl(connection.baseUrl, "/chat/completions"),
       connectionFetchInit(connection, {
         method: "POST",
-        headers: buildHeaders(connection, credential),
+        headers: buildBaseHeaders(connection, credential),
         body: serializeUpstreamBody(upstreamPayload),
         signal,
       }),
@@ -220,7 +199,7 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
       joinUrl(connection.baseUrl, "/responses"),
       connectionFetchInit(connection, {
         method: "POST",
-        headers: buildHeaders(connection, credential),
+        headers: buildBaseHeaders(connection, credential),
         body: serializeUpstreamBody(upstreamPayload),
         signal,
       }),

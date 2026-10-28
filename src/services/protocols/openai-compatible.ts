@@ -19,11 +19,6 @@ import type {
 } from "~/services/protocols/chat/types"
 
 import {
-  type ApiCredential,
-  type ModelMapping,
-  type ProviderConnection,
-} from "~/lib/provider-connections"
-import {
   buildBaseHeaders,
   connectionFetchInit,
   detectOpenAIStreamError,
@@ -37,14 +32,7 @@ import type {
   AdapterEmbeddingsResult,
   ProtocolAdapter,
 } from "./types"
-import { discoverJsonModels } from "./discover-models"
-
-function buildHeaders(
-  connection: ProviderConnection,
-  credential: ApiCredential,
-): Record<string, string> {
-  return buildBaseHeaders(connection, credential)
-}
+import { discoverJsonModels, discoveredModelMappings } from "./discover-models"
 
 /**
  * Unwraps the `{ data: { ... } }` envelope some upstreams (e.g. Cline Pass)
@@ -82,7 +70,7 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
       connection,
       credential,
       signal,
-      headers: buildHeaders(connection, credential),
+      headers: buildBaseHeaders(connection, credential),
       providerLabel: "openai-compatible",
     })) as {
       data?: Array<{ id: string; object?: string; owned_by?: string }>
@@ -96,16 +84,7 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
       connection.modelDiscovery?.freeOnly ?
         body.data.filter((m) => (m as { isFree?: unknown }).isFree === true)
       : body.data
-    return discovered
-      .filter((m) => typeof m.id === "string")
-      .map<ModelMapping>((m) => ({
-        publicId: m.id,
-        upstreamId: m.id,
-        vendor: m.owned_by,
-        endpoints: classifyDiscoveredModelEndpoints(m.id),
-        enabled: true,
-        pickerEnabled: true,
-      }))
+    return discoveredModelMappings(discovered, classifyDiscoveredModelEndpoints)
   },
 
   async createChatCompletions({
@@ -124,7 +103,7 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
       joinUrl(connection.baseUrl, "/chat/completions"),
       connectionFetchInit(connection, {
         method: "POST",
-        headers: buildHeaders(connection, credential),
+        headers: buildBaseHeaders(connection, credential),
         body: serializeUpstreamBody(upstreamPayload),
         signal,
       }),
@@ -171,7 +150,7 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
       joinUrl(connection.baseUrl, "/embeddings"),
       connectionFetchInit(connection, {
         method: "POST",
-        headers: buildHeaders(connection, credential),
+        headers: buildBaseHeaders(connection, credential),
         body: serializeUpstreamBody(upstreamPayload),
         signal,
       }),

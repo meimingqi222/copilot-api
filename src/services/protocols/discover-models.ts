@@ -4,9 +4,32 @@
  */
 import type {
   ApiCredential,
+  ModelMapping,
   ProviderConnection,
 } from "~/lib/provider-connections"
 import { connectionFetchInit, handleUpstreamFailure, joinUrl } from "./shared"
+
+/** 把 OpenAI 风格的 `{ id, owned_by }` 列表投影成 ModelMapping。 */
+export function discoveredModelMappings(
+  models: ReadonlyArray<{ id?: unknown; owned_by?: unknown }>,
+  endpointsForId: (id: string) => Array<ModelMapping["endpoints"][number]>,
+): Array<ModelMapping> {
+  return models.flatMap((model) => {
+    if (typeof model.id !== "string") return []
+    return [
+      {
+        publicId: model.id,
+        upstreamId: model.id,
+        ...(typeof model.owned_by === "string" ?
+          { vendor: model.owned_by }
+        : {}),
+        endpoints: endpointsForId(model.id),
+        enabled: true,
+        pickerEnabled: true,
+      },
+    ]
+  })
+}
 
 export async function discoverJsonModels<T>(input: {
   connection: ProviderConnection

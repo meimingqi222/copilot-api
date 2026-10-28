@@ -29,7 +29,7 @@ import {
 } from "~/services/protocols/shared"
 
 import type { AdapterMessagesResult, ProtocolAdapter } from "./types"
-import { discoverJsonModels } from "./discover-models"
+import { discoverJsonModels, discoveredModelMappings } from "./discover-models"
 
 function buildHeaders(
   connection: ProviderConnection,
@@ -136,14 +136,6 @@ export const anthropicCompatibleAdapter: ProtocolAdapter = {
       models?: Array<{ id: string }>
     }
     const ids = body.data ?? body.models ?? []
-    return ids
-      .filter((m) => typeof m.id === "string")
-      .map((m) => ({
-        publicId: m.id,
-        upstreamId: m.id,
-        endpoints: ["messages"] as Array<"messages">,
-        enabled: true,
-        pickerEnabled: true,
-      }))
+    return discoveredModelMappings(ids, () => ["messages"])
   },
 }
