@@ -50,6 +50,16 @@
 - **Release:**\
   `bun run release` (runs bumpp + publish)
 
+## Regression Notes
+
+A change that alters behavior others rely on gets a regression test — prefer one more assertion in an existing test over a new test file. Write a regression note in `.agents/notes` only when the decision is one a later change could plausibly undo: the fixed code looks redundant or wrong, a tempting alternative was rejected, the change spans files, or the requirement itself changed. A reason that fits in one line goes in a code comment at the fix instead. Defects introduced and fixed inside the same uncommitted change need neither. One note per mechanism, not per incident: if a change updates a test a note already binds, update that note or archive it with `Superseded-by`; record a deliberately changed requirement as `spec-change`, not another `bug-fix`. `new-note.py` refuses a duplicate owner unless `--allow-duplicate "<why>"` is explicit.
+
+Before editing a file, run
+`python3 regression-notes/scripts/verify-notes.py --notes-dir .agents/notes --for-path <paths>`
+and read the listed notes that bear on your change — the reverse lookup is what makes the notes tripwires instead of an archive. Before writing a note, search for the owner with `--find`. Red-run evidence goes in `.agents/notes-evidence`.
+
+`--metrics` reports note debt (hot files, unbound bug-fix notes, supersede usage); `--bound-changes` lists notes whose bound test changed without the note. `python3 regression-notes/scripts/verify-notes.py --notes-dir .agents/notes` must pass before any related change is merged; CI runs it.
+
 ## Testing Policy
 
 The full suite takes ~85s and CI runs it on every push — do **not** run

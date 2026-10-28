@@ -9,3 +9,8 @@ node_modules/
 # files no one commits (e.g. .claude/settings.local.json).
 .claude/
 .devin/
+
+# Regression notes are historical records: the verifier seals archived notes,
+# and the vendored templates must keep their placeholders byte-for-byte.
+.agents/notes/
+regression-notes/

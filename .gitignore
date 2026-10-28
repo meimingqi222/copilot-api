@@ -34,6 +34,10 @@ temp_*
 .playwright-cli/
 .amp/portals/*
 
+# Python bytecode (vendored regression-notes scripts)
+__pycache__/
+*.pyc
+
 # macOS metadata
 .DS_Store
 
