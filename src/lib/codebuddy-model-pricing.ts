@@ -1,10 +1,5 @@
+import { asRecord } from "~/lib/json-shape"
 import type { ProviderConnection } from "~/lib/provider-connections/types"
-
-function record(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : undefined
-}
 
 /** Missing or unreadable prices are unknown, never implicitly free. */
 function credits(value: unknown): number | undefined {
@@ -39,10 +34,10 @@ export function isCodebuddyModelFree(
   // request, and do not treat time-of-day offers as permanently free.
   const now = Date.now()
   return promotions.some((value: unknown) => {
-    const promotion = record(value)
+    const promotion = asRecord(value)
     if (promotion?.kind !== "discount" || promotion.enabled === false)
       return false
-    const schedule = record(promotion.schedule)
+    const schedule = asRecord(promotion.schedule)
     if (Array.isArray(schedule?.daily) && schedule.daily.length > 0)
       return false
     for (const key of ["validFrom", "validUntil"] as const) {
@@ -53,7 +48,7 @@ export function isCodebuddyModelFree(
       if (!Number.isFinite(at)) return false
       if (key === "validFrom" ? now < at : now >= at) return false
     }
-    const discount = record(promotion.discount)
+    const discount = asRecord(promotion.discount)
     if (discount?.discountedCredits !== undefined)
       return credits(discount.discountedCredits) === 0
     const factor = credits(discount?.factor)

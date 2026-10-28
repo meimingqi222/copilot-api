@@ -19,17 +19,9 @@ import {
   responsesImageCall,
 } from "~/services/ir/image-generation"
 
+import { asRecord, asString } from "~/lib/json-shape"
+
 type RecordValue = Record<string, unknown>
-
-function record(value: unknown): RecordValue | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value) ?
-      (value as RecordValue)
-    : undefined
-}
-
-function string(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined
-}
 
 function flatToolName(namespace: string, name: string): string {
   const flat = `${namespace}__${name}`
@@ -46,7 +38,7 @@ function decodeContent(value: unknown): Array<IRPart> {
   if (!Array.isArray(value)) return []
   const parts: Array<IRPart> = []
   for (const valuePart of value) {
-    const part = record(valuePart)
+    const part = asRecord(valuePart)
     if (!part)
       throw new LocalPayloadUnsupportedError("Malformed Responses content part")
     if (
@@ -59,8 +51,8 @@ function decodeContent(value: unknown): Array<IRPart> {
     } else if (part.type === "refusal" && typeof part.refusal === "string") {
       parts.push({ type: "text", text: part.refusal })
     } else if (part.type === "input_image") {
-      const url = string(part.image_url)
-      const fileId = string(part.file_id)
+      const url = asString(part.image_url)
+      const fileId = asString(part.file_id)
       if (url) {
         parts.push({
           type: "image",
@@ -84,9 +76,9 @@ function decodeContent(value: unknown): Array<IRPart> {
         )
       }
     } else if (part.type === "input_file") {
-      const fileId = string(part.file_id)
-      const fileUrl = string(part.file_url)
-      const fileData = string(part.file_data)
+      const fileId = asString(part.file_id)
+      const fileUrl = asString(part.file_url)
+      const fileData = asString(part.file_data)
       if (fileId)
         parts.push({ type: "file", source: { type: "file_id", fileId } })
       else if (fileUrl)
@@ -132,7 +124,7 @@ function decodeTools(value: unknown): Array<IRTool> {
   const tools: Array<IRTool> = []
   const used = new Set<string>()
   const add = (tool: RecordValue, namespace?: string): void => {
-    const originalName = string(tool.name)
+    const originalName = asString(tool.name)
     if (!originalName)
       throw new LocalPayloadUnsupportedError(
         "Responses function tool has no name",
@@ -146,24 +138,24 @@ function decodeTools(value: unknown): Array<IRTool> {
     used.add(name)
     tools.push({
       name,
-      description: string(tool.description),
-      parameters: record(tool.parameters) ?? {},
+      description: asString(tool.description),
+      parameters: asRecord(tool.parameters) ?? {},
       ...(typeof tool.strict === "boolean" ? { strict: tool.strict } : {}),
       ...(namespace ? { namespace, originalName } : {}),
     })
   }
   for (const valueTool of value) {
-    const tool = record(valueTool)
+    const tool = asRecord(valueTool)
     if (!tool)
       throw new LocalPayloadUnsupportedError("Malformed Responses tool")
     if (tool.type === "namespace") {
-      const namespace = string(tool.name)
+      const namespace = asString(tool.name)
       if (!namespace || !Array.isArray(tool.tools))
         throw new LocalPayloadUnsupportedError(
           "Malformed Responses namespace tool",
         )
       for (const nested of tool.tools) {
-        const nestedTool = record(nested)
+        const nestedTool = asRecord(nested)
         if (!nestedTool || nestedTool.type !== "function")
           throw new LocalPayloadUnsupportedError(
             "Unsupported Responses namespace member",
@@ -187,12 +179,12 @@ function decodeTools(value: unknown): Array<IRTool> {
 function decodeToolChoice(value: unknown): IRToolChoice | undefined {
   if (value === "auto" || value === "none" || value === "required")
     return { type: value }
-  const choice = record(value)
+  const choice = asRecord(value)
   if (!choice)
     throw new LocalPayloadUnsupportedError("Unsupported Responses tool_choice")
   if (choice.type === "function") {
-    const name = string(choice.name)
-    const namespace = string(choice.namespace)
+    const name = asString(choice.name)
+    const namespace = asString(choice.namespace)
     if (!name)
       throw new LocalPayloadUnsupportedError(
         "Responses function tool_choice has no name",
@@ -213,13 +205,13 @@ function decodeToolChoice(value: unknown): IRToolChoice | undefined {
   }
   const allowed = new Set<string>()
   for (const raw of Array.isArray(choice.tools) ? choice.tools : []) {
-    const item = record(raw)
+    const item = asRecord(raw)
     if (!item || item.type !== "function")
       throw new LocalPayloadUnsupportedError(
         "Unsupported Responses allowed_tools member",
       )
-    const name = string(item.name)
-    const namespace = string(item.namespace)
+    const name = asString(item.name)
+    const namespace = asString(item.namespace)
     if (!name)
       throw new LocalPayloadUnsupportedError(
         "Responses allowed_tools member has no name",
@@ -279,7 +271,7 @@ function decodeGeneration(payload: ResponsesPayload): IRGenerationOptions {
       generation.textFormat = { type: p.text.format.type }
     }
   }
-  const reasoning = record(p.reasoning)
+  const reasoning = asRecord(p.reasoning)
   if (typeof reasoning?.effort === "string") {
     const effort = reasoning.effort
     if (
@@ -328,7 +320,7 @@ export function decodeResponsesRequest(payload: ResponsesPayload): RequestIR {
       [{ role: "user", content: payload.input }]
     : payload.input
   for (const valueItem of input) {
-    const item = record(valueItem)
+    const item = asRecord(valueItem)
     if (!item)
       throw new LocalPayloadUnsupportedError("Malformed Responses input item")
     if (item.type === "image_generation_call") {
@@ -347,30 +339,32 @@ export function decodeResponsesRequest(payload: ResponsesPayload): RequestIR {
     if (item.type === "reasoning") {
       const summary =
         Array.isArray(item.summary) ?
-          item.summary.map((raw) => string(record(raw)?.text) ?? "").join("")
+          item.summary
+            .map((raw) => asString(asRecord(raw)?.text) ?? "")
+            .join("")
         : ""
       pendingReasoning =
-        summary || string(item.encrypted_content) ?
+        summary || asString(item.encrypted_content) ?
           {
             type: "thinking",
             text: summary,
             source,
-            ...(string(item.encrypted_content) ?
-              { encryptedContent: string(item.encrypted_content) }
+            ...(asString(item.encrypted_content) ?
+              { encryptedContent: asString(item.encrypted_content) }
             : {}),
           }
         : undefined
       continue
     }
     if (item.type === "function_call") {
-      const name = string(item.name)
-      const callId = string(item.call_id)
+      const name = asString(item.name)
+      const callId = asString(item.call_id)
       if (!name || !callId)
         throw new LocalPayloadUnsupportedError(
           "Malformed Responses function_call",
         )
       if (name && callId) {
-        const namespace = string(item.namespace)
+        const namespace = asString(item.namespace)
         turns.push({
           role: "assistant",
           source,
@@ -380,7 +374,7 @@ export function decodeResponsesRequest(payload: ResponsesPayload): RequestIR {
               type: "tool_call",
               id: callId,
               name: namespace ? flatToolName(namespace, name) : name,
-              arguments: string(item.arguments) ?? "{}",
+              arguments: asString(item.arguments) ?? "{}",
               ...(namespace ? { namespace, originalName: name } : {}),
             },
           ],
@@ -390,7 +384,7 @@ export function decodeResponsesRequest(payload: ResponsesPayload): RequestIR {
     }
     if (item.type === "function_call_output") {
       pendingReasoning = undefined
-      const callId = string(item.call_id)
+      const callId = asString(item.call_id)
       if (
         !callId
         || (typeof item.output !== "string" && !Array.isArray(item.output))
@@ -414,7 +408,7 @@ export function decodeResponsesRequest(payload: ResponsesPayload): RequestIR {
     }
     if (item.type === "web_search_call") {
       pendingReasoning = undefined
-      const id = string(item.id) ?? string(item.call_id)
+      const id = asString(item.id) ?? asString(item.call_id)
       if (id)
         turns.push({
           role: "assistant",

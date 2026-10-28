@@ -1,18 +1,13 @@
+import { asRecord } from "~/lib/json-shape"
 import type { CopilotStreamEventLike } from "~/services/protocols/responses/types"
-
-function record(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : undefined
-}
 
 /** Grok emits reasoning content; OpenAI-compatible clients expect summaries. */
 export function normalizeXaiReasoningItem(value: unknown): void {
-  const item = record(value)
+  const item = asRecord(value)
   if (item?.type !== "reasoning" || !Array.isArray(item.content)) return
   if (!Array.isArray(item.summary) || item.summary.length === 0) {
     item.summary = item.content.flatMap((value) => {
-      const part = record(value)
+      const part = asRecord(value)
       return part?.type === "reasoning_text" && typeof part.text === "string" ?
           [{ type: "summary_text", text: part.text }]
         : []
@@ -32,7 +27,7 @@ export async function* normalizeXaiReasoningStream(
     }
     let wire: Record<string, unknown> | undefined
     try {
-      wire = record(JSON.parse(event.data))
+      wire = asRecord(JSON.parse(event.data))
     } catch {
       yield event
       continue
@@ -42,7 +37,7 @@ export async function* normalizeXaiReasoningStream(
       continue
     }
     normalizeXaiReasoningItem(wire.item)
-    const response = record(wire.response)
+    const response = asRecord(wire.response)
     if (Array.isArray(response?.output)) {
       for (const item of response.output) normalizeXaiReasoningItem(item)
     }
@@ -54,7 +49,7 @@ export async function* normalizeXaiReasoningStream(
     const reasoningPart =
       (type === "response.content_part.added"
         || type === "response.content_part.done")
-      && record(wire.part)?.type === "reasoning_text"
+      && asRecord(wire.part)?.type === "reasoning_text"
     if (reasoningText || reasoningPart) {
       if (
         wire.summary_index === undefined
@@ -72,7 +67,7 @@ export async function* normalizeXaiReasoningStream(
           "response.reasoning_summary_part.added"
         : "response.reasoning_summary_part.done"
       if (reasoningPart)
-        wire.part = { ...record(wire.part), type: "summary_text" }
+        wire.part = { ...asRecord(wire.part), type: "summary_text" }
     }
     yield {
       ...event,

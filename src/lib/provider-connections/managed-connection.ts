@@ -12,6 +12,7 @@
  * - `serializeConnectionForExport` —— `/admin/api/accounts/export` 的 JSON 形状,
  *   与导入路径(`ImportAccountPayload`)互为往返。
  */
+import { asStringField } from "~/lib/json-shape"
 import {
   isOAuthProviderId,
   PROVIDER_PROTOCOL_MAP,
@@ -102,14 +103,6 @@ export interface ManagedConnectionInput {
 
 // ── 输入 → ProviderConnection ────────────────────────────────────
 
-function readString(
-  credentials: Record<string, unknown> | undefined,
-  key: string,
-): string | undefined {
-  const value = credentials?.[key]
-  return typeof value === "string" ? value : undefined
-}
-
 /** credential.value:provider 的当前生效 token。 */
 function tokenValueOf(input: ManagedConnectionInput): string {
   const provider = input.provider
@@ -118,7 +111,7 @@ function tokenValueOf(input: ManagedConnectionInput): string {
     return input.runtimeState?.[schema.runtimeValueKey] ?? ""
   }
   const key = getPrimaryTokenKey(provider)
-  return key ? (readString(input.credentials, key) ?? "") : ""
+  return key ? (asStringField(input.credentials, key) ?? "") : ""
 }
 
 /** credential.context:刷新所需的源材料。 */
@@ -132,7 +125,7 @@ function tokenContextOf(
 
   if (schema?.contextStringKeys) {
     for (const key of schema.contextStringKeys) {
-      context[key] = readString(credentials, key)
+      context[key] = asStringField(credentials, key)
     }
   }
   if (schema?.contextValueKeys) {
@@ -147,15 +140,15 @@ function tokenContextOf(
   }
 
   if (isOAuthProviderId(provider)) {
-    context.accessToken = readString(credentials, "accessToken")
-    context.refreshToken = readString(credentials, "refreshToken")
+    context.accessToken = asStringField(credentials, "accessToken")
+    context.refreshToken = asStringField(credentials, "refreshToken")
     context.expiresAt = credentials?.expiresAt
-    context.idToken = readString(credentials, "idToken")
-    context.oauthAccountId = readString(credentials, "accountId")
-    context.projectId = readString(credentials, "projectId")
-    context.deviceId = readString(credentials, "deviceId")
-    context.apiKey = readString(credentials, "apiKey")
-    context.email = readString(credentials, "email")
+    context.idToken = asStringField(credentials, "idToken")
+    context.oauthAccountId = asStringField(credentials, "accountId")
+    context.projectId = asStringField(credentials, "projectId")
+    context.deviceId = asStringField(credentials, "deviceId")
+    context.apiKey = asStringField(credentials, "apiKey")
+    context.email = asStringField(credentials, "email")
   }
   return context
 }
@@ -167,23 +160,27 @@ function refresherTypeOf(provider: ProviderId): CredentialRefresherType {
   return "static"
 }
 
-/** AccountModel → ModelMapping。 */
-function accountModelToMapping(model: AccountModel): ModelMapping {
-  const endpoints = endpointsFromSupported(model.supportedEndpoints)
+/** AccountModel[] → ModelMapping[]。 */
+export function accountModelsToMappings(
+  models: Array<AccountModel>,
+): Array<ModelMapping> {
+  return models.map((model) => {
+    const endpoints = endpointsFromSupported(model.supportedEndpoints)
 
-  return {
-    publicId: model.id,
-    upstreamId: model.upstreamId || model.id,
-    name: model.name,
-    vendor: model.vendor,
-    endpoints,
-    enabled: true,
-    pickerEnabled: model.pickerEnabled,
-    pickerCategory: model.pickerCategory,
-    ...(model.efforts && model.efforts.length > 0 ?
-      { efforts: [...model.efforts] }
-    : {}),
-  }
+    return {
+      publicId: model.id,
+      upstreamId: model.upstreamId || model.id,
+      name: model.name,
+      vendor: model.vendor,
+      endpoints,
+      enabled: true,
+      pickerEnabled: model.pickerEnabled,
+      pickerCategory: model.pickerCategory,
+      ...(model.efforts && model.efforts.length > 0 ?
+        { efforts: [...model.efforts] }
+      : {}),
+    }
+  })
 }
 
 /**
@@ -291,7 +288,10 @@ export function managedConnectionFromInput(
     enabled,
     priority: input.priority ?? 0,
     credentials: [credential],
-    models: input.availableModels?.map((m) => accountModelToMapping(m)),
+    models:
+      input.availableModels ?
+        accountModelsToMappings(input.availableModels)
+      : undefined,
     createdAt,
     metadata,
   }

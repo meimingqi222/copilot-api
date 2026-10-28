@@ -1,4 +1,4 @@
-import { asRecord } from "~/lib/json-shape"
+import { asRecord, asTrimmedStringField } from "~/lib/json-shape"
 
 /**
  * 上游响应模型审计。
@@ -126,23 +126,25 @@ export function extractResponseModel(payload: unknown): string | undefined {
   // Anthropic；`modelVersion` 是 Gemini（含 antigravity 包装层）。
   // 统一规则：外层优先于内层；同一层内先查 `model` 再查 `modelVersion`。
   const direct =
-    readString(record, "model") ?? readString(record, "modelVersion")
+    asTrimmedStringField(record, "model")
+    ?? asTrimmedStringField(record, "modelVersion")
   if (direct) return direct
 
   const message = asRecord(record["message"])
   if (message) {
-    const nested = readString(message, "model")
+    const nested = asTrimmedStringField(message, "model")
     if (nested) return nested
   }
 
   const response = asRecord(record["response"])
   if (response) {
     const nested =
-      readString(response, "model") ?? readString(response, "modelVersion")
+      asTrimmedStringField(response, "model")
+      ?? asTrimmedStringField(response, "modelVersion")
     if (nested) return nested
     const doubleNested = asRecord(response["response"])
     if (doubleNested) {
-      const deep = readString(doubleNested, "modelVersion")
+      const deep = asTrimmedStringField(doubleNested, "modelVersion")
       if (deep) return deep
     }
   }
@@ -166,7 +168,8 @@ export function isTerminalResponseEvent(
   eventType: string | undefined,
   payload: unknown,
 ): boolean {
-  const type = eventType?.trim() || readString(asRecord(payload), "type")
+  const type =
+    eventType?.trim() || asTrimmedStringField(asRecord(payload), "type")
   if (type) {
     switch (type) {
       case "response.completed":
@@ -303,12 +306,4 @@ function normalizeObservedModel(model: string | undefined): string | undefined {
   return runes.length > MAX_OBSERVED_MODEL_LENGTH ?
       runes.slice(0, MAX_OBSERVED_MODEL_LENGTH).join("")
     : trimmed
-}
-
-function readString(
-  record: Record<string, unknown> | undefined,
-  key: string,
-): string | undefined {
-  const value = record?.[key]
-  return typeof value === "string" && value.trim() ? value.trim() : undefined
 }

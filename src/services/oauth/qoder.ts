@@ -29,7 +29,7 @@ import {
   setConnectionCredentialExtra,
   setCredentialContextField,
 } from "~/lib/provider-connections"
-import { asRecordOrEmpty } from "~/lib/json-shape"
+import { asRecordOrEmpty, asStringOrEmpty } from "~/lib/json-shape"
 import {
   QODER_DEVICE_SELECT_ACCOUNTS_PATH,
   QODER_DEVICE_TOKEN_POLL_PATH,
@@ -80,10 +80,6 @@ interface QoderUserInfo {
   id: string
   name: string
   email: string
-}
-
-function asString(value: unknown): string {
-  return typeof value === "string" ? value : ""
 }
 
 /**
@@ -138,9 +134,9 @@ function mapDeviceToken(
 ): QoderDeviceTokenResponse {
   return {
     // 兼容 `device_token` 拼写（refresh 响应里出现过）
-    token: asString(raw.token) || asString(raw.device_token),
-    refreshToken: asString(raw.refresh_token),
-    userId: asString(raw.user_id),
+    token: asStringOrEmpty(raw.token) || asStringOrEmpty(raw.device_token),
+    refreshToken: asStringOrEmpty(raw.refresh_token),
+    userId: asStringOrEmpty(raw.user_id),
     expiresAtMs: deviceExpiryMs(raw),
   }
 }
@@ -226,13 +222,13 @@ export async function exchangeQoderJobToken(
     )
   }
   const raw = asRecordOrEmpty(safeJson(body))
-  const token = asString(raw.token)
+  const token = asStringOrEmpty(raw.token)
   if (!token) {
     throw new Error("Qoder job token exchange returned an empty token")
   }
   return {
     token,
-    refreshToken: asString(raw.refresh_token),
+    refreshToken: asStringOrEmpty(raw.refresh_token),
     expiresInMs: numberOrUndefined(raw.expires_in),
   }
 }
@@ -271,8 +267,8 @@ export async function refreshQoderJobToken(
     )
   }
   const raw = asRecordOrEmpty(safeJson(body))
-  const token = asString(raw.token)
-  const nextRefresh = asString(raw.refresh_token)
+  const token = asStringOrEmpty(raw.token)
+  const nextRefresh = asStringOrEmpty(raw.refresh_token)
   if (!token || !nextRefresh) {
     throw new Error("Qoder job token refresh returned an incomplete token pair")
   }
@@ -363,9 +359,9 @@ export async function fetchQoderUserInfo(
   }
   const raw = asRecordOrEmpty(safeJson(body))
   return {
-    id: asString(raw.id),
-    name: asString(raw.name),
-    email: asString(raw.email),
+    id: asStringOrEmpty(raw.id),
+    name: asStringOrEmpty(raw.name),
+    email: asStringOrEmpty(raw.email),
   }
 }
 

@@ -17,6 +17,7 @@
 // only the snapshot-wide fallbacks (top-level counters, heterogeneous resets)
 // for providers that report no canonical window list.
 
+import { isRecord } from "~/lib/json-shape"
 import {
   planAccountFor,
   planAllowanceFor,
@@ -91,10 +92,6 @@ function usedFractionOf(snapshot: QuotaSnapshot): number | undefined {
     if (used > max) max = used
   }
   return seen ? max : undefined
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null
 }
 
 function pushReset(target: Array<number>, value: unknown): void {

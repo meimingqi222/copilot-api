@@ -25,6 +25,7 @@
 
 import type { ProviderConnection } from "~/lib/provider-connections"
 
+import { asStringFieldOrEmpty } from "~/lib/json-shape"
 import { HTTPError } from "~/lib/error"
 import {
   setConnectionCredentialExtra,
@@ -96,14 +97,6 @@ function factoryExpiryMs(accessToken: string): number {
   }
 }
 
-function readString(
-  obj: Record<string, unknown> | undefined,
-  key: string,
-): string {
-  const value = obj?.[key]
-  return typeof value === "string" ? value : ""
-}
-
 /** POST 表单到 WorkOS。 */
 async function workosPost(
   path: string,
@@ -150,7 +143,7 @@ export async function startFactoryDeviceFlow(
   )
   // 设备码端点在 2xx 时直接返回设备码字段；错误时走 error。
   const record = tokens as unknown as Record<string, unknown>
-  const deviceCode = readString(record, "device_code")
+  const deviceCode = asStringFieldOrEmpty(record, "device_code")
   if (!deviceCode) {
     throw new HTTPError(
       "Factory sign-in gave no device code",
@@ -160,10 +153,10 @@ export async function startFactoryDeviceFlow(
   }
   return {
     device_code: deviceCode,
-    user_code: readString(record, "user_code"),
-    verification_uri: readString(record, "verification_uri"),
+    user_code: asStringFieldOrEmpty(record, "user_code"),
+    verification_uri: asStringFieldOrEmpty(record, "verification_uri"),
     verification_uri_complete:
-      readString(record, "verification_uri_complete") || undefined,
+      asStringFieldOrEmpty(record, "verification_uri_complete") || undefined,
     interval: typeof record.interval === "number" ? record.interval : undefined,
     expires_in:
       typeof record.expires_in === "number" ? record.expires_in : undefined,

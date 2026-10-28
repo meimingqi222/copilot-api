@@ -13,6 +13,7 @@
  * the durable copy the store keeps.
  */
 
+import { isRecord } from "~/lib/json-shape"
 import type { ProviderConnection } from "~/lib/provider-connections"
 import type { QuotaSnapshot } from "~/lib/quota/types"
 
@@ -71,10 +72,6 @@ function scopeOfWindowText(text: string): string | undefined {
     if (lower.includes(token)) return token
   }
   return undefined
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null
 }
 
 /** A finite number from a window descriptor field, or undefined. */

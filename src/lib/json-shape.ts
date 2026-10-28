@@ -58,3 +58,27 @@ export function asStringOrEmpty(value: unknown): string {
 export function asTrimmedStringOrEmpty(value: unknown): string {
   return typeof value === "string" ? value.trim() : ""
 }
+
+/** 从一个记录里读字符串字段；缺失时 undefined。 */
+export function asStringField(
+  record: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
+  return asString(record?.[key])
+}
+
+/** 从一个记录里读字符串字段；缺失时空串。 */
+export function asStringFieldOrEmpty(
+  record: Record<string, unknown> | undefined,
+  key: string,
+): string {
+  return asStringOrEmpty(record?.[key])
+}
+
+/** 从一个记录里读 trim 后的非空字符串；缺失时 undefined。 */
+export function asTrimmedStringField(
+  record: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
+  return asTrimmedString(record?.[key])
+}

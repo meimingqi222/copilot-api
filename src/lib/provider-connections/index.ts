@@ -74,6 +74,7 @@ export {
   initializeManagedConnections,
 } from "./boot"
 export {
+  accountModelsToMappings,
   connectionModelsToAccountModels,
   managedConnectionFromInput,
   serializeConnectionForExport,

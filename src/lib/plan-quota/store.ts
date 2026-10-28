@@ -1,6 +1,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 
+import { isRecord } from "~/lib/json-shape"
 import { logger } from "~/lib/logger"
 import { PATHS, assertWritableDataPath } from "~/lib/paths"
 
@@ -66,10 +67,6 @@ export function resetPlanQuotaStore(): void {
 
 function readingKey(provider: string, user: string): string {
   return `${provider}/${user.trim().toLowerCase()}`
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null
 }
 
 function normalizeWindow(value: unknown): PlanWindow | undefined {

@@ -1,6 +1,6 @@
 import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { codexCallbackConfig } from "~/services/providers/callbacks/codex"
-import { accountModelsToMappings } from "~/services/providers/model-catalogs/account-mapping"
+import { accountModelsToMappings } from "~/lib/provider-connections"
 import { getCodexModelsForConnection } from "~/services/codex/get-models"
 import { getCodexFallbackModels } from "~/services/providers/model-catalogs/codex"
 import { fetchCodexQuota } from "~/lib/quota/fetchers/codex"

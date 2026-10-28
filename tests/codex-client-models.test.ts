@@ -26,7 +26,7 @@ import {
   rememberCodexClientModels,
 } from "~/services/codex/client-models"
 import { getCodexModelsForConnection } from "~/services/codex/get-models"
-import { accountModelsToMappings } from "~/services/providers/model-catalogs/account-mapping"
+import { accountModelsToMappings } from "~/lib/provider-connections"
 
 const originalPath = PATHS.APP_DIR
 const originalModels = state.models

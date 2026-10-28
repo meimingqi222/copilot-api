@@ -17,25 +17,17 @@ import {
   responsesImageCall,
 } from "~/services/ir/image-generation"
 
+import { asRecord, asString } from "~/lib/json-shape"
+
 type WireRecord = Record<string, unknown>
-
-function record(value: unknown): WireRecord | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value) ?
-      (value as WireRecord)
-    : undefined
-}
-
-function text(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined
-}
 
 /** Records inside `value[key]`, when that key holds an array of objects. */
 function array(value: unknown, key: string): Array<WireRecord> {
-  const holder = record(value)
+  const holder = asRecord(value)
   const found = holder?.[key]
   if (!Array.isArray(found)) return []
   return found
-    .map(record)
+    .map(asRecord)
     .filter((entry): entry is WireRecord => entry !== undefined)
 }
 
@@ -116,28 +108,28 @@ export function decodeResponsesResult(response: ResponsesResponse): ResultIR {
   const source = { wire: "responses" as const, model: response.model }
   const parts: Array<IRPart> = []
   for (const raw of response.output ?? []) {
-    const item = record(raw)
+    const item = asRecord(raw)
     if (!item) continue
     if (item.type === "reasoning") {
       const summary =
         Array.isArray(item.summary) ?
           item.summary
-            .map((rawPart) => text(record(rawPart)?.text) ?? "")
+            .map((rawPart) => asString(asRecord(rawPart)?.text) ?? "")
             .join("")
         : ""
       parts.push({
         type: "thinking",
         text: summary,
         source,
-        ...(text(item.id) ? { id: text(item.id) } : {}),
-        ...(text(item.encrypted_content) ?
-          { encryptedContent: text(item.encrypted_content) }
+        ...(asString(item.id) ? { id: asString(item.id) } : {}),
+        ...(asString(item.encrypted_content) ?
+          { encryptedContent: asString(item.encrypted_content) }
         : {}),
       })
     } else if (item.type === "message") {
       if (!Array.isArray(item.content)) continue
       for (const rawPart of item.content) {
-        const part = record(rawPart)
+        const part = asRecord(rawPart)
         if (
           part
           && (part.type === undefined
@@ -157,15 +149,15 @@ export function decodeResponsesResult(response: ResponsesResponse): ResultIR {
       const image = imagePartFromGenerationCall(item)
       if (image) parts.push(image)
     } else if (item.type === "function_call") {
-      const callId = text(item.call_id) ?? text(item.id)
-      const name = text(item.name)
+      const callId = asString(item.call_id) ?? asString(item.id)
+      const name = asString(item.name)
       if (callId && name) {
-        const namespace = text(item.namespace)
+        const namespace = asString(item.namespace)
         parts.push({
           type: "tool_call",
           id: callId,
           name: namespace ? `${namespace}__${name}` : name,
-          arguments: text(item.arguments) ?? "{}",
+          arguments: asString(item.arguments) ?? "{}",
           ...(namespace ? { namespace, originalName: name } : {}),
         })
       }
@@ -173,7 +165,7 @@ export function decodeResponsesResult(response: ResponsesResponse): ResultIR {
       // The upstream ran the search itself; the action carries the query and
       // the visited pages (`action.sources`), which is this wire's only slot
       // for search results.
-      const id = text(item.id) ?? text(item.call_id)
+      const id = asString(item.id) ?? asString(item.call_id)
       if (id) {
         parts.push({
           type: "server_tool_use",
@@ -184,11 +176,11 @@ export function decodeResponsesResult(response: ResponsesResponse): ResultIR {
         const sources = array(item.action, "sources")
         const results: Array<IRWebSearchResult> = []
         for (const source of sources) {
-          const url = text(source.url)
+          const url = asString(source.url)
           if (!url) continue
           results.push({
             url,
-            ...(text(source.title) && { title: text(source.title) }),
+            ...(asString(source.title) && { title: asString(source.title) }),
           })
         }
         if (results.length > 0)

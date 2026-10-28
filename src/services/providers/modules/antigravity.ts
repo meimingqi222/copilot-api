@@ -1,6 +1,6 @@
 import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { antigravityCallbackConfig } from "~/services/providers/callbacks/antigravity"
-import { accountModelsToMappings } from "~/services/providers/model-catalogs/account-mapping"
+import { accountModelsToMappings } from "~/lib/provider-connections"
 import { getAntigravityModelsForConnection } from "~/services/antigravity/get-models"
 import { getAntigravityFallbackModels } from "~/services/providers/model-catalogs/antigravity"
 import { fetchAntigravityQuota } from "~/lib/quota/fetchers/antigravity"

@@ -1,13 +1,9 @@
+import { asRecordOrEmpty } from "~/lib/json-shape"
+
 interface PendingCall {
   upstreamId: string
   name: string
   arguments?: unknown
-}
-
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ?
-      (value as Record<string, unknown>)
-    : {}
 }
 
 function mergeArguments(previous: unknown, next: unknown): unknown {
@@ -26,8 +22,8 @@ export class TraeCnNativeTools {
   private anonymous = new Map<string, PendingCall>()
 
   push(value: unknown): void {
-    const call = record(value)
-    const fn = record(call.function ?? call.function_call ?? call)
+    const call = asRecordOrEmpty(value)
+    const fn = asRecordOrEmpty(call.function ?? call.function_call ?? call)
     const id = String(call.id ?? call.tool_call_id ?? "")
     const index = typeof call.index === "number" ? call.index : undefined
     const name = String(fn.name ?? call.tool_name ?? "")

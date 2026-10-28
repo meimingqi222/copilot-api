@@ -1,24 +1,9 @@
 import type { ModelMapping } from "~/lib/provider-connections"
+import { endpointsFromSupported } from "~/lib/provider-connections"
 import type { CatalogEntry } from "~/services/providers/model-catalogs/types"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 
 // ── ModelMapping 版本 ───────────────────────────────────────
-
-function endpointsToModelEndpoints(
-  supported: Array<string>,
-): Array<ModelMapping["endpoints"][number]> {
-  const endpoints: Array<ModelMapping["endpoints"][number]> = []
-  for (const ep of supported) {
-    if (ep.includes("chat/completions")) endpoints.push("chat")
-    else if (ep.includes("messages")) endpoints.push("messages")
-    else if (ep.includes("responses")) endpoints.push("responses")
-    else if (ep.includes("embeddings")) endpoints.push("embeddings")
-    else if (ep.includes("images")) endpoints.push("images")
-    else if (ep.includes("videos")) endpoints.push("videos")
-  }
-  if (endpoints.length === 0) endpoints.push("chat")
-  return endpoints
-}
 
 export function toModelMappings(
   entries: Array<CatalogEntry>,
@@ -32,6 +17,6 @@ export function toModelMappings(
     vendor: entry.vendor,
     enabled: true,
     pickerEnabled: entry.pickerEnabled ?? true,
-    endpoints: endpointsToModelEndpoints(entry.supportedEndpoints),
+    endpoints: endpointsFromSupported(entry.supportedEndpoints),
   }))
 }

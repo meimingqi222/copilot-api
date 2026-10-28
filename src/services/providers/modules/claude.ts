@@ -1,6 +1,6 @@
 import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { claudeCallbackConfig } from "~/services/providers/callbacks/claude"
-import { accountModelsToMappings } from "~/services/providers/model-catalogs/account-mapping"
+import { accountModelsToMappings } from "~/lib/provider-connections"
 import { getClaudeModelsForConnection } from "~/services/claude/get-models"
 import { getClaudeFallbackModels } from "~/services/providers/model-catalogs/claude"
 import { fetchClaudeQuota } from "~/lib/quota/fetchers/claude"

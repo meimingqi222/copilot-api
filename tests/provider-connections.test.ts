@@ -31,6 +31,7 @@ import {
 } from "~/lib/provider-connections"
 import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
+import { toModelMappings } from "~/services/providers/model-catalogs/mapping"
 import {
   __resetRouteTargetRoundRobin,
   buildRouteTargets,
@@ -828,6 +829,20 @@ describe("OpenAI-compatible model discovery", () => {
         endpoints: ["embeddings"],
       }),
     ])
+  })
+})
+
+describe("model catalog mapping", () => {
+  test("keeps a gemini endpoint instead of falling back to chat", () => {
+    const [mapped] = toModelMappings([
+      {
+        id: "gemini-catalog",
+        name: "Gemini Catalog",
+        vendor: "google",
+        supportedEndpoints: ["gemini"],
+      },
+    ])
+    expect(mapped.endpoints).toEqual(["gemini"])
   })
 })
 

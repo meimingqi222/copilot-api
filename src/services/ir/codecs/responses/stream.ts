@@ -23,17 +23,9 @@ import {
   webSearchCallItem,
 } from "./result"
 
+import { asRecord, asString } from "~/lib/json-shape"
+
 type WireRecord = Record<string, unknown>
-
-function record(value: unknown): WireRecord | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value) ?
-      (value as WireRecord)
-    : undefined
-}
-
-function text(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined
-}
 
 function number(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined
@@ -41,11 +33,11 @@ function number(value: unknown): number | undefined {
 
 function parse(data: string | undefined): WireRecord | undefined {
   if (!data || data === "[DONE]") return undefined
-  return record(JSON.parse(data) as unknown)
+  return asRecord(JSON.parse(data) as unknown)
 }
 
 function responseFromRecord(value: unknown): ResponsesResponse | undefined {
-  const response = record(value)
+  const response = asRecord(value)
   if (
     !response
     || typeof response.id !== "string"
@@ -63,13 +55,13 @@ function decodeAddedPart(
   if (item.type === "message") return { type: "text", text: "" }
   if (item.type === "reasoning") return { type: "thinking", text: "", source }
   if (item.type !== "function_call") return undefined
-  const namespace = text(item.namespace)
-  const name = text(item.name) ?? "unknown_function"
+  const namespace = asString(item.namespace)
+  const name = asString(item.name) ?? "unknown_function"
   return {
     type: "tool_call",
-    id: text(item.call_id) ?? text(item.id) ?? `call_${index}`,
+    id: asString(item.call_id) ?? asString(item.id) ?? `call_${index}`,
     name: namespace ? `${namespace}__${name}` : name,
-    arguments: text(item.arguments) ?? "",
+    arguments: asString(item.arguments) ?? "",
     ...(namespace ? { namespace, originalName: name } : {}),
   }
 }
@@ -133,13 +125,15 @@ function* decodeFailure(wire: WireRecord): Iterable<StreamEvent> {
   const response = responseFromRecord(wire.response)
   const usage = response && decodeResponsesResult(response).usage
   if (usage) yield { type: "usage", usage }
-  const error = record(wire.error) ?? record(response?.error)
+  const error = asRecord(wire.error) ?? asRecord(response?.error)
   yield {
     type: "error",
     error: {
-      type: text(error?.type) ?? text(wire.type) ?? "api_error",
+      type: asString(error?.type) ?? asString(wire.type) ?? "api_error",
       message:
-        text(error?.message) ?? text(wire.message) ?? "Responses stream failed",
+        asString(error?.message)
+        ?? asString(wire.message)
+        ?? "Responses stream failed",
     },
   }
 }
@@ -176,8 +170,8 @@ function* finishResponsePart(
   if (!current) return
   if (current.part.type === "tool_call") {
     // If done omits arguments, keep the call open for the terminal snapshot.
-    if (!text(item?.arguments)) return
-    yield* completeToolArguments(current, index, text(item?.arguments))
+    if (!asString(item?.arguments)) return
+    yield* completeToolArguments(current, index, asString(item?.arguments))
   }
   yield { type: "part_end", partId: current.id, index }
   started.delete(index)
@@ -192,7 +186,7 @@ function* completeTerminalParts(
       started.get(index)?.part.type === "tool_call"
       && item.type === "function_call"
     ) {
-      yield* finishResponsePart(started, index, record(item))
+      yield* finishResponsePart(started, index, asRecord(item))
     }
   }
   for (const [index, current] of started) {
@@ -211,13 +205,13 @@ function refusalStop(result: ResultIR, refused: boolean): ResultIR["stop"] {
 function refusalDelta(wire: WireRecord, refusals: Map<string, string>): string {
   const key = `${number(wire.output_index) ?? 0}:${number(wire.content_index) ?? 0}`
   const prefix = refusals.get(key) ?? ""
-  const snapshot = text(wire.refusal) ?? ""
+  const snapshot = asString(wire.refusal) ?? ""
   const delta =
     wire.type === "response.refusal.done" ?
       snapshot.startsWith(prefix) ?
         snapshot.slice(prefix.length)
       : ""
-    : (text(wire.delta) ?? "")
+    : (asString(wire.delta) ?? "")
   refusals.set(key, prefix + delta)
   return delta
 }
@@ -241,7 +235,7 @@ export async function* decodeResponsesStream(
     if (raw.data === "[DONE]") break
     const wire = parse(raw.data)
     if (!wire) continue
-    const type = text(wire.type)
+    const type = asString(wire.type)
     if (type === "error" || type === "response.failed") {
       yield* decodeFailure(wire)
       return
@@ -261,7 +255,7 @@ export async function* decodeResponsesStream(
       }
       continue
     }
-    const wireResponseId = text(wire.response_id)
+    const wireResponseId = asString(wire.response_id)
     if (wireResponseId) responseId = wireResponseId
     const terminalResponse =
       type === "response.completed" || type === "response.incomplete" ?
@@ -279,18 +273,18 @@ export async function* decodeResponsesStream(
       }
     }
     if (type === "response.output_item.added") {
-      const item = record(wire.item)
+      const item = asRecord(wire.item)
       const index = number(wire.output_index) ?? nextIndex++
       nextIndex = Math.max(nextIndex, index + 1)
       if (!item) continue
       if (item.type === "image_generation_call") {
-        const id = text(item.id)
+        const id = asString(item.id)
         if (id) imageIndices.set(id, index)
         continue // Only final bytes are portable; do not forward previews.
       }
       const part = decodeAddedPart(item, index, source)
       if (!part) continue
-      const partId = text(item.id) ?? `${part.type}_${index}`
+      const partId = asString(item.id) ?? `${part.type}_${index}`
       started.set(index, { id: partId, part })
       if (part.type === "tool_call") populated.add(index)
       yield { type: "part_start", partId, index, part }
@@ -333,7 +327,8 @@ export async function* decodeResponsesStream(
       if (!current) continue
       const refusal =
         type === "response.refusal.delta" || type === "response.refusal.done"
-      const delta = refusal ? refusalDelta(wire, refusals) : text(wire.delta)
+      const delta =
+        refusal ? refusalDelta(wire, refusals) : asString(wire.delta)
       if (refusal) {
         refused = true
       }
@@ -362,13 +357,13 @@ export async function* decodeResponsesStream(
       yield* completeToolArguments(
         started.get(index),
         index,
-        text(wire.arguments),
+        asString(wire.arguments),
       )
       continue
     }
     if (type === "response.output_item.done") {
-      const item = record(wire.item)
-      const imageId = text(item?.id)
+      const item = asRecord(wire.item)
+      const imageId = asString(item?.id)
       const index =
         number(wire.output_index)
         ?? (imageId ? imageIndices.get(imageId) : undefined)
