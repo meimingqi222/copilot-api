@@ -91,6 +91,8 @@ describe("admin asset cache busting", () => {
       "partials/performance-detail.html": "0.7.10",
       // 0.7.18 缺少 last1h/last6h 的实时范围文案, 新按钮会渲染成空白
       "js/i18n.js": "0.7.19",
+      // 21578d4 改了日志详情选择逻辑却没升版本号, 浏览器仍可能执行旧 logs.js
+      "js/views/logs.js": "0.7.6",
     }
     for (const [suffix, floor] of Object.entries(staleFloors)) {
       const asset = assets.find(({ path }) => path.endsWith(suffix))
