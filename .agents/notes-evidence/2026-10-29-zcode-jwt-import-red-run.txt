@@ -1,0 +1,30 @@
+77 |       attributes: { zcode_jwt: "zcode-attr-jwt" },
+78 |     })
+79 | 
+80 |     expect(conn.credentials[0]?.context?.zcodeJwt).toBe("zcode-attr-jwt")
+                                                        ^
+error: expect(received).toBe(expected)
+
+Expected: "zcode-attr-jwt"
+Received: undefined
+
+      at <anonymous> (D:\code\copilot-refs\copilot-api\tests\cpa-import.test.ts:80:52)
+(fail) CPA auth import > zcode record reads zcode_jwt from attributes [0.15ms]
+(pass) CPA auth import > strips tokens from cpaMetadata [0.09ms]
+(pass) CPA auth import > overwrite replaces duplicate CPA account [0.32ms]
+(pass) CPA auth import > imports multiple CPA records with skip duplicates [0.12ms]
+(pass) CPA auth import > dedupes the same account imported under a different label [0.11ms]
+(pass) CPA auth import > matches identity by email when no account id is present [0.05ms]
+(pass) CPA auth import > parses CPA payload variants [0.04ms]
+(pass) CPA auth import > substitutes token placeholder in headers [0.04ms]
+(pass) CPA auth import > parses unix and iso expiry values [0.02ms]
+
+3 tests failed:
+(fail) zcode export/import preserves the session JWT used for plan claims [2.39ms]
+(fail) CPA auth import > zcode record keeps the session JWT out of cpaMetadata [0.23ms]
+(fail) CPA auth import > zcode record reads zcode_jwt from attributes [0.15ms]
+
+ 24 pass
+ 3 fail
+ 98 expect() calls
+Ran 27 tests across 2 files. [357.00ms]

@@ -22,6 +22,7 @@ import {
   connectionOAuthIdentity,
   findConnectionByOAuthIdentity,
 } from "./identity"
+import { setCredentialContextField } from "~/lib/provider-connections"
 import { normalizeCpaProviderType } from "./normalize"
 import { createOAuthConnection } from "./provider-strategies"
 import { parseExpiresAt } from "./token-resolver"
@@ -61,6 +62,7 @@ function sanitizeCpaMetadata(
     refresh_token: _refreshToken,
     id_token: _idToken,
     api_key: _apiKey,
+    zcode_jwt: _zcodeJwt,
     token: _token,
     ...rest
   } = record
@@ -134,6 +136,13 @@ export function mapCpaRecordToConnection(
       email: pickString(record.email),
     },
   )
+
+  // ZCode 会话 JWT（Start Plan / 限时套餐领取凭证）。CPA 记录放顶层
+  // zcode_jwt 或 attributes.zcode_jwt；缺了导入的账号领不了活动套餐。
+  if (provider === "zcode") {
+    const jwt = pickString(record.zcode_jwt, record.attributes?.zcode_jwt)
+    if (jwt) setCredentialContextField(conn, "zcodeJwt", jwt)
+  }
 
   // 应用 settings(baseUrl/proxyUrl/tokenEndpoint 等)
   const tokenEndpoint =

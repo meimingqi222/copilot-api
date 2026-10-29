@@ -381,6 +381,13 @@ function buildOAuthAccountFromImportPayload(
       accountId: pickCredentialString("accountId"),
       projectId: pickCredentialString("projectId"),
       deviceId: pickCredentialString("deviceId"),
+      ...(provider === "zcode" ?
+        {
+          // ZCode 会话 JWT（Start Plan / 限时套餐领取凭证）。导出侧经
+          // contextStringKeys 落 credentials.zcodeJwt，这里接回来。
+          zcodeJwt: pickCredentialString("zcodeJwt"),
+        }
+      : {}),
       ...(provider === "trae-cn" ?
         {
           clientId: pickCredentialString("clientId"),

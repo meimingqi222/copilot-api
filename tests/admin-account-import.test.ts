@@ -40,6 +40,8 @@ import {
   newTraeCnDevice,
   traeCnAccount,
 } from "~/services/oauth/trae-cn"
+import { applyZcodeOAuthBundle } from "~/services/oauth/zcode"
+import { zcodeSessionJwt } from "~/services/zcode/start-plan"
 import { cancelAllOAuthRefreshTimers } from "~/services/oauth/refresh-scheduler"
 
 import {
@@ -399,6 +401,30 @@ test("Trae export/import preserves the bound device without exposing its private
       JSON.stringify(account.devicePrivateKey),
     ),
   ).toBe(false)
+})
+
+test("zcode export/import preserves the session JWT used for plan claims", async () => {
+  const original = createOAuthConnection("zcode", "zcode-claim-jwt")
+  applyZcodeOAuthBundle(original, {
+    base: "https://api.z.ai/api/anthropic",
+    apiKey: "key-id.key-secret",
+    site: "zai",
+    jwt: "zcode-session-jwt",
+    email: "claim@example.com",
+    userId: "user-1",
+  })
+  const exported = serializeConnectionForExport(original)
+  expect(exported.credentials).toMatchObject({
+    zcodeJwt: "zcode-session-jwt",
+  })
+
+  const { body } = await importAccounts([exported])
+  expect(body.imported).toBe(1)
+  expect(body.failed).toBe(0)
+  const restored = listAccountManagedConnections().find(
+    (c) => c.name === "zcode-claim-jwt",
+  )!
+  expect(zcodeSessionJwt(restored)).toBe("zcode-session-jwt")
 })
 
 /** Guard against the extraction dropping the provider on the account shape. */

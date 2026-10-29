@@ -58,6 +58,28 @@ describe("CPA auth import", () => {
     expect(account.settings?.tokenEndpoint).toContain("/oauth2/token")
   })
 
+  test("zcode record keeps the session JWT out of cpaMetadata", () => {
+    const conn = mapCpaRecordToConnection({
+      type: "zcode",
+      access_token: "key-id.key-secret",
+      zcode_jwt: "zcode-session-jwt",
+      email: "claim@example.com",
+    })
+
+    expect(conn.credentials[0]?.context?.zcodeJwt).toBe("zcode-session-jwt")
+    expect(conn.metadata?.cpaMetadata).not.toHaveProperty("zcode_jwt")
+  })
+
+  test("zcode record reads zcode_jwt from attributes", () => {
+    const conn = mapCpaRecordToConnection({
+      type: "zcode",
+      access_token: "key-id.key-secret",
+      attributes: { zcode_jwt: "zcode-attr-jwt" },
+    })
+
+    expect(conn.credentials[0]?.context?.zcodeJwt).toBe("zcode-attr-jwt")
+  })
+
   test("strips tokens from cpaMetadata", () => {
     const conn = mapCpaRecordToConnection({
       type: "claude",

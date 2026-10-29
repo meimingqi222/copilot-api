@@ -15,6 +15,8 @@ export interface CpaAuthRecord {
   prefix?: string
   proxy_url?: string
   api_key?: string
+  /** ZCode 会话 JWT（Start Plan / 限时套餐领取凭证），CPA 导出经 attributes 或顶层携带。 */
+  zcode_jwt?: string
   token?: {
     access_token?: string
     refresh_token?: string
