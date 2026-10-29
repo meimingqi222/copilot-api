@@ -21,7 +21,7 @@
 
 import type { ProviderConnection } from "~/lib/provider-connections"
 
-import { logger } from "~/lib/logger"
+import { createLogger } from "~/lib/logger"
 import {
   connectionProvider,
   getConnectionProxyUrl,
@@ -30,9 +30,9 @@ import {
 } from "~/lib/provider-connections"
 import { refreshManagedQuota } from "~/lib/quota/refresh"
 import { getSystemSettings } from "~/lib/system-config"
-import { asRecord } from "~/lib/json-shape"
+import { asRecord, asTrimmedStringOrEmpty } from "~/lib/json-shape"
 import { oauthFetch } from "~/services/oauth/fetch"
-import { ZCODE_API, ZCODE_APP_VERSION } from "~/services/oauth/zcode"
+import { resolveZcodeAppVersion, ZCODE_API } from "~/services/oauth/zcode"
 
 import { getZcodeVerifyParam, invalidateZcodeVerifyParam } from "./captcha"
 import {
@@ -41,7 +41,9 @@ import {
   zcodeJwtExpired,
   zcodeSessionJwt,
 } from "./start-plan"
-import { asTrimmedStringOrEmpty } from "~/lib/json-shape"
+
+/** 「日志与诊断」里按子系统 zcode 过滤：领取轮与手动领取都走这条。 */
+const logger = createLogger("zcode")
 
 const BILLING_BASE = `${ZCODE_API}/api/v1/zcode-plan`
 const CLAIM_STATE_KEY = "zcodeClaim"
@@ -228,16 +230,17 @@ async function billingRequest(
   path: "preview" | "claim",
   init: RequestInit,
   signal: AbortSignal,
+  appVersion: string,
 ): Promise<BillingResponse> {
   const proxyUrl = getConnectionProxyUrl(connection)
-  const suffix = path === "preview" ? previewQuery() : ""
+  const suffix = path === "preview" ? previewQuery(appVersion) : ""
   const response = await oauthFetch(
     `${BILLING_BASE}/billing/${path}${suffix}`,
     {
       ...init,
       signal,
       headers: {
-        ...zcodeBillingHeaders(),
+        ...zcodeBillingHeaders(appVersion),
         ...(init.headers as Record<string, string> | undefined),
       },
     },
@@ -253,14 +256,29 @@ async function billingRequest(
   return { status: response.status, body }
 }
 
-function previewQuery(): string {
+function previewQuery(appVersion: string): string {
   return (
     "?"
     + new URLSearchParams({
-      app_version: ZCODE_APP_VERSION,
+      app_version: appVersion,
       platform: `${process.platform}-${process.arch}`,
     }).toString()
   )
+}
+
+/**
+ * 领取链路用的客户端版本：官方清单为准，常量兜底（见 resolveZcodeAppVersion）。
+ * 上游按它投放活动套餐，钉死旧版会静默返回空列表。
+ */
+async function claimAppVersion(
+  connection: ProviderConnection,
+  signal?: AbortSignal,
+): Promise<string> {
+  const proxyUrl = getConnectionProxyUrl(connection)
+  return resolveZcodeAppVersion({
+    ...(signal ? { signal } : {}),
+    ...(proxyUrl ? { proxyUrl } : {}),
+  })
 }
 
 /**
@@ -271,6 +289,7 @@ export async function fetchZcodeClaimPlans(
   signal?: AbortSignal,
 ): Promise<Array<ZcodeClaimPlan>> {
   const jwt = requireJwt(connection)
+  const appVersion = await claimAppVersion(connection, signal)
   const response = await billingRequest(
     connection,
     "preview",
@@ -279,6 +298,7 @@ export async function fetchZcodeClaimPlans(
       headers: { authorization: `Bearer ${jwt}` },
     },
     signal ?? AbortSignal.timeout(PREVIEW_TIMEOUT_MS),
+    appVersion,
   )
   if (response.status === 404) return []
   if (response.status === 401 || response.status === 403) {
@@ -341,6 +361,17 @@ export async function claimZcodePlan(
   let planId = options.planId?.trim() ?? ""
   let planName = ""
   let grants: Array<ZcodeClaimGrant> = []
+  if (planId) {
+    // 手动领（WebUI 传 planId）时从最近的 preview 结果补名字与额度，
+    // 否则成功回执里只剩一个 planId，UI 会显示「已领取 zcode-v3-…」。
+    const known = readZcodeClaimState(connection).plans?.find(
+      (plan) => plan.planId === planId,
+    )
+    if (known) {
+      planName = known.name
+      grants = known.grants
+    }
+  }
   if (!planId) {
     const plans = await fetchZcodeClaimPlans(connection, options.signal)
     if (plans.length === 0) {
@@ -370,11 +401,13 @@ export async function claimZcodePlan(
   }
   if (region) headers["X-Aliyun-Captcha-Verify-Region"] = region
 
+  const appVersion = await claimAppVersion(connection, options.signal)
   const response = await billingRequest(
     connection,
     "claim",
     { method: "POST", headers, body: JSON.stringify({ plan_id: planId }) },
     options.signal ?? AbortSignal.timeout(CLAIM_TIMEOUT_MS),
+    appVersion,
   )
 
   const code = businessCode(response.body)

@@ -21,6 +21,7 @@
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { HTTPError } from "~/lib/error"
+import { logger } from "~/lib/logger"
 import { setCredentialContextField } from "~/lib/provider-connections"
 import { asRecord } from "~/lib/json-shape"
 
@@ -31,13 +32,154 @@ import { asStringOrEmpty } from "~/lib/json-shape"
 
 export const ZCODE_API = "https://zcode.z.ai"
 /**
- * ZCode 桌面端版本（对话与 billing 头都用它）。
+ * ZCode 桌面端版本兜底值（对话与 billing 头都用它）。
  *
  * 活动套餐投放按最低客户端版本投：钉旧版时 billing/preview 会恒空
- * （「不符合条件」），所以官方升版后要跟进。3.14.4 = zcode2api 2026-10-02
- * 实测的官方现行版；发现 preview 一直为空时先核这里是否落后。
+ * ——这是「明明有套餐却领不到」的头号原因，不是账号不符合条件。
+ * 2026-10-29 实测：3.14.4 返回 `plans: []`，3.16.3（本机 ZCode
+ * 客户端 app.asar 里的 ri 常量）起才投 `ZCODE GLOBAL BUILD`。
+ *
+ * 领取链路已改为读官方版本清单（resolveZcodeAppVersion），这个值只在
+ * 清单拉不到时兜底；对话路径仍直接用它。
  */
-export const ZCODE_APP_VERSION = "3.14.4"
+export const ZCODE_APP_VERSION = "3.16.3"
+
+/**
+ * 官方 electron 版本清单（更新器用的同一个端点，免鉴权，返回 YAML）。
+ *
+ *   GET {zcode}/api/v1/releases/electron/manifest?platform=windows-x86_64&channel=stable
+ *   → version: 3.16.3 ...
+ *
+ * 活动套餐按最低客户端版本投放，硬编码的版本一旦落后，preview 会静默
+ * 返回空列表（看起来像「账号不符合条件」）。所以运行时读官方清单，把
+ * 上面的常量当兜底。
+ */
+const RELEASE_MANIFEST_URL = `${ZCODE_API}/api/v1/releases/electron/manifest`
+/** 官方发版不频繁；6 小时足够跟上，又不至于每次领取都打一次。 */
+const APP_VERSION_TTL_MS = 6 * 60 * 60 * 1000
+/** 清单拉不到时短退避，避免每个账号每轮都重试一次。 */
+const APP_VERSION_RETRY_MS = 10 * 60 * 1000
+const APP_VERSION_TIMEOUT_MS = 10_000
+
+let cachedAppVersion: { value: string; at: number; ttlMs: number } | undefined
+let appVersionTask: Promise<string> | undefined
+
+/** 更新器的平台键：windows-x86_64 / darwin-arm64 / linux-x86_64。 */
+function releasePlatformKey(): string {
+  const platform =
+    process.platform === "win32" ? "windows"
+    : process.platform === "darwin" ? "darwin"
+    : process.platform
+  const arch =
+    process.arch === "x64" ? "x86_64"
+    : process.arch === "ia32" ? "x86"
+    : process.arch
+  return `${platform}-${arch}`
+}
+
+function semverParts(value: string): Array<number> | undefined {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)/i.exec(value.trim())
+  return match ?
+      [Number(match[1]), Number(match[2]), Number(match[3])]
+    : undefined
+}
+
+/** 取两者中较新的版本，忽略无法解析的一侧。 */
+function newestVersion(a: string, b: string): string {
+  const pa = semverParts(a)
+  const pb = semverParts(b)
+  if (!pa) return b
+  if (!pb) return a
+  for (let i = 0; i < 3; i += 1) {
+    if (pa[i] !== pb[i]) return pa[i]! > pb[i]! ? a : b
+  }
+  return a
+}
+
+/** 从更新器清单里读 `version:`（YAML 只为取一行，不引依赖）。 */
+function parseReleaseManifestVersion(text: string): string | undefined {
+  const match = /^version:\s*["']?([\w.+-]+)["']?\s*$/m.exec(text)
+  const value = match?.[1]?.trim()
+  return value && semverParts(value) ? value : undefined
+}
+
+/** 清单里的版本；拉取失败返回 undefined，由调用方决定退避时长。 */
+async function fetchZcodeAppVersion(options?: {
+  signal?: AbortSignal
+  proxyUrl?: string
+}): Promise<string | undefined> {
+  const url = `${RELEASE_MANIFEST_URL}?platform=${encodeURIComponent(
+    releasePlatformKey(),
+  )}&channel=stable`
+  try {
+    const response = await oauthFetch(
+      url,
+      {
+        headers: {
+          accept: "application/x-yaml,text/yaml,text/plain,*/*",
+          "user-agent": `ZCode/${ZCODE_APP_VERSION}`,
+        },
+        signal: options?.signal ?? AbortSignal.timeout(APP_VERSION_TIMEOUT_MS),
+      },
+      options?.proxyUrl ? { proxyUrl: options.proxyUrl } : undefined,
+    )
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const version = parseReleaseManifestVersion(await response.text())
+    if (!version) throw new Error("manifest carried no version")
+    return version
+  } catch (error) {
+    logger.warn(
+      `Could not read ZCode's release manifest, keeping ${ZCODE_APP_VERSION}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    )
+    return undefined
+  }
+}
+
+/**
+ * 当前官方客户端版本（活动套餐投放按它判定）。
+ *
+ * 读官方更新器清单并与常量取较新者，拉取失败就退回常量——旧版只会让
+ * 「可领套餐」变空，不会报错，所以这里永不抛异常。
+ */
+export async function resolveZcodeAppVersion(options?: {
+  signal?: AbortSignal
+  proxyUrl?: string
+}): Promise<string> {
+  const now = Date.now()
+  if (cachedAppVersion && now - cachedAppVersion.at < cachedAppVersion.ttlMs) {
+    return cachedAppVersion.value
+  }
+  if (appVersionTask) return appVersionTask
+  const task = fetchZcodeAppVersion(options)
+    .then((fetched) => {
+      cachedAppVersion =
+        fetched ?
+          {
+            value: newestVersion(fetched, ZCODE_APP_VERSION),
+            at: Date.now(),
+            ttlMs: APP_VERSION_TTL_MS,
+          }
+        : {
+            value: ZCODE_APP_VERSION,
+            at: Date.now(),
+            ttlMs: APP_VERSION_RETRY_MS,
+          }
+      return cachedAppVersion.value
+    })
+    .finally(() => {
+      appVersionTask = undefined
+    })
+  appVersionTask = task
+  return task
+}
+
+/** 测试用：清掉抓到的版本缓存。 */
+export function __resetZcodeAppVersionForTest(): void {
+  cachedAppVersion = undefined
+  appVersionTask = undefined
+}
 
 export const ZCODE_ZAI_ANTHROPIC_BASE = "https://api.z.ai/api/anthropic"
 export const ZCODE_BIGMODEL_ANTHROPIC_BASE =

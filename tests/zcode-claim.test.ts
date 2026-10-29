@@ -25,7 +25,10 @@ import {
   writeZcodeClaimState,
   ZcodeClaimError,
 } from "~/services/zcode/claim"
-import { ZCODE_APP_VERSION } from "~/services/oauth/zcode"
+import {
+  __resetZcodeAppVersionForTest,
+  ZCODE_APP_VERSION,
+} from "~/services/oauth/zcode"
 import {
   __resetZcodeCaptchaForTest,
   __setZcodeVerifyParamForTest,
@@ -38,6 +41,7 @@ afterEach(async () => {
   globalThis.fetch = originalFetch
   __resetProviderConnectionsForTest()
   __resetZcodeCaptchaForTest()
+  __resetZcodeAppVersionForTest()
   await __resetZcodeClaimRoundForTest()
 })
 
@@ -207,6 +211,30 @@ describe("zcode claim client", () => {
     expect(seenHeaders["X-Title"]).toBe("Z Code@electron")
   })
 
+  test("preview advertises a client version at or above the plan-delivery floor", async () => {
+    // 上游按最低客户端版本投放限时套餐：2026-10-29 实测 3.14.4 → plans 为空，
+    // 3.16.3（当时官方客户端版本）→ 投放 ZCODE GLOBAL BUILD。把常量降回旧版
+    // 不会报错，只会让 preview 永远「暂无可领取套餐」，所以在这里钉住下限。
+    const floor = [3, 16, 3]
+    const version = ZCODE_APP_VERSION.split(".").map(Number)
+    for (let i = 0; i < floor.length; i += 1) {
+      if ((version[i] ?? 0) !== floor[i]!) {
+        expect(version[i] ?? 0).toBeGreaterThan(floor[i]!)
+        break
+      }
+    }
+
+    const connection = createConnection()
+    let seenUrl = ""
+    globalThis.fetch = (async (url: string | URL) => {
+      seenUrl = String(url)
+      return jsonResponse({ code: 0, data: { plans: [] } })
+    }) as unknown as typeof fetch
+
+    await fetchZcodeClaimPlans(connection)
+    expect(seenUrl).toContain(`app_version=${ZCODE_APP_VERSION}`)
+  })
+
   test("preview treats an upstream 404 as 'no activity right now'", async () => {
     const connection = createConnection()
     globalThis.fetch = (async () =>
@@ -216,6 +244,68 @@ describe("zcode claim client", () => {
       )) as unknown as typeof fetch
 
     expect(await fetchZcodeClaimPlans(connection)).toEqual([])
+  })
+
+  test("preview follows the version the official release manifest advertises", async () => {
+    const connection = createConnection()
+    const calls: Array<{ url: string; headers: Record<string, string> }> = []
+    globalThis.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = String(input)
+      calls.push({
+        url,
+        headers: (init?.headers ?? {}) as Record<string, string>,
+      })
+      if (url.includes("/api/v1/releases/electron/manifest")) {
+        return new Response("version: 9.9.9\nfiles: []\n", { status: 200 })
+      }
+      return jsonResponse({ code: 0, data: { plans: [] } })
+    }) as unknown as typeof fetch
+
+    await fetchZcodeClaimPlans(connection)
+
+    const preview = calls.find((call) => call.url.includes("/billing/preview"))!
+    expect(preview.url).toContain("app_version=9.9.9")
+    expect(preview.headers["X-ZCode-App-Version"]).toBe("9.9.9")
+    // 清单里给的是更新器平台键，不是 process.platform。
+    const manifest = calls.find((call) =>
+      call.url.includes("/releases/electron/manifest"),
+    )!
+    expect(manifest.url).toContain("channel=stable")
+  })
+
+  test("preview keeps the pinned version when the manifest is unreachable", async () => {
+    const connection = createConnection()
+    let seenUrl = ""
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.includes("/api/v1/releases/electron/manifest")) {
+        return new Response("boom", { status: 503 })
+      }
+      seenUrl = url
+      return jsonResponse({ code: 0, data: { plans: [] } })
+    }) as unknown as typeof fetch
+
+    await fetchZcodeClaimPlans(connection)
+    expect(seenUrl).toContain(`app_version=${ZCODE_APP_VERSION}`)
+  })
+
+  test("the release manifest is asked at most once per batch of previews", async () => {
+    const connection = createConnection()
+    let manifestCalls = 0
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      if (String(input).includes("/api/v1/releases/electron/manifest")) {
+        manifestCalls += 1
+        return new Response("version: 9.9.9\n", { status: 200 })
+      }
+      return jsonResponse({ code: 0, data: { plans: [] } })
+    }) as unknown as typeof fetch
+
+    await fetchZcodeClaimPlans(connection)
+    await fetchZcodeClaimPlans(connection)
+    expect(manifestCalls).toBe(1)
   })
 
   test("claim posts the plan with the captcha headers", async () => {
@@ -252,6 +342,40 @@ describe("zcode claim client", () => {
     expect(result.planId).toBe("weekend")
     expect(result.endsAtMs).toBe(1_700_086_800_000)
     expect(result.startsAtMs).toBe(1_700_000_100_000)
+  })
+
+  test("a claim by planId takes its name and grants from the last preview", async () => {
+    const connection = createConnection()
+    writeZcodeClaimState(connection, {
+      checkedAt: 1,
+      plans: [
+        {
+          planId: "manual-plan",
+          name: "ZCODE GLOBAL BUILD",
+          description: "",
+          priority: 111,
+          grants: [
+            { name: "GLM-5.3-Flash", units: 300_000_000, period: "one_time" },
+          ],
+        },
+      ],
+    })
+    globalThis.fetch = (async () =>
+      jsonResponse({
+        code: 0,
+        data: { server_time: 1_700_000_000, plan: { ends_at: 1_700_086_800 } },
+      })) as unknown as typeof fetch
+
+    const result = await claimZcodePlan(connection, {
+      planId: "manual-plan",
+      verifyParam: "verify-token",
+      region: "cn",
+    })
+
+    expect(result.planName).toBe("ZCODE GLOBAL BUILD")
+    expect(result.grants).toEqual([
+      { name: "GLM-5.3-Flash", units: 300_000_000, period: "one_time" },
+    ])
   })
 
   test("1005 becomes a hold with the recovery time from data.plan.ends_at", async () => {
@@ -393,7 +517,13 @@ describe("zcode auto-claim round", () => {
     let previewCalls = 0
     let claimCalls = 0
     globalThis.fetch = (async (input: string | URL | Request) => {
-      if (String(input).includes("/billing/preview")) {
+      const url = String(input)
+      // The claim round also resolves the client version from the release
+      // manifest; that call is neither a preview nor a claim.
+      if (url.includes("/api/v1/releases/electron/manifest")) {
+        return new Response(`version: ${ZCODE_APP_VERSION}\n`, { status: 200 })
+      }
+      if (url.includes("/billing/preview")) {
         previewCalls++
         return jsonResponse({
           code: 0,

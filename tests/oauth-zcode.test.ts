@@ -24,6 +24,7 @@ import {
   mintZcodeKey,
   startZcodeSignIn,
   ZCODE_API,
+  ZCODE_APP_VERSION,
   ZCODE_ZAI_ANTHROPIC_BASE,
 } from "~/services/oauth/zcode"
 import {
@@ -570,7 +571,7 @@ describe("zcode-native adapter — Start Plan", () => {
         const headers = init?.headers as Record<string, string>
         expect(headers.Authorization).toMatch(/^Bearer .+\..+\..+$/)
         expect(headers["x-api-key"]).toBeUndefined()
-        expect(headers["X-ZCode-App-Version"]).toBe("3.14.4")
+        expect(headers["X-ZCode-App-Version"]).toBe(ZCODE_APP_VERSION)
         expect(headers["X-Title"]).toBe("Z Code@cli")
         expect(headers["anthropic-beta"]).toBeUndefined()
         return new Response(JSON.stringify({ id: "m", content: [] }), {

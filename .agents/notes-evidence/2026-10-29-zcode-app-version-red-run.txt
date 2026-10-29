@@ -1,0 +1,14 @@
+(pass) zcode claim client > claim posts the plan with the captcha headers [0.42ms]
+(pass) zcode claim client > a claim by planId takes its name and grants from the last preview [0.22ms]
+(pass) zcode claim client > 1005 becomes a hold with the recovery time from data.plan.ends_at [0.24ms]
+(pass) zcode claim client > 3007 surfaces as a rejected captcha [0.16ms]
+(pass) zcode claim client > an expired session JWT is rejected before any request [0.12ms]
+(pass) zcode claim client > uses the connection proxy when one is configured [0.15ms]
+(pass) zcode claim state > round-trips plans, holds and the last claim through metadata [0.05ms]
+(pass) zcode claim state > only enabled zcode connections with a live JWT are candidates [0.14ms]
+(pass) zcode auto-claim round > a 1005 hold delays the next claim until the upstream recovery time [5.13ms]
+
+ 13 pass
+ 1 fail
+ 49 expect() calls
+Ran 14 tests across 1 file. [185.00ms]

@@ -18,6 +18,7 @@ import {
   persistProviderConnections,
 } from "~/lib/provider-connections"
 import { readJsonBody } from "~/lib/request-body"
+import { createLogger } from "~/lib/logger"
 import { refreshManagedQuota } from "~/lib/quota/refresh"
 import {
   startZcodeBrowserInstall,
@@ -34,6 +35,9 @@ import {
 import { zcodeSessionJwt } from "~/services/zcode/start-plan"
 
 export const zcodeApiRoutes = new Hono()
+
+/** 子系统的日志：WebUI 的手动检查/领取也进「日志与诊断」。 */
+const logger = createLogger("zcode")
 
 function claimStatus(code: number): 400 | 409 | 502 {
   // 注意：ZCode 会话过期不是 admin 会话过期——回 401 会让 WebUI 的
@@ -108,9 +112,17 @@ zcodeApiRoutes.post("/claims/:id/preview", async (c) => {
     }
     writeZcodeClaimState(connection, next)
     await persistProviderConnections()
+    logger.info(
+      `Checked ZCode claim plans for "${connection.name}": ${plans.length} available`,
+    )
     return c.json({ plans, state: next })
   } catch (error) {
     const { body, status } = claimErrorBody(error)
+    logger.warn(
+      `ZCode claim check failed for "${connection.name}": ${String(
+        body.error ?? "preview failed",
+      )}`,
+    )
     return c.json(body, status)
   }
 })
@@ -155,6 +167,9 @@ zcodeApiRoutes.post("/claims/:id/claim", async (c) => {
     }
     writeZcodeClaimState(connection, next)
     await persistProviderConnections()
+    logger.info(
+      `Claimed ZCode plan "${claim.planName}" for "${connection.name}"`,
+    )
     // 领到的额度立刻反映到额度卡片（best effort）。
     try {
       await refreshManagedQuota(connection, { force: true })
@@ -164,6 +179,11 @@ zcodeApiRoutes.post("/claims/:id/claim", async (c) => {
     return c.json({ claim, state: next })
   } catch (error) {
     const { body: errorBody, status } = claimErrorBody(error)
+    logger.warn(
+      `ZCode claim failed for "${connection.name}": ${String(
+        errorBody.error ?? "claim failed",
+      )}`,
+    )
     const next: ZcodeClaimState = {
       ...state,
       lastError: String(errorBody.error ?? "claim failed"),

@@ -30,6 +30,7 @@ function systemLogsView() {
       "models",
       "dispatch",
       "cli",
+      "zcode",
     ],
     status: null,
     statusLoading: false,

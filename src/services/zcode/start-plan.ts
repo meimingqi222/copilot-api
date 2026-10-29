@@ -630,17 +630,19 @@ export function zcodeSourceHeaders(): Record<string, string> {
  * 官方桌面端走 billing 时是 electron 形态（X-Title "Z Code@electron"、
  * release channel stable），而 X-Device-Mid 缺了会 3001。
  */
-export function zcodeBillingHeaders(): Record<string, string> {
+export function zcodeBillingHeaders(
+  appVersion: string = ZCODE_APP_VERSION,
+): Record<string, string> {
   const category =
     process.platform === "darwin" ? "macos"
     : process.platform === "win32" ? "windows"
     : "linux"
   return {
     "content-type": "application/json",
-    "User-Agent": `ZCode/${ZCODE_APP_VERSION}`,
+    "User-Agent": `ZCode/${appVersion}`,
     "HTTP-Referer": ZCODE_API,
     "X-Title": "Z Code@electron",
-    "X-ZCode-App-Version": ZCODE_APP_VERSION,
+    "X-ZCode-App-Version": appVersion,
     "X-Platform": `${zcodePlatform()}-${zcodeArch()}`,
     "X-Release-Channel": "stable",
     "X-Client-Language": zcodeLanguage(),
