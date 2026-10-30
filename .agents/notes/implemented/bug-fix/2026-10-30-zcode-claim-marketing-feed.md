@@ -57,10 +57,15 @@ shows the card), so it is not free of side effects — but it is idempotent and
 does not grant anything. A campaign that returns a plan id the claim endpoint
 does not know fails as 1001, which the round already treats as a per-plan error.
 
+Diagnosing the next move does not require reading the bundle by hand:
+`bun run zcode:probe` prints each candidate feed's envelope (`data: NO` marks a
+retired one), what the claim round would extract, and — with `--asar` — the
+client's endpoint list diffed against `scripts/live/zcode-endpoints.snapshot.json`.
+
 ## Verification
 
-- `tests/zcode-claim.test.ts::a marketing banner advertises the claimable plan`
-- `tests/zcode-claim.test.ts::the marketing feed gets the session JWT and the client fingerprint`
+- `tests/zcode-claim.test.ts::the captured marketing delivery parses into the real plan` (fixture: `tests/fixtures/zcode/marketing-touch-2026-10-30.json`)
+- `tests/zcode-claim.test.ts::the plan round reads that delivery over the marketing feed`
 - `tests/zcode-claim.test.ts::a failing feed surfaces the error`
 - `tests/zcode-claim.test.ts::a 1005 hold delays the next claim until the upstream recovery time`
 

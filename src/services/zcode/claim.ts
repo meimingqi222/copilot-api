@@ -297,7 +297,7 @@ const MARKETING_TIMEOUT_MS = 20_000
 let marketingSeq = 0
 
 /** 递归收集投放里的套餐节点（不依赖固定层级，上游改结构也不会漏）。 */
-function collectMarketingPlans(data: unknown): Array<ZcodeClaimPlan> {
+export function collectMarketingPlans(data: unknown): Array<ZcodeClaimPlan> {
   const byId = new Map<string, ZcodeClaimPlan>()
   const seen = new Set<unknown>()
 

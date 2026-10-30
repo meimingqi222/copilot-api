@@ -118,7 +118,7 @@ export interface RedactionUpstream {
 }
 
 /** Lifetime request count for one client or upstream lane. */
-export interface RedactionLane {
+interface RedactionLane {
   id: string
   name: string
   count: number

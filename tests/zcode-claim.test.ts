@@ -17,6 +17,7 @@ import {
 } from "~/lib/system-config"
 import {
   claimZcodePlan,
+  collectMarketingPlans,
   fetchZcodeClaimPlans,
   isZcodeClaimCandidate,
   parseZcodeClaimPlans,
@@ -34,6 +35,21 @@ import {
   __setZcodeVerifyParamForTest,
 } from "~/services/zcode/captcha"
 import { __resetZcodeClaimRoundForTest } from "~/services/zcode/claim"
+
+const MARKETING_FIXTURE = path.join(
+  import.meta.dir,
+  "fixtures",
+  "zcode",
+  "marketing-touch-2026-10-30.json",
+)
+
+/** 2026-10-30 抓到的真实 marketing/touch 响应（上游改结构时换掉它）。 */
+function fixture(): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(MARKETING_FIXTURE, "utf8")) as Record<
+    string,
+    unknown
+  >
+}
 
 const originalFetch = globalThis.fetch
 
@@ -280,7 +296,23 @@ describe("zcode claim client", () => {
     await fetchZcodeClaimPlans(connection)
     expect(manifestCalls).toBe(1)
   })
-  test("a marketing banner advertises the claimable plan", async () => {
+  test("the captured marketing delivery parses into the real plan", () => {
+    // 2026-10-30 真实抓包：上游把周末套餐放在 banner 的 zcode_plan 里。
+    // 上游改结构时这里先红，新抓包替换 fixture 后 diff 就是变更记录。
+    const plans = collectMarketingPlans(fixture().data)
+
+    expect(plans).toHaveLength(1)
+    expect(plans[0]).toMatchObject({
+      planId: "zcode-v3-start-plan-1030-wk",
+      name: "ZCODE WEEKEND BUILD",
+      priority: 101,
+    })
+    expect(plans[0]!.grants).toEqual([
+      { name: "GLM-5.3-Flash", units: 500_000_000, period: "one_time" },
+    ])
+  })
+
+  test("the plan round reads that delivery over the marketing feed", async () => {
     const connection = createConnection()
     let seenUrl = ""
     let seenHeaders: Record<string, string> = {}
@@ -292,73 +324,15 @@ describe("zcode claim client", () => {
       if (url.includes("/api/v1/releases/electron/manifest")) {
         return new Response(`version: ${ZCODE_APP_VERSION}\n`, { status: 200 })
       }
-      if (url.includes("/api/v1/marketing/touch")) {
-        seenUrl = url
-        seenHeaders = (init?.headers ?? {}) as Record<string, string>
-        return jsonResponse({
-          code: 0,
-          data: {
-            server_time: 1_793_369_071,
-            deliveries: [
-              {
-                campaign_id: "campaign-1",
-                resource_position: "banner",
-                priority: 50,
-                banner: {
-                  buttons: [
-                    {
-                      text: { format: "", content: "" },
-                      action: { type: "close", args: null },
-                    },
-                    {
-                      text: { format: "", content: "" },
-                      action: {
-                        type: "claim_zcode_plan",
-                        args: { plan_id: "weekend-plan" },
-                      },
-                    },
-                  ],
-                  background: {
-                    type: "bundle",
-                    args: {
-                      zcode_plan: {
-                        plan_id: "weekend-plan",
-                        name: "ZCODE WEEKEND BUILD",
-                        priority: 101,
-                        starts_at: 1_793_358_000,
-                        ends_at: 1_793_581_200,
-                        entitlements: [
-                          {
-                            entitlement_id: "ent-1",
-                            show_name: "GLM-5.3-Flash",
-                            meter: "model_usage",
-                            unit_type: "token",
-                            capabilities: ["model:glm-5.3-flash"],
-                            grant_units: 500_000_000,
-                            period: "one_time",
-                            priority: 101,
-                          },
-                        ],
-                      },
-                    },
-                  },
-                },
-              },
-            ],
-          },
-        })
-      }
-      // Old feed: no data at all, exactly as upstream answers today.
-      return jsonResponse({ code: 0, msg: "" })
+      seenUrl = url
+      seenHeaders = (init?.headers ?? {}) as Record<string, string>
+      return jsonResponse(fixture())
     }) as unknown as typeof fetch
 
     const plans = await fetchZcodeClaimPlans(connection)
 
-    expect(plans).toHaveLength(1)
-    expect(plans[0]!.planId).toBe("weekend-plan")
-    expect(plans[0]!.name).toBe("ZCODE WEEKEND BUILD")
-    expect(plans[0]!.grants).toEqual([
-      { name: "GLM-5.3-Flash", units: 500_000_000, period: "one_time" },
+    expect(plans.map((plan) => plan.planId)).toEqual([
+      "zcode-v3-start-plan-1030-wk",
     ])
     expect(seenUrl).toContain("/api/v1/marketing/touch?seq=")
     expect(seenHeaders.authorization).toBe(
@@ -367,8 +341,9 @@ describe("zcode claim client", () => {
     expect(seenHeaders["X-Device-Mid"]).toMatch(
       /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/,
     )
+    expect(seenHeaders["X-Title"]).toBe("Z Code@electron")
+    expect(seenHeaders["X-ZCode-App-Version"]).toBe(ZCODE_APP_VERSION)
   })
-
   test("a failing feed surfaces the error", async () => {
     const connection = createConnection()
     globalThis.fetch = (async (input: string | URL | Request) => {
