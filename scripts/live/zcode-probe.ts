@@ -4,11 +4,10 @@
  * 用法：
  *   bun run scripts/live/zcode-probe.ts                 # 第一个可用账号
  *   bun run scripts/live/zcode-probe.ts --account 71f2  # id 或名字的子串
- *   bun run scripts/live/zcode-probe.ts --asar <path>   # 顺带 diff 客户端端点清单
- *   bun run scripts/live/zcode-probe.ts --asar <path> --write-snapshot
+ *   bun run scripts/live/zcode-probe.ts --asar <path>   # 顺带列出客户端认识的投放路径
  *
  * 回答的问题：上游现在把「可领套餐」放在哪个接口、我们的抽取器还能不能
- * 认出来、官方客户端是不是又多了/少了端点。JWT 只报长度，绝不打印。
+ * 认出来（`data: NO` = 接口已退役，不是今天没活动）。JWT 只报长度，绝不打印。
  */
 
 import fs from "node:fs"
@@ -26,37 +25,27 @@ import {
   zcodeBillingHeaders,
   zcodeSessionJwt,
 } from "~/services/zcode/start-plan"
-import {
-  diffZcodeEndpoints,
-  isTrackedZcodePath,
-  scanZcodeApiPathsInFile,
-} from "~/services/zcode/endpoint-scan"
+
 import {
   resolveZcodeAppVersion,
   ZCODE_API,
   ZCODE_APP_VERSION,
 } from "~/services/oauth/zcode"
 
-const SNAPSHOT_PATH = path.join(
-  import.meta.dir,
-  "zcode-endpoints.snapshot.json",
-)
-
-interface SnapshotFile {
-  clientVersion?: string
-  capturedAt?: string
-  endpoints: Array<string>
-}
+/** 会随上游改版搬迁的端点前缀。 */
+const TRACKED_PREFIXES = [
+  "/api/v1/zcode-plan",
+  "/api/v1/marketing",
+  "/api/v1/releases",
+  "/api/v1/client/configs",
+  "/api/v1/oauth",
+]
 
 function argValue(name: string): string | undefined {
   const index = process.argv.indexOf(`--${name}`)
   if (index === -1) return undefined
   const value = process.argv[index + 1]
   return value && !value.startsWith("--") ? value : ""
-}
-
-function hasFlag(name: string): boolean {
-  return process.argv.includes(`--${name}`)
 }
 
 /** 默认从当前用户目录里找 ZCode 客户端（找不到就跳过 asar diff）。 */
@@ -152,53 +141,48 @@ async function probeRaw(
   }
 }
 
-async function scanAsar(aspectPath: string | undefined): Promise<void> {
-  const asarPath = aspectPath || defaultAsarPath()
-  if (!asarPath) {
-    console.log(
-      "\n== client endpoints ==\n  skipped (no app.asar; pass --asar <path>)",
-    )
-    return
+/**
+ * `--asar`：官方客户端里还有哪些投放相关路径。
+ *
+ * 只回答「客户端还认不认识 X」，不做基线对比——今天这次故障是**服务端**
+ * 退役了 preview 而客户端字符串还在，基线 diff 只会报 no drift，属于自欺。
+ * 分块读，340MB 的 asar 不会整体进内存。
+ */
+function scanAsarPaths(asarPath: string): Array<string> {
+  const found = new Set<string>()
+  const chunk = Buffer.alloc(8 * 1024 * 1024)
+  const fd = fs.openSync(asarPath, "r")
+  let carry = ""
+  try {
+    for (;;) {
+      const read = fs.readSync(fd, chunk, 0, chunk.length, null)
+      if (read <= 0) break
+      const text = carry + chunk.subarray(0, read).toString("latin1")
+      for (const match of text.matchAll(/\/api\/v1\/[A-Za-z0-9._~/-]+/g)) {
+        const path = match[0].replace(/[/.,;:'")\]}]+$/, "")
+        if (TRACKED_PREFIXES.some((prefix) => path.startsWith(prefix))) {
+          found.add(path)
+        }
+      }
+      carry = text.slice(-128)
+    }
+  } finally {
+    fs.closeSync(fd)
   }
-  if (!fs.existsSync(asarPath)) {
-    console.log(`\n== client endpoints ==\n  skipped (not found: ${asarPath})`)
+  return [...found].sort()
+}
+
+function reportAsar(aspectPath: string | undefined): void {
+  const asarPath = aspectPath || defaultAsarPath()
+  if (!asarPath || !fs.existsSync(asarPath)) {
+    console.log(
+      `\n== client endpoints ==\n  skipped (${asarPath ? `not found: ${asarPath}` : "no app.asar; pass --asar <path>"})`,
+    )
     return
   }
   console.log(`\n== client endpoints ==\n  ${asarPath}`)
-  const found = scanZcodeApiPathsInFile(asarPath).filter(isTrackedZcodePath)
-
-  if (hasFlag("write-snapshot")) {
-    const snapshot: SnapshotFile = {
-      clientVersion: ZCODE_APP_VERSION,
-      capturedAt: new Date().toISOString().slice(0, 10),
-      endpoints: found,
-    }
-    fs.writeFileSync(SNAPSHOT_PATH, `${JSON.stringify(snapshot, null, 2)}\n`)
-    console.log(
-      `  snapshot rewritten (${found.length} endpoints) -> ${SNAPSHOT_PATH}`,
-    )
-    return
-  }
-
-  if (!fs.existsSync(SNAPSHOT_PATH)) {
-    console.log("  no snapshot to diff against; rerun with --write-snapshot")
-    return
-  }
-  const snapshot = JSON.parse(
-    fs.readFileSync(SNAPSHOT_PATH, "utf8"),
-  ) as SnapshotFile
-  const diff = diffZcodeEndpoints(snapshot.endpoints, found)
-  console.log(
-    `  snapshot ${snapshot.clientVersion ?? "?"} (${snapshot.capturedAt ?? "?"}): ${snapshot.endpoints.length} endpoints`,
-  )
-  if (diff.added.length === 0 && diff.missing.length === 0) {
-    console.log("  no drift")
-    return
-  }
-  for (const endpoint of diff.added) console.log(`  + ${endpoint}`)
-  for (const endpoint of diff.missing) console.log(`  - ${endpoint}`)
+  for (const endpoint of scanAsarPaths(asarPath)) console.log(`  ${endpoint}`)
 }
-
 async function main(): Promise<void> {
   const connections = readZcodeConnections()
   const connection = pickAccount(connections, argValue("account"))
@@ -273,7 +257,7 @@ async function main(): Promise<void> {
     process.exitCode = 1
   }
 
-  await scanAsar(argValue("asar"))
+  reportAsar(argValue("asar"))
 }
 
 await main()

@@ -89,6 +89,14 @@ export interface ZcodeClaimState {
   lastError?: string
   lastErrorAt?: number
   lastClaim?: { planId: string; planName: string; at: number }
+  /**
+   * 最近一次看到「上游返回了包体但没有 data」的时间。
+   *
+   * 这是接口退役/改版的信号，不是「今天没活动」：2026-10-30 的
+   * `billing/preview` 就是这样静默失效的。有它就会在额度卡片上提示，
+   * 而不是让人以为账号不符合条件。
+   */
+  lastDrift?: { at: number; message: string }
   /** 自动轮下次尝试时间。 */
   nextAttemptAt?: number
 }
@@ -371,7 +379,39 @@ async function fetchMarketingClaimPlans(
   }
   const code = businessCode(body)
   if (code !== 0 && code !== 200) throw failError(code, body)
+  if (!("data" in body)) {
+    notePlanFeedDrift(connection)
+    return []
+  }
+  clearPlanFeedDrift(connection)
   return collectMarketingPlans(asRecord(body.data))
+}
+
+/**
+ * 上游返回了包体却没有 `data`：接口退役/改版的信号，不是「今天没活动」。
+ * 2026-10-30 的 `billing/preview` 就是这样静默失效的——页面只会显示
+ * 「暂无可领取套餐」，看上去跟账号不符合条件一模一样。
+ */
+const DRIFT_MESSAGE =
+  "ZCode's plan feed answered without a payload - the endpoint may have moved (run bun run zcode:probe)"
+
+function notePlanFeedDrift(connection: ProviderConnection): void {
+  const state = readZcodeClaimState(connection)
+  writeZcodeClaimState(connection, {
+    ...state,
+    lastDrift: { at: Date.now(), message: DRIFT_MESSAGE },
+  })
+  logger.warn(
+    `ZCode plan feed drift for "${connection.name}": ${DRIFT_MESSAGE}`,
+  )
+}
+
+/** 投放恢复成正常包体后清掉提示，避免旧告警一直挂着。 */
+function clearPlanFeedDrift(connection: ProviderConnection): void {
+  const state = readZcodeClaimState(connection)
+  if (!state.lastDrift) return
+  const { lastDrift: _drift, ...rest } = state
+  writeZcodeClaimState(connection, rest)
 }
 
 function comparePlans(a: ZcodeClaimPlan, b: ZcodeClaimPlan): number {
@@ -529,6 +569,12 @@ export function readZcodeClaimState(
       }
     }
   }
+  const lastDrift = asRecord(raw.lastDrift)
+  if (lastDrift) {
+    const at = asNum(lastDrift.at)
+    const message = asTrimmedStringOrEmpty(lastDrift.message)
+    if (at !== undefined && message) state.lastDrift = { at, message }
+  }
   return state
 }
 
@@ -604,6 +650,8 @@ async function claimRound(now: number): Promise<void> {
       state.plans = plans
       state.checkedAt = Date.now()
       state.lastError = undefined
+      // 抓取过程会写 drift 标记，这里回读一次，免得用旧快照覆盖掉。
+      state.lastDrift = readZcodeClaimState(connection).lastDrift
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       state.checkedAt = Date.now()

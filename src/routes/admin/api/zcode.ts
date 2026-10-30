@@ -156,7 +156,8 @@ zcodeApiRoutes.post("/claims/:id/claim", async (c) => {
     const holds = { ...state.holds }
     delete holds[claim.planId]
     const next: ZcodeClaimState = {
-      ...state,
+      // 领取过程可能刷新过可领列表（进而写 drift 标记），回读一次。
+      ...readZcodeClaimState(connection),
       holds,
       lastClaim: {
         planId: claim.planId,

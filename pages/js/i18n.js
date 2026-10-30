@@ -1084,6 +1084,8 @@ const i18n = {
       "quota.zcode.claimSuccess": "已领取 {name}",
       "quota.zcode.claimError": "领取失败",
       "quota.zcode.holdUntil": "名额将于 {time} 恢复",
+      "quota.zcode.driftHint":
+        "上游接口返回空包，可能已改版；运行 bun run zcode:probe 核对",
       "quota.oauth.codex.plan.plus": "Plus",
       "quota.oauth.codex.plan.team": "Team",
       "quota.oauth.codex.plan.free": "Free",
@@ -3225,6 +3227,8 @@ const i18n = {
       "quota.zcode.claimSuccess": "Claimed {name}",
       "quota.zcode.claimError": "Claim failed",
       "quota.zcode.holdUntil": "Quota refills at {time}",
+      "quota.zcode.driftHint":
+        "Upstream answered without a payload - the feed may have moved (run bun run zcode:probe)",
       "quota.oauth.codex.plan.plus": "Plus",
       "quota.oauth.codex.plan.team": "Team",
       "quota.oauth.codex.plan.free": "Free",

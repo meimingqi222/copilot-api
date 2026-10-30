@@ -46,15 +46,24 @@ reading any bundle:
     plans: zcode-v3-start-plan-1030-wk
   billing/preview (retired)          HTTP 200  code=0  data: NO
 == client endpoints ==
-  snapshot 3.16.3 (2026-10-30): 13 endpoints
-  + /api/v1/zcode-plan/billing/gift      ← the client learned something new
+  <…>/ZCode/resources/app.asar
+  /api/v1/marketing/touch
+  /api/v1/zcode-plan/billing/balance
+  /api/v1/zcode-plan/billing/claim
+  /api/v1/zcode-plan/billing/preview
 ```
 
 `data: NO` on a feed means upstream answers with an envelope but no payload —
-that is a retired endpoint, not "no activity today". The asar diff compares the
-client's `/api/v1/...` strings against `zcode-endpoints.snapshot.json`; `+` is a
-feed the client started using, `-` is one it dropped. Regenerate the snapshot
-after an official release with `--write-snapshot`.
+that is a retired endpoint, not "no activity today". The `--asar` section just
+lists the plan-related paths the client still contains; it is a lookup ("does
+the client still reference X?"), not a baseline. Do not build a checked-in
+snapshot to diff against: the client kept the `billing/preview` string long after
+the server retired it, so a path-level diff reports "no drift" during exactly
+the outages it was supposed to catch. The production-side signal for that is
+`zcodeClaim.lastDrift` (see below).
+
+When a feed retires, the claim state records `lastDrift` and the log gets a
+`sub=zcode` warning, so `bun run zcode:probe` is not the only way to notice.
 
 They read credentials out of the local Windsurf install's `state.vscdb`
 (`%APPDATA%/Windsurf - Next/User/globalStorage/state.vscdb`), so they only work

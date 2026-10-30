@@ -5776,6 +5776,11 @@
                                   x-text="zcodeHoldText(account)"
                                 ></div>
                                 <div
+                                  x-show="account.zcodeClaim?.lastDrift && zcodePlans(account).length === 0"
+                                  class="text-[var(--apple-orange)]"
+                                  x-text="t('quota.zcode.driftHint')"
+                                ></div>
+                                <div
                                   x-show="account.zcodeClaim?.lastError"
                                   class="text-[var(--apple-red)] break-words"
                                   x-text="account.zcodeClaim?.lastError"

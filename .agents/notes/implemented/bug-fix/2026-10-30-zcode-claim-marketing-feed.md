@@ -52,6 +52,13 @@ turn off. If plans ever reappear in the billing feed, the round will not see
 them — the log line to look for is `ZCode claim check failed` (the feed now
 throws on a non-OK response instead of silently returning empty).
 
+A feed that answers with an envelope but no `data` is recorded as
+`zcodeClaim.lastDrift` and logged as a `sub=zcode` warning, so "the endpoint
+moved" stops looking like "this account is ineligible". The marker clears as
+soon as a payload comes back. A path-level diff of the client bundle was tried
+first and dropped: the client kept the `billing/preview` string long after the
+server retired it, so it reported "no drift" straight through this outage.
+
 The marketing call is an impression touch (the same one the app makes when it
 shows the card), so it is not free of side effects — but it is idempotent and
 does not grant anything. A campaign that returns a plan id the claim endpoint
@@ -60,13 +67,15 @@ does not know fails as 1001, which the round already treats as a per-plan error.
 Diagnosing the next move does not require reading the bundle by hand:
 `bun run zcode:probe` prints each candidate feed's envelope (`data: NO` marks a
 retired one), what the claim round would extract, and — with `--asar` — the
-client's endpoint list diffed against `scripts/live/zcode-endpoints.snapshot.json`.
+plan-related endpoints the installed client still mentions.
 
 ## Verification
 
 - `tests/zcode-claim.test.ts::the captured marketing delivery parses into the real plan` (fixture: `tests/fixtures/zcode/marketing-touch-2026-10-30.json`)
 - `tests/zcode-claim.test.ts::the plan round reads that delivery over the marketing feed`
 - `tests/zcode-claim.test.ts::a failing feed surfaces the error`
+- `tests/zcode-claim.test.ts::a payload-less feed is recorded as drift, not as 'nothing to claim'`
+- `tests/zcode-claim.test.ts::carries the drift marker through metadata`
 - `tests/zcode-claim.test.ts::a 1005 hold delays the next claim until the upstream recovery time`
 
 Proved: with `src/services/zcode/claim.ts` at the pre-marketing revision

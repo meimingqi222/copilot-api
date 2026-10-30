@@ -396,6 +396,40 @@ describe("zcode claim client", () => {
     expect(result.startsAtMs).toBe(1_700_000_100_000)
   })
 
+  test("a payload-less feed is recorded as drift, not as 'nothing to claim'", async () => {
+    const connection = createConnection()
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.includes("/api/v1/releases/electron/manifest")) {
+        return new Response(`version: ${ZCODE_APP_VERSION}\n`, { status: 200 })
+      }
+      // 2026-10-30 的真实形态：code 0、没有 data。
+      return jsonResponse({ code: 0, msg: "" })
+    }) as unknown as typeof fetch
+
+    expect(await fetchZcodeClaimPlans(connection)).toEqual([])
+    const drift = readZcodeClaimState(connection).lastDrift
+    expect(drift?.message).toContain("without a payload")
+    expect(drift?.at).toBeGreaterThan(0)
+  })
+
+  test("drift clears again once the feed carries a payload", async () => {
+    const connection = createConnection()
+    writeZcodeClaimState(connection, {
+      lastDrift: { at: 1, message: "stale" },
+    })
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.includes("/api/v1/releases/electron/manifest")) {
+        return new Response(`version: ${ZCODE_APP_VERSION}\n`, { status: 200 })
+      }
+      return jsonResponse({ code: 0, data: { deliveries: [] } })
+    }) as unknown as typeof fetch
+
+    await fetchZcodeClaimPlans(connection)
+    expect(readZcodeClaimState(connection).lastDrift).toBeUndefined()
+  })
+
   test("a claim by planId takes its name and grants from the last preview", async () => {
     const connection = createConnection()
     writeZcodeClaimState(connection, {
@@ -502,6 +536,18 @@ describe("zcode claim client", () => {
 })
 
 describe("zcode claim state", () => {
+  test("carries the drift marker through metadata", () => {
+    const connection = createConnection()
+    writeZcodeClaimState(connection, {
+      lastDrift: { at: 1_700_000_000_000, message: "feed moved" },
+    })
+
+    expect(readZcodeClaimState(connection).lastDrift).toEqual({
+      at: 1_700_000_000_000,
+      message: "feed moved",
+    })
+  })
+
   test("round-trips plans, holds and the last claim through metadata", () => {
     const connection = createConnection()
     writeZcodeClaimState(connection, {
@@ -636,6 +682,8 @@ describe("zcode auto-claim round", () => {
       )
       expect(afterFirst.holds?.weekend).toBe(endsAt * 1000)
       expect(afterFirst.nextAttemptAt).toBeLessThanOrEqual(endsAt * 1000)
+      // 抓取时才写入的 drift 不会被这一轮用旧快照覆盖掉。
+      expect(afterFirst.lastDrift).toBeUndefined()
 
       // Still inside the hold: the whole account is skipped (no preview, no claim).
       await runZcodeClaimRound(endsAt * 1000 - 60_000)
