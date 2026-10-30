@@ -29,14 +29,14 @@ GET {zcode}/api/v1/releases/electron/manifest?platform=windows-x86_64&channel=st
 `resolveZcodeAppVersion` caches the answer for 6 hours, takes the newer of the
 manifest and the pinned constant, and falls back to the constant when the
 manifest is unreachable (a stale version only empties the plan list, so it must
-never throw). `preview` and `claim` both send the resolved value as
+never throw). The claim round sends the resolved value as
 `app_version` plus `X-ZCode-App-Version`. There is no manual override: the
 manifest is the only source of truth, and the constant exists solely so a
 network failure cannot make the client version disappear.
 
 A regression test pins a version floor (`3.16.3`) as a tripwire, two more pin
 the resolution order (manifest wins, unreachable manifest keeps the constant),
-and one pins that a batch of previews asks the manifest only once.
+and one pins that a batch of checks asks the manifest only once.
 
 ## Alternatives considered
 
@@ -71,10 +71,10 @@ manifest was read and the problem is elsewhere.
 
 ## Verification
 
-- `tests/zcode-claim.test.ts::preview advertises a client version at or above the plan-delivery floor`
-- `tests/zcode-claim.test.ts::preview follows the version the official release manifest advertises`
-- `tests/zcode-claim.test.ts::preview keeps the pinned version when the manifest is unreachable`
-- `tests/zcode-claim.test.ts::the release manifest is asked at most once per batch of previews`
+- `tests/zcode-claim.test.ts::the client version it advertises stays at or above the plan-delivery floor`
+- `tests/zcode-claim.test.ts::the feed follows the version the official release manifest advertises`
+- `tests/zcode-claim.test.ts::a manifest that cannot be read keeps the pinned version`
+- `tests/zcode-claim.test.ts::the release manifest is asked at most once per batch of checks`
 
 Proved: with the default reverted to `3.14.4`, the floor test failed
 (`1 fail`) while every other claim test still passed — the stale constant

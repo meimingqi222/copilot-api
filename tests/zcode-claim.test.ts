@@ -162,7 +162,7 @@ describe("zcode claim plan parsing", () => {
 })
 
 describe("zcode claim client", () => {
-  test("preview sends the session JWT and billing fingerprint headers", async () => {
+  test("the marketing feed gets the session JWT and the client fingerprint", async () => {
     const connection = createConnection()
     let seenUrl = ""
     let seenHeaders: Record<string, string> = {}
@@ -170,51 +170,33 @@ describe("zcode claim client", () => {
       input: string | URL | Request,
       init?: RequestInit,
     ) => {
-      seenUrl = String(input)
+      const url = String(input)
+      if (url.includes("/api/v1/releases/electron/manifest")) {
+        return new Response(`version: ${ZCODE_APP_VERSION}\n`, { status: 200 })
+      }
+      seenUrl = url
       seenHeaders = (init?.headers ?? {}) as Record<string, string>
-      return jsonResponse({
-        code: 0,
-        data: {
-          plans: [
-            {
-              plan_id: "weekend",
-              name: "Weekend egg",
-              priority: 5,
-              entitlements: [
-                {
-                  meter: "model_usage",
-                  unit_type: "token",
-                  show_name: "GLM-5.3",
-                  grant_units: 3_000_000,
-                  period: "one_time",
-                },
-              ],
-            },
-          ],
-        },
-      })
+      return jsonResponse({ code: 0, data: { deliveries: [] } })
     }) as unknown as typeof fetch
 
-    const plans = await fetchZcodeClaimPlans(connection)
+    await fetchZcodeClaimPlans(connection)
 
-    expect(plans).toHaveLength(1)
-    expect(plans[0]!.planId).toBe("weekend")
-    expect(seenUrl).toContain("/api/v1/zcode-plan/billing/preview?")
-    expect(seenUrl).toContain(`app_version=${ZCODE_APP_VERSION}`)
+    expect(seenUrl).toContain("/api/v1/marketing/touch?seq=")
     expect(seenHeaders.authorization).toBe(
       `Bearer ${connection.credentials[0]!.context!.zcodeJwt}`,
     )
-    // billing 必须带设备 id，缺了上游回 3001。
+    // 投放必须带设备 id，缺了上游回 3001。
     expect(seenHeaders["X-Device-Mid"]).toMatch(
       /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/,
     )
     expect(seenHeaders["X-Title"]).toBe("Z Code@electron")
+    expect(seenHeaders["X-ZCode-App-Version"]).toBe(ZCODE_APP_VERSION)
   })
 
-  test("preview advertises a client version at or above the plan-delivery floor", async () => {
-    // 上游按最低客户端版本投放限时套餐：2026-10-29 实测 3.14.4 → plans 为空，
+  test("the client version it advertises stays at or above the plan-delivery floor", async () => {
+    // 上游按最低客户端版本投放限时套餐：2026-10-29 实测 3.14.4 → 没有套餐，
     // 3.16.3（当时官方客户端版本）→ 投放 ZCODE GLOBAL BUILD。把常量降回旧版
-    // 不会报错，只会让 preview 永远「暂无可领取套餐」，所以在这里钉住下限。
+    // 不会报错，只会让投放永远「暂无可领取套餐」，所以在这里钉住下限。
     const floor = [3, 16, 3]
     const version = ZCODE_APP_VERSION.split(".").map(Number)
     for (let i = 0; i < floor.length; i += 1) {
@@ -225,74 +207,65 @@ describe("zcode claim client", () => {
     }
 
     const connection = createConnection()
-    let seenUrl = ""
-    globalThis.fetch = (async (url: string | URL) => {
-      seenUrl = String(url)
-      return jsonResponse({ code: 0, data: { plans: [] } })
-    }) as unknown as typeof fetch
-
-    await fetchZcodeClaimPlans(connection)
-    expect(seenUrl).toContain(`app_version=${ZCODE_APP_VERSION}`)
-  })
-
-  test("preview treats an upstream 404 as 'no activity right now'", async () => {
-    const connection = createConnection()
-    globalThis.fetch = (async () =>
-      jsonResponse(
-        { code: 404, msg: "not found" },
-        404,
-      )) as unknown as typeof fetch
-
-    expect(await fetchZcodeClaimPlans(connection)).toEqual([])
-  })
-
-  test("preview follows the version the official release manifest advertises", async () => {
-    const connection = createConnection()
-    const calls: Array<{ url: string; headers: Record<string, string> }> = []
+    let seenVersion = ""
     globalThis.fetch = (async (
       input: string | URL | Request,
       init?: RequestInit,
     ) => {
       const url = String(input)
-      calls.push({
-        url,
-        headers: (init?.headers ?? {}) as Record<string, string>,
-      })
       if (url.includes("/api/v1/releases/electron/manifest")) {
-        return new Response("version: 9.9.9\nfiles: []\n", { status: 200 })
+        return new Response(`version: ${ZCODE_APP_VERSION}\n`, { status: 200 })
       }
-      return jsonResponse({ code: 0, data: { plans: [] } })
+      const headers = (init?.headers ?? {}) as Record<string, string>
+      seenVersion = headers["X-ZCode-App-Version"] ?? ""
+      return jsonResponse({ code: 0, data: { deliveries: [] } })
     }) as unknown as typeof fetch
 
     await fetchZcodeClaimPlans(connection)
-
-    const preview = calls.find((call) => call.url.includes("/billing/preview"))!
-    expect(preview.url).toContain("app_version=9.9.9")
-    expect(preview.headers["X-ZCode-App-Version"]).toBe("9.9.9")
-    // 清单里给的是更新器平台键，不是 process.platform。
-    const manifest = calls.find((call) =>
-      call.url.includes("/releases/electron/manifest"),
-    )!
-    expect(manifest.url).toContain("channel=stable")
+    expect(seenVersion).toBe(ZCODE_APP_VERSION)
   })
 
-  test("preview keeps the pinned version when the manifest is unreachable", async () => {
+  test("the feed follows the version the official release manifest advertises", async () => {
     const connection = createConnection()
-    let seenUrl = ""
-    globalThis.fetch = (async (input: string | URL | Request) => {
+    let seenVersion = ""
+    globalThis.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = String(input)
+      if (url.includes("/api/v1/releases/electron/manifest")) {
+        return new Response("version: 9.9.9\nfiles: []\n", { status: 200 })
+      }
+      const headers = (init?.headers ?? {}) as Record<string, string>
+      seenVersion = headers["X-ZCode-App-Version"] ?? ""
+      return jsonResponse({ code: 0, data: { deliveries: [] } })
+    }) as unknown as typeof fetch
+
+    await fetchZcodeClaimPlans(connection)
+    expect(seenVersion).toBe("9.9.9")
+  })
+
+  test("a manifest that cannot be read keeps the pinned version", async () => {
+    const connection = createConnection()
+    let seenVersion = ""
+    globalThis.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
       const url = String(input)
       if (url.includes("/api/v1/releases/electron/manifest")) {
         return new Response("boom", { status: 503 })
       }
-      seenUrl = url
-      return jsonResponse({ code: 0, data: { plans: [] } })
+      const headers = (init?.headers ?? {}) as Record<string, string>
+      seenVersion = headers["X-ZCode-App-Version"] ?? ""
+      return jsonResponse({ code: 0, data: { deliveries: [] } })
     }) as unknown as typeof fetch
 
     await fetchZcodeClaimPlans(connection)
-    expect(seenUrl).toContain(`app_version=${ZCODE_APP_VERSION}`)
+    expect(seenVersion).toBe(ZCODE_APP_VERSION)
   })
 
-  test("the release manifest is asked at most once per batch of previews", async () => {
+  test("the release manifest is asked at most once per batch of checks", async () => {
     const connection = createConnection()
     let manifestCalls = 0
     globalThis.fetch = (async (input: string | URL | Request) => {
@@ -300,14 +273,13 @@ describe("zcode claim client", () => {
         manifestCalls += 1
         return new Response("version: 9.9.9\n", { status: 200 })
       }
-      return jsonResponse({ code: 0, data: { plans: [] } })
+      return jsonResponse({ code: 0, data: { deliveries: [] } })
     }) as unknown as typeof fetch
 
     await fetchZcodeClaimPlans(connection)
     await fetchZcodeClaimPlans(connection)
     expect(manifestCalls).toBe(1)
   })
-
   test("a marketing banner advertises the claimable plan", async () => {
     const connection = createConnection()
     let seenUrl = ""
@@ -397,89 +369,7 @@ describe("zcode claim client", () => {
     )
   })
 
-  test("the two feeds merge without duplicating a plan", async () => {
-    const connection = createConnection()
-    globalThis.fetch = (async (input: string | URL | Request) => {
-      const url = String(input)
-      if (url.includes("/api/v1/releases/electron/manifest")) {
-        return new Response(`version: ${ZCODE_APP_VERSION}\n`, { status: 200 })
-      }
-      if (url.includes("/api/v1/marketing/touch")) {
-        return jsonResponse({
-          code: 0,
-          data: {
-            deliveries: [
-              {
-                action: { type: "claim_zcode_plan", args: { plan_id: "same" } },
-              },
-              {
-                action: {
-                  type: "claim_zcode_plan",
-                  args: { plan_id: "marketing-only" },
-                },
-              },
-            ],
-          },
-        })
-      }
-      return jsonResponse({
-        code: 0,
-        data: {
-          plans: [
-            {
-              plan_id: "same",
-              name: "From billing",
-              priority: 7,
-              entitlements: [
-                {
-                  meter: "model_usage",
-                  unit_type: "token",
-                  show_name: "GLM-5.3",
-                  grant_units: 42,
-                  period: "one_time",
-                },
-              ],
-            },
-            { plan_id: "billing-only", name: "Billing only", priority: 1 },
-          ],
-        },
-      })
-    }) as unknown as typeof fetch
-
-    const plans = await fetchZcodeClaimPlans(connection)
-
-    // 两个来源的计划都在，同一个 planId 只留一份（这里保留信息更全的那份）。
-    expect(plans.map((plan) => plan.planId)).toEqual([
-      "same",
-      "billing-only",
-      "marketing-only",
-    ])
-    expect(plans[0]!.grants[0]!.units).toBe(42)
-  })
-
-  test("one feed failing leaves the other one usable", async () => {
-    const connection = createConnection()
-    globalThis.fetch = (async (input: string | URL | Request) => {
-      const url = String(input)
-      if (url.includes("/api/v1/releases/electron/manifest")) {
-        return new Response(`version: ${ZCODE_APP_VERSION}\n`, { status: 200 })
-      }
-      if (url.includes("/api/v1/marketing/touch")) {
-        return new Response("boom", { status: 500 })
-      }
-      return jsonResponse({
-        code: 0,
-        data: {
-          plans: [{ plan_id: "billing-only", name: "From billing" }],
-        },
-      })
-    }) as unknown as typeof fetch
-
-    const plans = await fetchZcodeClaimPlans(connection)
-    expect(plans.map((plan) => plan.planId)).toEqual(["billing-only"])
-  })
-
-  test("both feeds failing surfaces the error", async () => {
+  test("a failing feed surfaces the error", async () => {
     const connection = createConnection()
     globalThis.fetch = (async (input: string | URL | Request) => {
       const url = String(input)
@@ -710,31 +600,45 @@ describe("zcode auto-claim round", () => {
       if (url.includes("/api/v1/releases/electron/manifest")) {
         return new Response(`version: ${ZCODE_APP_VERSION}\n`, { status: 200 })
       }
-      if (url.includes("/billing/preview")) {
+      if (url.includes("/api/v1/marketing/touch")) {
         previewCalls++
         return jsonResponse({
           code: 0,
           data: {
-            plans: [
+            deliveries: [
               {
-                plan_id: "weekend",
-                name: "Weekend egg",
-                priority: 3,
-                entitlements: [
-                  {
-                    meter: "model_usage",
-                    unit_type: "token",
-                    show_name: "GLM-5.3",
-                    grant_units: 1_000_000,
+                campaign_id: "campaign-1",
+                banner: {
+                  buttons: [
+                    {
+                      action: {
+                        type: "claim_zcode_plan",
+                        args: { plan_id: "weekend" },
+                      },
+                    },
+                  ],
+                  background: {
+                    args: {
+                      zcode_plan: {
+                        plan_id: "weekend",
+                        name: "Weekend egg",
+                        priority: 3,
+                        entitlements: [
+                          {
+                            meter: "model_usage",
+                            unit_type: "token",
+                            show_name: "GLM-5.3",
+                            grant_units: 1_000_000,
+                          },
+                        ],
+                      },
+                    },
                   },
-                ],
+                },
               },
             ],
           },
         })
-      }
-      if (url.includes("/api/v1/marketing/touch")) {
-        return jsonResponse({ code: 0, data: { deliveries: [] } })
       }
       claimCalls++
       return jsonResponse({

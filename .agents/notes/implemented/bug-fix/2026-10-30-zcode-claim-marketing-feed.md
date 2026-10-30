@@ -20,49 +20,54 @@ immediately, so only discovery had moved.
 
 ## Decision
 
-`fetchZcodeClaimPlans` queries both feeds in parallel and merges them by plan
-id, keeping the entry with the most grants (the marketing banner repeats its
-plan id in `buttons[]` without details, and again in `background` with them).
-Plans are collected by walking the whole `deliveries` payload for anything
-carrying a `plan_id`, so a reshuffled banner cannot hide a plan. One feed
-failing leaves the other usable; both failing re-raises the `ZcodeClaimError`
-so the existing 401/hold handling still applies.
-
-Discovery is deliberately not tied to a fixed JSON path, and the billing feed is
-kept as a fallback rather than deleted: upstream has moved this campaign twice
-(billing preview → marketing banner), and dropping the old source would turn a
-future move back into another outage.
+The claim round reads the plan list from the marketing feed. Plans are collected
+by walking the whole `deliveries` payload for anything carrying a `plan_id`
+(the banner repeats its plan id in `buttons[]` without details and again in
+`background` with the name and entitlements; the richer copy wins), so a
+reshuffled banner cannot hide a plan. `billing/preview` is not queried at all:
+upstream answers it with an envelope that has no `data`, and the client bundle
+no longer calls it either — `getManualClaimPlanPreviews` survives only as a
+method definition with no renderer caller, while `getStartPlanPreview` (a
+different, client-configs feed) is the one the UI actually calls. Claiming still
+goes through `billing/claim` with the captcha header, which the client's
+marketing action handler also uses.
 
 ## Alternatives considered
 
-**Delete the billing preview path.** It returns an empty envelope today, but it
-is the documented plan feed and the fallback costs one request per round.
+**Keep the billing preview as a fallback.** Rejected once the client itself
+stopped calling it: the fallback would be a guaranteed-empty request on every
+round, guarding against a revert nobody has signalled.
 
 **Drive the marketing campaign's confirm action (`marketing/touch/action`).**
 That records the user's UI choice; it does not grant the plan. The grant is
-still `billing/claim` with the captcha header.
+still `billing/claim`.
 
 **Hard-code the plan id pattern (`…-wk`).** Guessing ids would claim whatever
 the pattern matches next and hides the real feed.
 
 ## Consequences
 
-Each auto-claim tick now spends two discovery requests instead of one. The
-marketing call is an impression touch (the same one the app makes when it shows
-the card), so it is not free of side effects — but it is idempotent and does
-not grant anything. A campaign that returns a plan id the claim endpoint does
-not know fails as 1001, which the round already treats as a per-plan error.
+One request per discovery instead of two, and one less dial the upstream can
+turn off. If plans ever reappear in the billing feed, the round will not see
+them — the log line to look for is `ZCode claim check failed` (the feed now
+throws on a non-OK response instead of silently returning empty).
+
+The marketing call is an impression touch (the same one the app makes when it
+shows the card), so it is not free of side effects — but it is idempotent and
+does not grant anything. A campaign that returns a plan id the claim endpoint
+does not know fails as 1001, which the round already treats as a per-plan error.
 
 ## Verification
 
 - `tests/zcode-claim.test.ts::a marketing banner advertises the claimable plan`
-- `tests/zcode-claim.test.ts::the two feeds merge without duplicating a plan`
-- `tests/zcode-claim.test.ts::one feed failing leaves the other one usable`
-- `tests/zcode-claim.test.ts::both feeds failing surfaces the error`
+- `tests/zcode-claim.test.ts::the marketing feed gets the session JWT and the client fingerprint`
+- `tests/zcode-claim.test.ts::a failing feed surfaces the error`
+- `tests/zcode-claim.test.ts::a 1005 hold delays the next claim until the upstream recovery time`
 
-Proved: with `src/services/zcode/claim.ts` reverted to the preview-only version,
-the marketing test and the merge test failed (`2 fail`) while every other claim
-test passed — the round simply saw no plans. Restored: 21 pass. Red-run output:
+Proved: with `src/services/zcode/claim.ts` at the pre-marketing revision
+(`14004a6d`, preview-only discovery), the marketing-feed tests and the
+auto-claim round test failed (`3 fail`) while the rest passed — the round saw no
+plans. Restored: 18 pass. Red-run output:
 `.agents/notes-evidence/2026-10-30-zcode-marketing-feed-red-run.txt`.
 
 Live confirmation with the real captured payload: the parser produced

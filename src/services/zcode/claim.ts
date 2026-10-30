@@ -7,12 +7,13 @@
  *   —— 必须带 `X-Aliyun-Captcha-Verify-Param`（+ Region），否则 3007；
  *   验证码由 ~/services/zcode/captcha 在真 Chromium 里求。
  *
- * 可领列表则有两个投放源，谁上线取谁（见 fetchZcodeClaimPlans）：
+ * 可领列表只有一个投放源（见 fetchZcodeClaimPlans）：
  *
- *   1. 营销活动 `GET {zcode}/api/v1/marketing/touch?seq=N` —— 2026-10-30
- *      起周末套餐只在这里出现，客户端那张「领取」卡片就是它。
- *   2. 旧链路 `GET {zcode}/api/v1/zcode-plan/billing/preview?app_version=&platform=`
- *      —— 同一天起返回不带 data 的空包，保留作兜底。
+ *   `GET {zcode}/api/v1/marketing/touch?seq=N` —— 客户端那张「领取」
+ *   卡片就是它。2026-10-30 起周末套餐只在这里出现；旧的
+ *   `zcode-plan/billing/preview` 对任何账号都返回不带 data 的空包，
+ *   客户端也已不再调用（app.asar 里只剩方法定义，没有调用方），所以
+ *   这里不再请求它。
  *
  * 上游业务码：1001 套餐不存在 / 1002 活动结束 / 1003 已领过 / 1004 不符合
  * 条件 / 1005 今日名额用完（data.plan.ends_at 是名额恢复时间）/ 3001 参数错
@@ -53,7 +54,6 @@ const logger = createLogger("zcode")
 const BILLING_BASE = `${ZCODE_API}/api/v1/zcode-plan`
 const CLAIM_STATE_KEY = "zcodeClaim"
 const ROUND_INTERVAL_MS = 60 * 60 * 1000
-const PREVIEW_TIMEOUT_MS = 20_000
 const CLAIM_TIMEOUT_MS = 180_000
 
 interface ZcodeClaimGrant {
@@ -230,24 +230,25 @@ interface BillingResponse {
   body: Record<string, unknown>
 }
 
-async function billingRequest(
+/** 领一个套餐：`POST {zcode-plan}/billing/claim`，头里带验证码参数。 */
+async function claimRequest(
   connection: ProviderConnection,
-  path: "preview" | "claim",
-  init: RequestInit,
+  planId: string,
+  headers: Record<string, string>,
   signal: AbortSignal,
   appVersion: string,
 ): Promise<BillingResponse> {
   const proxyUrl = getConnectionProxyUrl(connection)
-  const suffix = path === "preview" ? previewQuery(appVersion) : ""
   const response = await oauthFetch(
-    `${BILLING_BASE}/billing/${path}${suffix}`,
+    `${BILLING_BASE}/billing/claim`,
     {
-      ...init,
+      method: "POST",
       signal,
       headers: {
         ...zcodeBillingHeaders(appVersion),
-        ...(init.headers as Record<string, string> | undefined),
+        ...headers,
       },
+      body: JSON.stringify({ plan_id: planId }),
     },
     proxyUrl ? { proxyUrl } : undefined,
   )
@@ -259,16 +260,6 @@ async function billingRequest(
     body = {}
   }
   return { status: response.status, body }
-}
-
-function previewQuery(appVersion: string): string {
-  return (
-    "?"
-    + new URLSearchParams({
-      app_version: appVersion,
-      platform: `${process.platform}-${process.arch}`,
-    }).toString()
-  )
 }
 
 /**
@@ -286,11 +277,12 @@ async function claimAppVersion(
   })
 }
 
-// ── 投放来源一：营销活动（marketing/touch） ─────────────────────
+// ── 投放来源：营销活动（marketing/touch） ───────────────────────
 //
 // 2026-10-30 起周末套餐只走这条链路：`billing/preview` 返回
-// `{code:0,msg:""}`（连 data 都没有），而客户端弹的卡片来自
-// `GET /api/v1/marketing/touch?seq=N`。
+// `{code:0,msg:""}`（连 data 都没有），客户端也已不再调用它——app.asar 里
+// `getManualClaimPlanPreviews` 只剩方法定义，没有任何渲染层调用方。
+// 客户端弹的卡片来自 `GET /api/v1/marketing/touch?seq=N`：
 //
 //   data.deliveries[].banner.buttons[].action = {
 //     type: "claim_zcode_plan", args: { plan_id } }
@@ -382,22 +374,6 @@ async function fetchMarketingClaimPlans(
   return collectMarketingPlans(asRecord(body.data))
 }
 
-/** 同一 planId 只留一份：合并各投放源后按优先级降序。 */
-function mergePlans(
-  sources: Array<Array<ZcodeClaimPlan>>,
-): Array<ZcodeClaimPlan> {
-  const merged = new Map<string, ZcodeClaimPlan>()
-  for (const plans of sources) {
-    for (const plan of plans) {
-      const previous = merged.get(plan.planId)
-      if (!previous || plan.grants.length > previous.grants.length) {
-        merged.set(plan.planId, plan)
-      }
-    }
-  }
-  return [...merged.values()].sort(comparePlans)
-}
-
 function comparePlans(a: ZcodeClaimPlan, b: ZcodeClaimPlan): number {
   return b.priority - a.priority || a.planId.localeCompare(b.planId)
 }
@@ -405,76 +381,18 @@ function comparePlans(a: ZcodeClaimPlan, b: ZcodeClaimPlan): number {
 /**
  * 拉取可领取套餐（按优先级降序）。
  *
- * 两个投放源并行取，谁先上线都能拿到：营销活动（今天的周末套餐）与
- * billing/preview（旧链路，现在返回空）。两边都失败才抛错；只有一边
- * 失败时按另一边继续——活动换投放方式是常态，不该让整轮领取停摆。
+ * 只读营销活动投放：客户端也是这一条，illing/preview 已不再被任何人
+ * 调用（上游对它返回不带 data 的空包，app.asar 里的取用方法也无人调用）。
  */
 export async function fetchZcodeClaimPlans(
   connection: ProviderConnection,
   signal?: AbortSignal,
 ): Promise<Array<ZcodeClaimPlan>> {
-  const jwt = requireJwt(connection)
+  // 会话已过期就别打网络：manifest 与投放都不必请求。
+  requireJwt(connection)
   const appVersion = await claimAppVersion(connection, signal)
-  const sources = await Promise.allSettled([
-    fetchMarketingClaimPlans(connection, appVersion, signal),
-    fetchBillingPreviewPlans(connection, jwt, appVersion, signal),
-  ])
-  const fulfilled = sources.filter(
-    (result): result is PromiseFulfilledResult<Array<ZcodeClaimPlan>> =>
-      result.status === "fulfilled",
-  )
-  if (fulfilled.length === 0) {
-    const failure = sources.find(
-      (result): result is PromiseRejectedResult =>
-        result.status === "rejected"
-        && result.reason instanceof ZcodeClaimError,
-    )
-    throw (
-      failure?.reason
-      ?? (sources[0] as PromiseRejectedResult).reason
-      ?? new ZcodeClaimError("ZCode preview failed.", -1)
-    )
-  }
-  return mergePlans(fulfilled.map((result) => result.value))
+  return fetchMarketingClaimPlans(connection, appVersion, signal)
 }
-
-/** 旧投放链路：billing/preview。上游 404 = 当前没有活动投放，返回空。 */
-async function fetchBillingPreviewPlans(
-  connection: ProviderConnection,
-  jwt: string,
-  appVersion: string,
-  signal?: AbortSignal,
-): Promise<Array<ZcodeClaimPlan>> {
-  const response = await billingRequest(
-    connection,
-    "preview",
-    {
-      method: "GET",
-      headers: { authorization: `Bearer ${jwt}` },
-    },
-    signal ?? AbortSignal.timeout(PREVIEW_TIMEOUT_MS),
-    appVersion,
-  )
-  if (response.status === 404) return []
-  if (response.status === 401 || response.status === 403) {
-    const text = JSON.stringify(response.body).toLowerCase()
-    if (!text.includes("captcha") && !text.includes("verify")) {
-      throw new ZcodeClaimError(FAIL_MESSAGES[401]!, 401)
-    }
-  }
-  if (!response.status || response.status >= 500) {
-    throw new ZcodeClaimError(
-      `ZCode preview failed (HTTP ${response.status}).`,
-      -1,
-    )
-  }
-  const code = businessCode(response.body)
-  if (code !== 0 && code !== 200) {
-    throw failError(code, response.body)
-  }
-  return parseZcodeClaimPlans(response.body.data)
-}
-
 function planResult(
   body: Record<string, unknown>,
   planId: string,
@@ -557,10 +475,10 @@ export async function claimZcodePlan(
   if (region) headers["X-Aliyun-Captcha-Verify-Region"] = region
 
   const appVersion = await claimAppVersion(connection, options.signal)
-  const response = await billingRequest(
+  const response = await claimRequest(
     connection,
-    "claim",
-    { method: "POST", headers, body: JSON.stringify({ plan_id: planId }) },
+    planId,
+    headers,
     options.signal ?? AbortSignal.timeout(CLAIM_TIMEOUT_MS),
     appVersion,
   )

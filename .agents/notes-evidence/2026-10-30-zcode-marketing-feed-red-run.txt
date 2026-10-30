@@ -1,4 +1,5 @@
-(fail) zcode claim client > a marketing banner advertises the claimable plan [0.56ms]
-(fail) zcode claim client > the two feeds merge without duplicating a plan [1.30ms]
- 19 pass
- 2 fail
+(fail) zcode claim client > the marketing feed gets the session JWT and the client fingerprint [8.29ms]
+(fail) zcode claim client > a marketing banner advertises the claimable plan [0.39ms]
+(fail) zcode auto-claim round > a 1005 hold delays the next claim until the upstream recovery time [5.13ms]
+ 15 pass
+ 3 fail
