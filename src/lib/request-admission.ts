@@ -771,7 +771,7 @@ async function prepareRequestAdmissionImpl(
  * 自己等到那时重试即可。若报成 `insufficient_quota`/`billing_error`,Codex 这类
  * 客户端会把它当终态直接结束本轮,窗口恢复后也不会自动继续。
  */
-function buildRateLimitResponseBody(
+export function buildRateLimitResponseBody(
   endpoint: ModelEndpoint,
   diagnostic: RouteFailureDiagnostic,
 ): string {
@@ -807,7 +807,7 @@ function buildRateLimitResponseBody(
  * 没有退避时间(reasons 没有 cooldown/quota)时不设置这些 headers,
  * 让客户端走默认指数退避。
  */
-function buildRateLimitResponse(
+export function buildRateLimitResponse(
   endpoint: ModelEndpoint,
   diagnostic: RouteFailureDiagnostic,
 ): Response {

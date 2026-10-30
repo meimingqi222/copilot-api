@@ -33,9 +33,12 @@ import {
   reportUpstreamSuccess,
 } from "~/lib/rate-limit"
 import {
+  buildRateLimitResponse,
+  buildRateLimitResponseBody,
   retargetGroupDecision,
   type RequestAdmission,
 } from "~/lib/request-admission"
+import { analyzeCandidateReasons } from "~/lib/route-diagnostics"
 import { applyGroupOverrides } from "~/lib/routing-groups/apply"
 import {
   getRequestLogContext,
@@ -44,6 +47,7 @@ import {
   recordUpstreamAttempt,
 } from "~/lib/request-log"
 import {
+  buildGroupRouteTargets,
   clearRest,
   resolveConnectionFromTarget,
   switchToNextRouteTarget,
@@ -51,6 +55,7 @@ import {
   verifyHeldError,
 } from "~/lib/route-target"
 import { isAbortError, safeOrigin, shouldFailover } from "~/lib/utils"
+import { retryableUsageLimit } from "~/lib/usage-limit"
 import {
   isAsyncIterable,
   tryAcquireCredentialLease,
@@ -188,6 +193,7 @@ export async function executeWithFailover<
   } = options
   initializeProtocolAdapters()
 
+  const requestedModel = payload.model
   const tried = new Set<string>()
   let current: RequestAdmission = admission
 
@@ -371,7 +377,12 @@ export async function executeWithFailover<
         await markCooldown(current, error, logPrefix, rest)
       }
 
-      if (!advanceToNextTarget()) throw withRetryAdvice(error, current, rest)
+      if (!advanceToNextTarget()) {
+        throw withRetryAdvice(error, current, rest, {
+          model: requestedModel,
+          endpoint: routeKind,
+        })
+      }
     }
   }
 }
@@ -386,13 +397,54 @@ function withRetryAdvice(
   error: unknown,
   admission: RequestAdmission,
   rest?: RestDecision,
+  scope?: { model: string; endpoint: RouteTarget["endpoint"] },
 ): unknown {
-  if (!(error instanceof HTTPError) || error.response.status !== 429) {
+  if (!(error instanceof HTTPError)) return error
+  if (
+    error.response.status !== 429
+    && !retryableUsageLimit({
+      status: error.response.status,
+      body: error.responseBody,
+      retryAfterHeader: error.response.headers.get("Retry-After"),
+    })
+  ) {
     return error
   }
-  if (error.response.headers.has("Retry-After")) return error
   const restMs =
     rest?.untilMs && rest.untilMs > Date.now() ? rest.untilMs - Date.now() : 0
+  if (scope) {
+    const backups = buildGroupRouteTargets(
+      admission.groupMembers ?? [scope.model],
+      {
+        endpoint: scope.endpoint,
+        compact: admission.compact,
+        onlyAvailable: false,
+      },
+    ).filter((target) => targetKey(target) !== targetKey(admission.target))
+    const { retryAfterSeconds } = analyzeCandidateReasons(backups)
+    if (
+      retryAfterSeconds > 0
+      && retryAfterSeconds * 1000
+        < Math.max(
+          restMs,
+          getRemainingCooldownSeconds(admission.connection.id) * 1000,
+        )
+    ) {
+      // This is a pool-level wait, not the final vendor's reset. Normalize the
+      // body too, or forwardError would restore its longer usage-limit reset.
+      const diagnostic = {
+        message: `All eligible routes are temporarily unavailable: ${error.message}`,
+        reason: "cooldown" as const,
+        retryAfterSeconds,
+      }
+      return new HTTPError(
+        diagnostic.message,
+        buildRateLimitResponse(scope.endpoint, diagnostic),
+        buildRateLimitResponseBody(scope.endpoint, diagnostic),
+      )
+    }
+  }
+  if (error.response.headers.has("Retry-After")) return error
   const gateMs = getRemainingCooldownSeconds(admission.connection.id) * 1000
   const waitMs = Math.max(restMs, gateMs)
   if (!(waitMs > 0)) return error

@@ -1,0 +1,48 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/provider-connections-store.test.ts:
+(pass) loadProviderConnections > returns empty array when file is missing [1.68ms]
+[error] File <temporary-app-dir>/provider-connections.json is corrupt.
+(pass) loadProviderConnections > throws when recoverable file exists but is corrupt [1.48ms]
+121 |         new Response("quota temporarily unavailable", { status: 503 }),
+122 |       )
+123 |       try {
+124 |         await expect(refreshManagedQuota(connection)).rejects.toThrow()
+125 |         expect(fetch).toHaveBeenCalledTimes(1)
+126 |         expect(getConnectionRoutability(connection).routable).toBe(true)
+                                                                    ^
+error: expect(received).toBe(expected)
+
+Expected: true
+Received: false
+
+      at <anonymous> <repo>/tests/provider-connections-store.test.ts:126:63)
+(fail) loadProviderConnections > persisted Codex review false exhaustion admits routing after a failed 503 refresh [4.82ms]
+121 |         new Response("quota temporarily unavailable", { status: 503 }),
+122 |       )
+123 |       try {
+124 |         await expect(refreshManagedQuota(connection)).rejects.toThrow()
+125 |         expect(fetch).toHaveBeenCalledTimes(1)
+126 |         expect(getConnectionRoutability(connection).routable).toBe(true)
+                                                                    ^
+error: expect(received).toBe(expected)
+
+Expected: true
+Received: false
+
+      at <anonymous> <repo>/tests/provider-connections-store.test.ts:126:63)
+(fail) loadProviderConnections > persisted Codex additional false exhaustion admits routing after a failed 503 refresh [1.00ms]
+(pass) loadProviderConnections > persisted Codex repair preserves shared admission guard [1.66ms]
+(pass) loadProviderConnections > persisted Codex repair preserves auth admission guard [0.77ms]
+(pass) loadProviderConnections > persisted Codex repair preserves disabled-connection admission guard [0.58ms]
+(pass) loadProviderConnections > persisted Codex repair preserves disabled-credential admission guard [0.69ms]
+(pass) loadProviderConnections > persisted Codex repair preserves upstream-error admission guard [0.70ms]
+(pass) loadProviderConnections > persisted Codex repair preserves upstream-rate admission guard [0.64ms]
+(pass) loadProviderConnections > persisted Codex repair preserves independent-wait admission guard [0.86ms]
+(pass) loadProviderConnections > persisted Codex repair preserves missing-raw admission guard [0.84ms]
+(pass) loadProviderConnections > persisted Codex repair preserves shared-denied admission guard [0.66ms]
+
+ 11 pass
+ 2 fail
+ 62 expect() calls
+Ran 13 tests across 1 file. [253.00ms]

@@ -1,0 +1,32 @@
+Natural red before dispatch-level backup retry advice.
+Command: bun test tests/quota-admission-wire.test.ts -t 'continuous failover'
+Sanitized excerpts (absolute local paths omitted):
+
+430 |         expect(seconds).toBeLessThanOrEqual(60)
+error: expect(received).toBeLessThanOrEqual(expected)
+Expected: <= 60
+Received: 8025
+
+(fail) continuous failover uses the earliest eligible account recovery: body
+(fail) continuous failover uses the earliest eligible account recovery: header
+(fail) continuous failover uses the earliest eligible account recovery: group
+(fail) continuous failover uses the earliest eligible account recovery: messages
+(pass) continuous failover uses the earliest eligible account recovery: pinned
+
+ 1 pass
+ 7 filtered out
+ 4 fail
+ 22 expect() calls
+Ran 5 tests across 1 file.
+
+Follow-up natural red before including a timed usage_limit_reached carried by
+HTTP 400 (the stream terminal-error representation):
+Command: bun test tests/quota-admission-wire.test.ts -t 'continuous failover.*stream-400'
+Expected: <= 60
+Received: 8025
+(fail) continuous failover uses the earliest eligible account recovery: stream-400
+ 0 pass
+ 12 filtered out
+ 1 fail
+ 4 expect() calls
+Ran 1 test across 1 file.

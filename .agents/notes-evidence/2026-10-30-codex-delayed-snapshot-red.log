@@ -1,0 +1,16 @@
+Natural red before the persisted Codex snapshot/exhaustion ordering guard.
+Command: bun test tests/provider-connections-store.test.ts -t 'delayed feature snapshot'
+Sanitized excerpt (local absolute path omitted):
+
+214 |       expect(getConnectionRoutability(connection).routable).toBe(false)
+error: expect(received).toBe(expected)
+Expected: false
+Received: true
+
+(fail) loadProviderConnections > delayed feature snapshot cannot erase genuine shared exhaustion on reload
+
+ 0 pass
+ 21 filtered out
+ 1 fail
+ 4 expect() calls
+Ran 1 test across 1 file.

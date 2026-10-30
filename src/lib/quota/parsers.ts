@@ -400,26 +400,10 @@ export function summarizeCodexQuota(payload: CodexUsagePayload): {
   remainingPercent: number | undefined
   unlimited: boolean
 } {
-  const windows: Array<CodexUsageWindow> = [
-    ...collectCodexRateLimitWindows(
-      payload.rate_limit ?? payload.rateLimit ?? undefined,
-    ),
-    ...collectCodexRateLimitWindows(
-      payload.code_review_rate_limit
-        ?? payload.codeReviewRateLimit
-        ?? undefined,
-    ),
-  ]
-
-  for (const entry of payload.additional_rate_limits
-    ?? payload.additionalRateLimits
-    ?? []) {
-    windows.push(
-      ...collectCodexRateLimitWindows(
-        entry.rate_limit ?? entry.rateLimit ?? undefined,
-      ),
-    )
-  }
+  // Only the shared Codex meter can exhaust the account; review/additional meters are independent.
+  const windows = collectCodexRateLimitWindows(
+    payload.rate_limit ?? payload.rateLimit ?? undefined,
+  )
 
   let minRemaining: number | undefined
   for (const window of windows) {

@@ -25,7 +25,7 @@ import { elapsed } from "./windows"
  */
 
 const FILE_NAME = "plan-quota.json"
-const FILE_VERSION = 1
+const FILE_VERSION = 2
 
 const RENAME_ATTEMPTS = 3
 const RENAME_RETRY_DELAY_MS = 50
@@ -114,6 +114,11 @@ function normalizeFile(parsed: unknown): Record<string, StoredReading> {
   }
   const out: Record<string, StoredReading> = {}
   for (const [key, value] of Object.entries(parsed.readings)) {
+    // Before v2, Codex readings mixed shared and independent feature budgets
+    // without retaining their identities. They cannot be safely replayed.
+    if (parsed.version !== FILE_VERSION && key.startsWith("codex/")) {
+      continue
+    }
     const reading = normalizeReading(value)
     if (reading) {
       out[key] = reading

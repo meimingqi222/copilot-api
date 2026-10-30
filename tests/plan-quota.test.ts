@@ -201,7 +201,7 @@ describe("plan-quota store", () => {
       version: number
       readings: Record<string, unknown>
     }
-    expect(persisted.version).toBe(1)
+    expect(persisted.version).toBe(2)
     expect(Object.keys(persisted.readings)).toEqual([
       "claude/alice@example.com",
     ])
@@ -261,6 +261,62 @@ describe("plan-quota store", () => {
       { used: 0.7, spanMs: SEVEN_DAYS, resetsAtMs: NOW + 3 * DAY },
     ])
   })
+
+  test.each([1, undefined])(
+    "legacy cache version %p cannot replay Codex feature pressure after a failed refresh",
+    async (version) => {
+      const shared: PlanAllowance = [
+        { used: 0.25, spanMs: FIVE_HOURS, resetsAtMs: NOW + 2 * HOUR },
+      ]
+      const legacy = {
+        asOf: NOW,
+        windows: [
+          ...shared,
+          { used: 1, spanMs: SEVEN_DAYS, resetsAtMs: NOW + 3 * DAY },
+        ],
+      }
+      const claude = {
+        asOf: NOW,
+        windows: [{ used: 0.6, spanMs: SEVEN_DAYS, resetsAtMs: NOW + 4 * DAY }],
+      }
+      await fs.writeFile(
+        filePath,
+        JSON.stringify({
+          version,
+          readings: {
+            "codex/alice": legacy,
+            "codex/bob": legacy,
+            "claude/alice": claude,
+          },
+        }),
+      )
+
+      const failing = { provider: "codex", user: "alice", error: "503" }
+      expect(await mergeWithLast(failing, NOW + HOUR)).toEqual({
+        windows: [],
+        stale: true,
+      })
+      expect(await lastReading("codex", "bob", NOW + HOUR)).toBeUndefined()
+      expect(
+        await mergeWithLast({ ...failing, provider: "claude" }, NOW + HOUR),
+      ).toEqual({ ...claude, stale: true })
+
+      // A fresh shared reading upgrades the file without blessing other old
+      // Codex entries; non-Codex history survives the rewrite and restart.
+      await mergeWithLast(
+        { provider: "codex", user: "alice", windows: shared },
+        NOW + HOUR,
+      )
+      setPlanQuotaFilePath(filePath)
+      expect(await mergeWithLast(failing, NOW + HOUR)).toEqual({
+        windows: shared,
+        asOf: NOW + HOUR,
+        stale: true,
+      })
+      expect(await lastReading("codex", "bob", NOW + HOUR)).toBeUndefined()
+      expect(await lastReading("claude", "alice", NOW + HOUR)).toEqual(claude)
+    },
+  )
 
   test("mergeWithLast replays an advanced reading when the window has moved on", async () => {
     await keepReading(

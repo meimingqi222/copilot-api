@@ -3,6 +3,7 @@ import fs from "node:fs/promises"
 import { logger } from "~/lib/logger"
 import { PATHS } from "~/lib/paths"
 import { Repository } from "~/lib/repository"
+import { repairPersistedCodexFeatureExhaustion } from "~/lib/provider-connections/codex-quota-repair"
 
 import type { CredentialRefresherType } from "./credential-refresher"
 import type { ApiCredential, ProviderConnection } from "./types"
@@ -82,9 +83,15 @@ export async function loadProviderConnections(): Promise<
     }
     return []
   }
-  return file.connections
+  const connections = file.connections
     .map((c) => normalizeConnection(c))
     .filter((c): c is ProviderConnection => c !== null)
+  // Repair before availability refresh/admission, even when the first live
+  // quota probe fails. The next normal persistence writes the corrected state.
+  for (const connection of connections) {
+    repairPersistedCodexFeatureExhaustion(connection)
+  }
+  return connections
 }
 
 export async function saveProviderConnections(

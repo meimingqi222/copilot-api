@@ -1,0 +1,35 @@
+Natural red: bun test tests/quota-admission-wire.test.ts
+Before editing src/lib/route-diagnostics.ts, 2026-10-30.
+Fixture: spent account cooling down for 8025 seconds; backup receives HTTP 520.
+
+(fail) exhausted price window > codex-native: a depleted account must not extend another account's 520 retry
+expect(retryAfter).toBeLessThanOrEqual(60)
+Expected: <= 60
+Received: 8025
+
+(fail) exhausted price window > openai-compatible: a depleted account must not extend another account's 520 retry
+expect(retryAfter).toBeLessThanOrEqual(60)
+Expected: <= 60
+Received: 8025
+
+1 pass
+2 fail
+16 expect() calls
+Ran 3 tests across 1 file.
+
+Natural red during review, before the follow-up guards:
+bun test tests/quota-admission-wire.test.ts -t 'a depleted account'
+Fixture adds a 30-second Codex persisted cooldown alongside the backup's
+60-second registry rest, and a disabled key carrying a 10-second quota wait.
+
+(fail) codex-native: a depleted account must not extend another account's 520 retry
+expect(retryAfter).toBeGreaterThan(55)
+Expected: > 55
+Received: 30
+
+(fail) openai-compatible: a depleted account must not extend another account's 520 retry
+expect(retryAfter).toBeGreaterThan(55)
+Expected: > 55
+Received: 10
+
+0 pass, 2 fail

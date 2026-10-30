@@ -43,6 +43,31 @@ upstream sent no `Retry-After`, `withRetryAdvice` fills it from the rest or the
 pacing gate (`src/services/dispatch/failover.ts`), so a 429 to the client is
 never bare.
 
+Admission with several blocked candidates returns the earliest positive wait
+among temporarily blocked routes, not the longest account reset
+(`src/lib/route-diagnostics.ts`). One usable account is enough to serve the
+retry. Include registry-only rests: account-managed HTTP 520 failures leave the
+credential ready but temporarily exclude it through the in-memory registry.
+Within a credential, all active gates must expire before it is usable; across
+credentials, only one route needs to recover. Disabled/auth-error candidates
+must not shorten the retry deadline.
+The connection pacing check must be combined with the credential/registry
+check, not used as an early return: a 30-second connection cooldown can coexist
+with a 60-second registry rest. Check credential.enabled independently of its
+status, since a disabled key may still carry an old quota/cooldown status.
+
+When dispatch exhausts its alternatives, it also checks the allowed backup pool
+(`src/services/dispatch/failover.ts`). A backup recovering sooner than the final
+failed account determines the retry, even if that account supplied a longer
+Retry-After. The pool uses the same group members, pins, aliases, endpoint and
+compact constraints as failover. A single pinned account keeps its own deadline.
+Normalize the aggregate error body as well as its headers: leaving the final
+usage_limit_reached body intact makes forwardError restore that account's longer
+reset. Reuse admission's protocol-specific error response builders so Messages
+still receives an Anthropic error, not an OpenAI body. This also applies to the
+timed usage_limit_reached carried by HTTP 400 for a stream terminal error, which
+the existing wire contract already promotes to a retryable 429.
+
 Quota polling never extends an existing window: an exhausted read keeps
 `min(existingEnd, guessedEnd)`, and the 24-hour guess applies only when no
 cooldown exists (`src/lib/provider-connections/connection-metadata.ts`). A fresh
@@ -66,6 +91,10 @@ five-hour window becomes a 20-hour sleep for the client.
 **Probe every few seconds.** Detects an early reset quickly but hammers a
 genuinely limited account.
 
+**Wait for every account to recover.** A depleted account with 8025 seconds
+left would hide a backup's 60-second network rest, making a client sleep for
+over two hours even though the backup can be retried in a minute.
+
 ## Consequences
 
 A real multi-hour window costs a handful of probes instead of a tight loop.
@@ -84,7 +113,34 @@ a fabricated deadline.
 - `tests/rest-probe-cap.test.ts::限流休息按复核阶梯封顶`
 - `tests/dispatch.test.ts`
 - `tests/quota-admission-wire.test.ts`
+- `tests/quota-admission-wire.test.ts::a depleted account must not extend another account's 520 retry`
+- `tests/quota-admission-wire.test.ts::continuous failover uses the earliest eligible account recovery`
 - `tests/connection-routability.test.ts::配额刷新不会把`
+
+Proved: before the dispatch fix, the continuous-failure wire test returned 8025
+seconds instead of at most 60 for body-only, explicit-header, routing-group and
+Messages cases. The pinned-account control already passed and remains unchanged.
+The natural-red excerpt is in
+`.agents/notes-evidence/2026-10-30-continuous-failover-red.log`.
+The follow-up HTTP-400 representation failed at the same 8025-vs-60 assertion
+before widening the guard; its red excerpt is appended to that log. Group mode
+also has an outside-group account recovering in ten seconds, which must not
+shorten the eligible group's 60-second wait.
+
+Proved: before the admission fix, both Codex-native and compatible regression
+cases returned Retry-After 8025 where the assertion required at most 60 seconds;
+the natural-red excerpt is saved in
+`.agents/notes-evidence/2026-10-30-multi-account-retry-red.log`. With the fix,
+both cases pass, and after advancing 61 seconds only the backup becomes
+routable and serves successfully. The same suite checks immediate Codex
+failover on usage_limit_reached and HTTP 520 when another account is healthy.
+
+Proved: review extended the same regression with overlapping waits and a
+disabled key. Before the follow-up guard, Codex returned 30 seconds instead of
+the registry's 60 seconds, and a compatible connection returned the disabled
+key's 10-second wait. The excerpt is appended to the same evidence log. The
+test now verifies the pool remains empty at 31 seconds and the healthy backup
+becomes available at 61 seconds.
 
 Proved: the live failure was Codex ending the turn on `usage_limit_reached`,
 and after an early reset routing still answering the old four-hour window. The

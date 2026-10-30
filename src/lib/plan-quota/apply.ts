@@ -125,6 +125,17 @@ export function planWindowsFromSnapshot(
   const out: PlanAllowance = []
   for (const item of raw) {
     if (!isRecord(item)) continue
+    const id = typeof item["id"] === "string" ? item["id"] : ""
+    const labelKey =
+      typeof item["labelKey"] === "string" ? item["labelKey"] : ""
+    // Feature budgets remain visible in snapshot details, never account-wide routing pressure.
+    if (
+      snapshot.provider === "codex"
+      && (id.startsWith("code-review-")
+        || labelKey.startsWith("quota.oauth.codex.additional"))
+    ) {
+      continue
+    }
     const usedPercent = finiteNumber(item["usedPercent"])
     if (usedPercent === undefined) continue
 
@@ -139,9 +150,6 @@ export function planWindowsFromSnapshot(
     if (endMs !== undefined && endMs > 0) {
       window.resetsAtMs = endMs
     }
-    const id = typeof item["id"] === "string" ? item["id"] : ""
-    const labelKey =
-      typeof item["labelKey"] === "string" ? item["labelKey"] : ""
     const scope = scopeOfWindowText(`${id} ${labelKey}`)
     if (scope) window.model = scope
     out.push(window)

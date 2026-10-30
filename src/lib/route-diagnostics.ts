@@ -157,52 +157,59 @@ function pickDominantFailureReason(reasons: Set<FailureReason>): FailureReason {
   return "unknown"
 }
 
-function analyzeCandidateReasons(candidates: Array<RouteTarget>): {
+export function analyzeCandidateReasons(candidates: Array<RouteTarget>): {
   reasons: Set<FailureReason>
   retryAfterSeconds: number
 } {
   const reasons = new Set<FailureReason>()
-  let retryAfterSeconds = 0
+  let retryAfterSeconds = Infinity
 
   for (const candidate of candidates) {
-    // 批次 3：通过 connectionId 查找 connection，用 connection 字段直接判断可用性
-    // （替代原 getAccount + getAccountAvailability 路径）
     const conn = getProviderConnection(candidate.connectionId)
-    if (conn && isAccountManagedConnection(conn)) {
-      const availability = getConnectionAvailability(
-        conn,
-        candidate.upstreamModelId,
-      )
-      if (!availability.available) {
-        const reason = mapAccountReason(availability.reason)
-        reasons.add(reason)
-        // quota 也提取 retryAfterSeconds(凭据配额耗尽时也有 cooldownUntil,
-        // 通常是 24h 自动恢复窗口),客户端据此退避,避免立即重试雪崩。
-        if (
-          (reason === "cooldown" || reason === "quota")
-          && availability.retryAfterSeconds > retryAfterSeconds
-        ) {
-          retryAfterSeconds = availability.retryAfterSeconds
-        }
-      }
+    const availability =
+      conn && isAccountManagedConnection(conn) ?
+        getConnectionAvailability(conn, candidate.upstreamModelId)
+      : undefined
+    const credentialDiagnostic = getCredentialFailureDiagnostic(
+      candidate.connectionId,
+      candidate.credentialId,
+    )
+    if (
+      credentialDiagnostic?.reason === "disabled"
+      || credentialDiagnostic?.reason === "auth"
+    ) {
+      reasons.add(credentialDiagnostic.reason)
       continue
     }
-
-    if (candidate.connectionId && candidate.credentialId) {
-      const diagnostic = getCredentialFailureDiagnostic(
-        candidate.connectionId,
-        candidate.credentialId,
-      )
-      if (diagnostic) {
-        reasons.add(diagnostic.reason)
-        if (diagnostic.retryAfterSeconds > retryAfterSeconds) {
-          retryAfterSeconds = diagnostic.retryAfterSeconds
+    const diagnostic =
+      availability && !availability.available ?
+        {
+          reason: mapAccountReason(availability.reason),
+          retryAfterSeconds: Math.max(
+            availability.retryAfterSeconds,
+            credentialDiagnostic?.retryAfterSeconds ?? 0,
+          ),
         }
-      }
+      : credentialDiagnostic
+    if (!diagnostic) continue
+    reasons.add(diagnostic.reason)
+    // One recovered route is enough; a spent account must not extend a backup's wait.
+    if (
+      (diagnostic.reason === "cooldown" || diagnostic.reason === "quota")
+      && diagnostic.retryAfterSeconds > 0
+    ) {
+      retryAfterSeconds = Math.min(
+        retryAfterSeconds,
+        diagnostic.retryAfterSeconds,
+      )
     }
   }
 
-  return { reasons, retryAfterSeconds }
+  return {
+    reasons,
+    retryAfterSeconds:
+      Number.isFinite(retryAfterSeconds) ? retryAfterSeconds : 0,
+  }
 }
 
 /**
@@ -373,6 +380,9 @@ function getCredentialFailureDiagnostic(
 
   const credential = connection.credentials.find((c) => c.id === credentialId)
   if (!credential) return null
+  if (!credential.enabled) {
+    return { reason: "disabled", retryAfterSeconds: 0 }
+  }
 
   // Credential is available — no failure to report. This happens because
   // buildRouteTargets is called with onlyAvailable: false for diagnosis,
@@ -381,7 +391,14 @@ function getCredentialFailureDiagnostic(
     return null
   }
 
-  const reason = mapCredentialReason(credential.status)
+  // Account-managed HTTP 5xx failures rest in memory while status stays ready.
+  const rest = routeEvidenceFor(connectionId, credentialId).rest
+  const reason =
+    credential.status !== "ready" ? mapCredentialReason(credential.status)
+    : rest?.reason === "quota" || rest?.reason === "credit" ? "quota"
+    : rest?.reason === "verify" ? "auth"
+    : rest?.reason === "disabled" ? "disabled"
+    : "cooldown"
   let retryAfterSeconds = 0
   // cooldown 和 quota_exhausted 都有 cooldownUntil(冷却 / 配额恢复窗口)。
   // 提取剩余秒数让客户端据此退避,避免立即重试导致雪崩。
@@ -392,6 +409,12 @@ function getCredentialFailureDiagnostic(
   ) {
     retryAfterSeconds = Math.ceil(
       (credential.cooldownUntil - Date.now()) / 1000,
+    )
+  }
+  if (rest?.untilMs && rest.untilMs > Date.now()) {
+    retryAfterSeconds = Math.max(
+      retryAfterSeconds,
+      Math.ceil((rest.untilMs - Date.now()) / 1000),
     )
   }
   return { reason, retryAfterSeconds }

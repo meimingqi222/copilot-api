@@ -1,0 +1,24 @@
+Natural red runs on 2026-10-30, before the respective guards.
+Vendor calls were mocked; parsing, snapshot application and routing were real.
+
+bun test tests/quota-admission-wire.test.ts -t 'Codex GitHub review exhaustion'
+Before removing review windows from the shared remaining percentage:
+expect(snapshot.premiumInteractionsRemaining).toBe(75)
+Expected: 75
+Received: 0
+0 pass, 1 fail
+
+Same test after fixing the aggregate, before filtering plan windows:
+expect(routeEvidenceFor(...).quota?.usedFraction).toBe(0.25)
+Expected: 0.25
+Received: 1
+0 pass, 1 fail
+
+bun test tests/quota-admission-wire.test.ts -t 'Codex isolated'
+Before removing additional feature windows from the shared percentage:
+(pass) Codex isolated review exhaustion does not exclude a funded coding account
+(fail) Codex isolated feature exhaustion does not exclude a funded coding account
+expect(snapshot.premiumInteractionsRemaining).toBe(75)
+Expected: 75
+Received: 0
+1 pass, 1 fail

@@ -1,0 +1,33 @@
+Natural red before the plan-quota cache version guard.
+Command: bun test tests/plan-quota.test.ts -t 'legacy cache'
+Sanitized excerpt (local absolute paths omitted):
+
+295 |       expect(await mergeWithLast(failing, NOW + HOUR)).toEqual({
+error: expect(received).toEqual(expected)
+
+  {
++   "asOf": 1700000000000,
+    "stale": true,
+-   "windows": [],
++   "windows": [
++     {
++       "resetsAtMs": 1700007200000,
++       "spanMs": 18000000,
++       "used": 0.25,
++     },
++     {
++       "resetsAtMs": 1700259200000,
++       "spanMs": 604800000,
++       "used": 1,
++     },
++   ],
+  }
+
+(fail) plan-quota store > legacy cache version 1 cannot replay Codex feature pressure after a failed refresh
+(fail) plan-quota store > legacy cache version undefined cannot replay Codex feature pressure after a failed refresh
+
+ 0 pass
+ 42 filtered out
+ 2 fail
+ 2 expect() calls
+Ran 2 tests across 1 file.
