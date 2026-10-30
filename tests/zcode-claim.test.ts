@@ -308,6 +308,193 @@ describe("zcode claim client", () => {
     expect(manifestCalls).toBe(1)
   })
 
+  test("a marketing banner advertises the claimable plan", async () => {
+    const connection = createConnection()
+    let seenUrl = ""
+    let seenHeaders: Record<string, string> = {}
+    globalThis.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = String(input)
+      if (url.includes("/api/v1/releases/electron/manifest")) {
+        return new Response(`version: ${ZCODE_APP_VERSION}\n`, { status: 200 })
+      }
+      if (url.includes("/api/v1/marketing/touch")) {
+        seenUrl = url
+        seenHeaders = (init?.headers ?? {}) as Record<string, string>
+        return jsonResponse({
+          code: 0,
+          data: {
+            server_time: 1_793_369_071,
+            deliveries: [
+              {
+                campaign_id: "campaign-1",
+                resource_position: "banner",
+                priority: 50,
+                banner: {
+                  buttons: [
+                    {
+                      text: { format: "", content: "" },
+                      action: { type: "close", args: null },
+                    },
+                    {
+                      text: { format: "", content: "" },
+                      action: {
+                        type: "claim_zcode_plan",
+                        args: { plan_id: "weekend-plan" },
+                      },
+                    },
+                  ],
+                  background: {
+                    type: "bundle",
+                    args: {
+                      zcode_plan: {
+                        plan_id: "weekend-plan",
+                        name: "ZCODE WEEKEND BUILD",
+                        priority: 101,
+                        starts_at: 1_793_358_000,
+                        ends_at: 1_793_581_200,
+                        entitlements: [
+                          {
+                            entitlement_id: "ent-1",
+                            show_name: "GLM-5.3-Flash",
+                            meter: "model_usage",
+                            unit_type: "token",
+                            capabilities: ["model:glm-5.3-flash"],
+                            grant_units: 500_000_000,
+                            period: "one_time",
+                            priority: 101,
+                          },
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        })
+      }
+      // Old feed: no data at all, exactly as upstream answers today.
+      return jsonResponse({ code: 0, msg: "" })
+    }) as unknown as typeof fetch
+
+    const plans = await fetchZcodeClaimPlans(connection)
+
+    expect(plans).toHaveLength(1)
+    expect(plans[0]!.planId).toBe("weekend-plan")
+    expect(plans[0]!.name).toBe("ZCODE WEEKEND BUILD")
+    expect(plans[0]!.grants).toEqual([
+      { name: "GLM-5.3-Flash", units: 500_000_000, period: "one_time" },
+    ])
+    expect(seenUrl).toContain("/api/v1/marketing/touch?seq=")
+    expect(seenHeaders.authorization).toBe(
+      `Bearer ${connection.credentials[0]!.context!.zcodeJwt}`,
+    )
+    expect(seenHeaders["X-Device-Mid"]).toMatch(
+      /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/,
+    )
+  })
+
+  test("the two feeds merge without duplicating a plan", async () => {
+    const connection = createConnection()
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.includes("/api/v1/releases/electron/manifest")) {
+        return new Response(`version: ${ZCODE_APP_VERSION}\n`, { status: 200 })
+      }
+      if (url.includes("/api/v1/marketing/touch")) {
+        return jsonResponse({
+          code: 0,
+          data: {
+            deliveries: [
+              {
+                action: { type: "claim_zcode_plan", args: { plan_id: "same" } },
+              },
+              {
+                action: {
+                  type: "claim_zcode_plan",
+                  args: { plan_id: "marketing-only" },
+                },
+              },
+            ],
+          },
+        })
+      }
+      return jsonResponse({
+        code: 0,
+        data: {
+          plans: [
+            {
+              plan_id: "same",
+              name: "From billing",
+              priority: 7,
+              entitlements: [
+                {
+                  meter: "model_usage",
+                  unit_type: "token",
+                  show_name: "GLM-5.3",
+                  grant_units: 42,
+                  period: "one_time",
+                },
+              ],
+            },
+            { plan_id: "billing-only", name: "Billing only", priority: 1 },
+          ],
+        },
+      })
+    }) as unknown as typeof fetch
+
+    const plans = await fetchZcodeClaimPlans(connection)
+
+    // 两个来源的计划都在，同一个 planId 只留一份（这里保留信息更全的那份）。
+    expect(plans.map((plan) => plan.planId)).toEqual([
+      "same",
+      "billing-only",
+      "marketing-only",
+    ])
+    expect(plans[0]!.grants[0]!.units).toBe(42)
+  })
+
+  test("one feed failing leaves the other one usable", async () => {
+    const connection = createConnection()
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.includes("/api/v1/releases/electron/manifest")) {
+        return new Response(`version: ${ZCODE_APP_VERSION}\n`, { status: 200 })
+      }
+      if (url.includes("/api/v1/marketing/touch")) {
+        return new Response("boom", { status: 500 })
+      }
+      return jsonResponse({
+        code: 0,
+        data: {
+          plans: [{ plan_id: "billing-only", name: "From billing" }],
+        },
+      })
+    }) as unknown as typeof fetch
+
+    const plans = await fetchZcodeClaimPlans(connection)
+    expect(plans.map((plan) => plan.planId)).toEqual(["billing-only"])
+  })
+
+  test("both feeds failing surfaces the error", async () => {
+    const connection = createConnection()
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.includes("/api/v1/releases/electron/manifest")) {
+        return new Response(`version: ${ZCODE_APP_VERSION}\n`, { status: 200 })
+      }
+      return new Response("boom", { status: 500 })
+    }) as unknown as typeof fetch
+
+    const error = await fetchZcodeClaimPlans(connection).catch(
+      (caught: unknown) => caught,
+    )
+    expect(error).toBeInstanceOf(ZcodeClaimError)
+  })
+
   test("claim posts the plan with the captcha headers", async () => {
     const connection = createConnection()
     let seenUrl = ""
@@ -545,6 +732,9 @@ describe("zcode auto-claim round", () => {
             ],
           },
         })
+      }
+      if (url.includes("/api/v1/marketing/touch")) {
+        return jsonResponse({ code: 0, data: { deliveries: [] } })
       }
       claimCalls++
       return jsonResponse({

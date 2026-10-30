@@ -1,13 +1,18 @@
 /**
  * ZCode 限时套餐领取（活动赠送的「周末鸡蛋」）。
  *
- * 链路（与 zcode2api / zcode-switch 对齐）：
+ * 领取本身只有一条链路：
  *
- *   1. `GET {zcode}/api/v1/zcode-plan/billing/preview?app_version=&platform=`
- *      —— 免验证码，列出当前可领套餐；活动没上线时上游回 404（正常态，视为空）。
- *   2. `POST {zcode}/api/v1/zcode-plan/billing/claim` body `{plan_id}`
- *      —— 必须带 `X-Aliyun-Captcha-Verify-Param`（+ Region），否则 3007；
- *      验证码由 ~/services/zcode/captcha 在真 Chromium 里求。
+ *   `POST {zcode}/api/v1/zcode-plan/billing/claim` body `{plan_id}`
+ *   —— 必须带 `X-Aliyun-Captcha-Verify-Param`（+ Region），否则 3007；
+ *   验证码由 ~/services/zcode/captcha 在真 Chromium 里求。
+ *
+ * 可领列表则有两个投放源，谁上线取谁（见 fetchZcodeClaimPlans）：
+ *
+ *   1. 营销活动 `GET {zcode}/api/v1/marketing/touch?seq=N` —— 2026-10-30
+ *      起周末套餐只在这里出现，客户端那张「领取」卡片就是它。
+ *   2. 旧链路 `GET {zcode}/api/v1/zcode-plan/billing/preview?app_version=&platform=`
+ *      —— 同一天起返回不带 data 的空包，保留作兜底。
  *
  * 上游业务码：1001 套餐不存在 / 1002 活动结束 / 1003 已领过 / 1004 不符合
  * 条件 / 1005 今日名额用完（data.plan.ends_at 是名额恢复时间）/ 3001 参数错
@@ -16,7 +21,7 @@
  * 或一小时后自然重试。
  *
  * 自动轮（runZcodeClaimRound）由系统设置 zcodeAutoClaim 开关控制，每号
- * 默认 60 分钟一轮：先 preview，再逐个领取未被 hold 的套餐。
+ * 默认 60 分钟一轮：先取可领列表，再逐个领取未被 hold 的套餐。
  */
 
 import type { ProviderConnection } from "~/lib/provider-connections"
@@ -201,7 +206,7 @@ export function parseZcodeClaimPlans(raw: unknown): Array<ZcodeClaimPlan> {
   return source
     .map(coercePlan)
     .filter((plan): plan is ZcodeClaimPlan => plan !== undefined)
-    .sort((a, b) => b.priority - a.priority || a.planId.localeCompare(b.planId))
+    .sort(comparePlans)
 }
 
 function requireJwt(connection: ProviderConnection): string {
@@ -281,8 +286,128 @@ async function claimAppVersion(
   })
 }
 
+// ── 投放来源一：营销活动（marketing/touch） ─────────────────────
+//
+// 2026-10-30 起周末套餐只走这条链路：`billing/preview` 返回
+// `{code:0,msg:""}`（连 data 都没有），而客户端弹的卡片来自
+// `GET /api/v1/marketing/touch?seq=N`。
+//
+//   data.deliveries[].banner.buttons[].action = {
+//     type: "claim_zcode_plan", args: { plan_id } }
+//   data.deliveries[].banner.background.args.zcode_plan = {
+//     plan_id, name, priority, starts_at, ends_at, entitlements }
+//
+// deliveries 里还夹着 download / close 之类的无关动作，所以只挑带
+// plan_id 的节点；真正的套餐详情（名字、grant_units）在 zcode_plan 里，
+// 同一 plan_id 出现多次时取信息更全的那份。
+const MARKETING_TOUCH_URL = `${ZCODE_API}/api/v1/marketing/touch`
+const MARKETING_TIMEOUT_MS = 20_000
+let marketingSeq = 0
+
+/** 递归收集投放里的套餐节点（不依赖固定层级，上游改结构也不会漏）。 */
+function collectMarketingPlans(data: unknown): Array<ZcodeClaimPlan> {
+  const byId = new Map<string, ZcodeClaimPlan>()
+  const seen = new Set<unknown>()
+
+  const keep = (plan: ZcodeClaimPlan) => {
+    const previous = byId.get(plan.planId)
+    if (!previous) {
+      byId.set(plan.planId, plan)
+      return
+    }
+    const richer =
+      plan.grants.length > previous.grants.length
+      || (previous.name === previous.planId && plan.name !== plan.planId)
+    if (richer) byId.set(plan.planId, plan)
+  }
+
+  const walk = (value: unknown): void => {
+    if (typeof value !== "object" || value === null || seen.has(value)) return
+    seen.add(value)
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item)
+      return
+    }
+    const record = asRecord(value)
+    if (!record) return
+    const planId =
+      asTrimmedStringOrEmpty(record.plan_id)
+      || asTrimmedStringOrEmpty(record.planId)
+    if (planId) {
+      const plan = coercePlan(record)
+      if (plan) keep(plan)
+    }
+    for (const nested of Object.values(record)) walk(nested)
+  }
+
+  walk(data)
+  return [...byId.values()].sort(comparePlans)
+}
+
+async function fetchMarketingClaimPlans(
+  connection: ProviderConnection,
+  appVersion: string,
+  signal?: AbortSignal,
+): Promise<Array<ZcodeClaimPlan>> {
+  const jwt = requireJwt(connection)
+  const proxyUrl = getConnectionProxyUrl(connection)
+  marketingSeq += 1
+  const response = await oauthFetch(
+    `${MARKETING_TOUCH_URL}?seq=${marketingSeq}`,
+    {
+      method: "GET",
+      signal: signal ?? AbortSignal.timeout(MARKETING_TIMEOUT_MS),
+      headers: {
+        ...zcodeBillingHeaders(appVersion),
+        authorization: `Bearer ${jwt}`,
+      },
+    },
+    proxyUrl ? { proxyUrl } : undefined,
+  )
+  const text = await response.text()
+  let body: Record<string, unknown> = {}
+  try {
+    body = (JSON.parse(text) as Record<string, unknown>) ?? {}
+  } catch {
+    body = {}
+  }
+  if (!response.ok) {
+    throw new ZcodeClaimError(
+      `ZCode marketing feed failed (HTTP ${response.status}).`,
+      -1,
+    )
+  }
+  const code = businessCode(body)
+  if (code !== 0 && code !== 200) throw failError(code, body)
+  return collectMarketingPlans(asRecord(body.data))
+}
+
+/** 同一 planId 只留一份：合并各投放源后按优先级降序。 */
+function mergePlans(
+  sources: Array<Array<ZcodeClaimPlan>>,
+): Array<ZcodeClaimPlan> {
+  const merged = new Map<string, ZcodeClaimPlan>()
+  for (const plans of sources) {
+    for (const plan of plans) {
+      const previous = merged.get(plan.planId)
+      if (!previous || plan.grants.length > previous.grants.length) {
+        merged.set(plan.planId, plan)
+      }
+    }
+  }
+  return [...merged.values()].sort(comparePlans)
+}
+
+function comparePlans(a: ZcodeClaimPlan, b: ZcodeClaimPlan): number {
+  return b.priority - a.priority || a.planId.localeCompare(b.planId)
+}
+
 /**
- * 拉取可领取套餐（按优先级降序）。上游 404 = 当前没有活动投放，返回空。
+ * 拉取可领取套餐（按优先级降序）。
+ *
+ * 两个投放源并行取，谁先上线都能拿到：营销活动（今天的周末套餐）与
+ * billing/preview（旧链路，现在返回空）。两边都失败才抛错；只有一边
+ * 失败时按另一边继续——活动换投放方式是常态，不该让整轮领取停摆。
  */
 export async function fetchZcodeClaimPlans(
   connection: ProviderConnection,
@@ -290,6 +415,36 @@ export async function fetchZcodeClaimPlans(
 ): Promise<Array<ZcodeClaimPlan>> {
   const jwt = requireJwt(connection)
   const appVersion = await claimAppVersion(connection, signal)
+  const sources = await Promise.allSettled([
+    fetchMarketingClaimPlans(connection, appVersion, signal),
+    fetchBillingPreviewPlans(connection, jwt, appVersion, signal),
+  ])
+  const fulfilled = sources.filter(
+    (result): result is PromiseFulfilledResult<Array<ZcodeClaimPlan>> =>
+      result.status === "fulfilled",
+  )
+  if (fulfilled.length === 0) {
+    const failure = sources.find(
+      (result): result is PromiseRejectedResult =>
+        result.status === "rejected"
+        && result.reason instanceof ZcodeClaimError,
+    )
+    throw (
+      failure?.reason
+      ?? (sources[0] as PromiseRejectedResult).reason
+      ?? new ZcodeClaimError("ZCode preview failed.", -1)
+    )
+  }
+  return mergePlans(fulfilled.map((result) => result.value))
+}
+
+/** 旧投放链路：billing/preview。上游 404 = 当前没有活动投放，返回空。 */
+async function fetchBillingPreviewPlans(
+  connection: ProviderConnection,
+  jwt: string,
+  appVersion: string,
+  signal?: AbortSignal,
+): Promise<Array<ZcodeClaimPlan>> {
   const response = await billingRequest(
     connection,
     "preview",
