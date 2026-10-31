@@ -1,6 +1,9 @@
 import { lobsteraiCallbackConfig } from "~/services/providers/callbacks/lobsterai"
 import { lobsteraiAccountCreation } from "~/services/providers/account-creation/lobsterai"
-import { scheduleLobsteraiRefresh } from "~/services/lobsterai/token-refresh"
+import {
+  scheduleLobsteraiRefresh,
+  scheduleLobsteraiRefreshForAllConnections,
+} from "~/services/lobsterai/token-refresh"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import type { ProviderModule } from "~/services/providers/module"
 import { lobsteraiNativeAdapter } from "~/services/protocols/lobsterai-native"
@@ -53,6 +56,7 @@ export function getLobsteraiModule(): ProviderModule {
     descriptor: getProviderDescriptor("lobsterai"),
     accountCreation: lobsteraiAccountCreation,
     afterAuthentication: scheduleLobsteraiRefresh,
+    scheduleStartupRefresh: scheduleLobsteraiRefreshForAllConnections,
     callback: lobsteraiCallbackConfig,
     adapter: lobsteraiNativeAdapter,
     createRuntime: () => lobsteraiProviderRuntime,

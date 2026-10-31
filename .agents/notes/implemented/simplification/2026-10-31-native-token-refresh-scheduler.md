@@ -32,8 +32,13 @@ The drift is expressed as spec fields, not unified away:
 - `dedupeScheduledRefresh` — LobsterAI's timer shares the request path's
   in-flight map; CodeBuddy's timer always issues its own request.
 - `ensure.gate` / `ensure.result` — which credential the pre-request check
-  reads (argument vs live) and which one supplies the returned token
-  (first credential vs by-id). These only diverge after a concurrent rotation.
+  reads (argument vs live) and which one supplies the returned token. Both
+  providers now return by-id: a caller signs its request with the credential
+  its route target admitted on, so "first credential" would sign with the
+  wrong identity after a rotation or on a multi-credential connection
+  (pinned by `tests/refresh-scheduler-ensure.test.ts`). The gates still
+  differ: CodeBuddy checks the caller's argument, LobsterAI the live
+  credential.
 - `maxTimerDelayMs` — CodeBuddy clamps at 2,147,000,000 ms, LobsterAI at
   2,147,483,647 ms.
 
@@ -62,10 +67,9 @@ alone would leave three copied state machines.
 Scheduling semantics are now identical by construction; only the spec values
 differ, so a change to the five-minute lead or the retry floor applies to both
 providers. A future provider can adopt the scheduler by supplying a refresh
-function and an expiry reader. The `account-import` CPA path still calls
-`scheduleLobsteraiRefreshForAllConnections()` only, so an imported CodeBuddy
-connection gets no timer until the next restart or request-time refresh; that
-gap is unchanged and now one call to either `scheduleAll()` covers both.
+function and an expiry reader. The CPA import path reschedules every provider
+that declares `scheduleStartupRefresh` (CodeBuddy and LobsterAI both do), so
+an imported connection gets its timer immediately.
 
 ## Verification
 

@@ -271,8 +271,10 @@ const scheduler = createTokenRefreshScheduler({
   maxTimerDelayMs: MAX_TIMER_DELAY_MS,
   // 定时刷新与请求前刷新各自发起；历史上只有请求路径做 in-flight 合并。
   dedupeScheduledRefresh: false,
-  // 请求前刷新用调用方传入的凭据判断，返回内存里的第一份凭据。
-  ensure: { gate: "argument", result: "first" },
+  // 请求前刷新用调用方传入的凭据判断；刷新成功后按同一凭据 id 取值。
+  // 调用方（adapter/quota）拿准入凭据签请求头，返回「列表第一条」会在
+  // 多凭据或轮换后签错身份。
+  ensure: { gate: "argument", result: "by-id" },
   onRefreshError: (conn, error) => {
     logger.error(
       `[codebuddy] failed to persist refreshed token for "${conn.name}":`,

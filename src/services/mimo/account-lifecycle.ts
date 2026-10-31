@@ -179,6 +179,7 @@ export class MimoAccountManager {
         const result = await this.runOneAccountCycle({
           startedAt: Date.now(),
           abortAfterRestartWait: true,
+          destroyAtEnd: true,
           watchdogDisconnectLogSuffix: ", rebuilding",
         })
 
@@ -192,8 +193,12 @@ export class MimoAccountManager {
         }
 
         if (result.status === "complete") {
+          // The container was destroyed at the end of its watchdog window, so
+          // the next iteration builds a fresh one. `checkAndReuseContainer`
+          // above is recovery only: it picks up a container that survived from
+          // a previous process, not one this loop just retired.
           logger.info(
-            `[MimoManager ${this.label}] Container expired, rebuilding...`,
+            `[MimoManager ${this.label}] Cycle complete, rebuilding...`,
           )
           continue
         }
@@ -210,6 +215,11 @@ export class MimoAccountManager {
           continue
         }
 
+        // Intentional pacing differences vs `runSingleCycle`, which returns to
+        // the rotator instead of looping (the rotator applies its own gap):
+        // - WS failures cool down here; a single cycle reports and returns.
+        // - Bridge timeout/disconnect rebuilds immediately; a single cycle
+        //   hands the decision back to the rotator.
         if (
           result.status === "ws-connect-failed"
           || result.status === "ws-reconnect-failed"

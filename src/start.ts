@@ -49,8 +49,7 @@ import {
   scheduleModelsRefresh,
 } from "./lib/utils"
 import { server } from "./server"
-import { scheduleCodebuddyRefreshForAllConnections } from "./services/codebuddy/token-refresh"
-import { scheduleLobsteraiRefreshForAllConnections } from "./services/lobsterai/token-refresh"
+import { listBuiltinProviderModules } from "./services/providers/builtins"
 import { refreshCopilotTokenForConnection } from "./services/copilot/token-refresh"
 import { startMimoManager, stopMimoManager } from "./services/mimo/manager"
 import { initializeProtocolAdapters } from "./services/protocols"
@@ -267,8 +266,20 @@ async function runServer(options: RunServerOptions): Promise<void> {
     }
   }
 
-  scheduleCodebuddyRefreshForAllConnections()
-  scheduleLobsteraiRefreshForAllConnections()
+  // Every provider that refreshes tokens on a timer declares the capability on
+  // its module; startup walks the registry instead of naming providers here.
+  // One provider's failure must not skip the others, so each call is isolated.
+  for (const module of listBuiltinProviderModules()) {
+    if (!module.scheduleStartupRefresh) continue
+    try {
+      await module.scheduleStartupRefresh()
+    } catch (err) {
+      logger.warn(
+        `Failed to schedule startup token refresh for "${module.id}":`,
+        err,
+      )
+    }
+  }
 
   // Start background quota refresh
   scheduleQuotaRefresh()

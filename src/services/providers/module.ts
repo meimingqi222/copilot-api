@@ -27,6 +27,13 @@ export interface ProviderModule {
   refreshLeadMs?: number
   accountCreation?: ProviderAccountCreation
   afterAuthentication?(connection: ProviderConnection): void | Promise<void>
+  /**
+   * Schedule this provider's background token refresh at startup, for every
+   * connection it owns. Declared per module so the startup sequence does not
+   * hard-code provider names; each call is isolated so one provider's failure
+   * cannot skip the others.
+   */
+  scheduleStartupRefresh?(): void | Promise<void>
   callback?: OAuthCallbackConfig
   fallbackModels?(): Array<ModelMapping>
   discoverModels?(
