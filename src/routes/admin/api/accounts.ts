@@ -36,7 +36,10 @@ import {
   parseBodyToPatch,
   patchRequiresModelRefresh,
 } from "./account-update"
-import { publicAccountFromConnection } from "./account-views"
+import {
+  publicAccountFromConnection,
+  publicAccountsFromConnections,
+} from "./account-views"
 import { pollAccountFlow, deviceFlowRoutes } from "./device-flow"
 
 export const accountApiRoutes = new Hono()
@@ -59,7 +62,7 @@ accountApiRoutes.get("/", async (c) => {
     await persistProviderConnections()
   }
   return c.json({
-    accounts: connections.map((conn) => publicAccountFromConnection(conn)),
+    accounts: publicAccountsFromConnections(connections),
     claudeCli: {
       installed: Boolean(findClaudeBinary()),
       httpForced: isClaudeHttpForced(),

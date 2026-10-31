@@ -4,6 +4,7 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 import { copilotBaseUrl, copilotHeadersForConnection } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
+import { connectionFetchInit } from "~/services/protocols/shared"
 
 /**
  * Connection 原生版本:getModelsForConnection 直接用 credential.value
@@ -18,9 +19,12 @@ import { state } from "~/lib/state"
 export const getModelsForConnection = async (
   connection: ProviderConnection,
 ) => {
-  const response = await fetch(`${copilotBaseUrl(state)}/models`, {
-    headers: copilotHeadersForConnection(connection),
-  })
+  const response = await fetch(
+    `${copilotBaseUrl(state)}/models`,
+    connectionFetchInit(connection, {
+      headers: copilotHeadersForConnection(connection),
+    }),
+  )
 
   if (!response.ok) throw new HTTPError("Failed to get models", response)
 

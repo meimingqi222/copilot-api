@@ -658,26 +658,33 @@ describe("native token refresh proxy wiring", () => {
 })
 
 /**
- * 静态不变量：src/services/protocols 下每一个调 `fetch` 的文件都必须提到某个
- * 透传代理的 helper。这条规则把"新 adapter 直接裸调 fetch"变成红测试，而不是
- * 一个只有线上才能发现的静默绕行。
+ * 静态不变量：src/services/protocols 与 src/services/copilot 下每一个调
+ * `fetch` 的文件都必须提到某个透传代理的 helper。这条规则把"新 adapter 直接
+ * 裸调 fetch"变成红测试，而不是一个只有线上才能发现的静默绕行。
  *
- * 只约束 protocols/ 目录：目录外（windsurf / codebuff / copilot / 图片内联等）
- * 的 fetch 不都携带 connection（见 2026-10-09-connection-proxy-wiring.md）。
+ * copilot/* 属于 copilot-native adapter 的实现，token 刷新还会把 GitHub
+ * token 发往 api.github.com；这些请求同样按 connection 的 proxyUrl 出站。
+ * 目录外（windsurf / codebuff / 图片内联等）的 fetch 不都携带 connection
+ * （见 2026-10-09-connection-proxy-wiring.md）。
  */
-describe("protocol adapters never fetch without a proxy helper", () => {
-  const adapterDir = path.join(process.cwd(), "src/services/protocols")
+describe("upstream modules never fetch without a proxy helper", () => {
+  const guardedDirs = ["src/services/protocols", "src/services/copilot"]
   const proxyHelper = /connectionFetchInit|withProxyUrl|oauthFetch/
   // 裸调 fetch：前面不是 `.`（排除 globalThis.fetch / options.fetch）。
   const bareFetch = /(^|[^.\w])fetch\(/m
 
-  test("every fetching protocol module mentions a proxy helper", () => {
+  test("every fetching protocol and copilot module mentions a proxy helper", () => {
     const offenders: Array<string> = []
-    for (const entry of readdirSync(adapterDir)) {
-      if (!entry.endsWith(".ts")) continue
-      const source = readFileSync(path.join(adapterDir, entry), "utf8")
-      if (!bareFetch.test(source)) continue
-      if (!proxyHelper.test(source)) offenders.push(entry)
+    for (const relativeDir of guardedDirs) {
+      const dir = path.join(process.cwd(), relativeDir)
+      for (const entry of readdirSync(dir)) {
+        if (!entry.endsWith(".ts")) continue
+        const source = readFileSync(path.join(dir, entry), "utf8")
+        if (!bareFetch.test(source)) continue
+        if (!proxyHelper.test(source)) {
+          offenders.push(`${relativeDir}/${entry}`)
+        }
+      }
     }
     expect(offenders).toEqual([])
   })

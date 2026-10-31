@@ -23,6 +23,7 @@ import { normalizeResponsesStreamIds } from "~/services/protocols/responses/norm
 import { copilotTokenFromCredential } from "~/services/copilot/token-refresh"
 import { withDefaultReasoningSummary } from "~/services/protocols/responses/types"
 import {
+  connectionFetchInit,
   detectResponsesStreamError,
   safeSseStream,
 } from "~/services/protocols/shared"
@@ -41,7 +42,10 @@ export function hasVisionInput(payload: ResponsesPayload): boolean {
 }
 
 export async function createCopilotResponsesOnce(
-  { credential }: { connection: ProviderConnection; credential: ApiCredential },
+  {
+    connection,
+    credential,
+  }: { connection: ProviderConnection; credential: ApiCredential },
   payload: ResponsesPayload,
   signal?: AbortSignal,
   ctx?: RequestExecutionContext,
@@ -68,12 +72,15 @@ export async function createCopilotResponsesOnce(
     headers["X-Initiator"] = ctx.initiator
   }
 
-  const response = await fetch(`${copilotBaseUrl(state)}/responses`, {
-    method: "POST",
-    headers,
-    body: responsesBody,
-    signal,
-  })
+  const response = await fetch(
+    `${copilotBaseUrl(state)}/responses`,
+    connectionFetchInit(connection, {
+      method: "POST",
+      headers,
+      body: responsesBody,
+      signal,
+    }),
+  )
 
   if (!response.ok) {
     const errorBody = await response.text().catch(() => "(unreadable)")

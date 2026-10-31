@@ -22,6 +22,7 @@ import { logger } from "~/lib/logger"
 import { state } from "~/lib/state"
 import { copilotTokenFromCredential } from "~/services/copilot/token-refresh"
 import {
+  connectionFetchInit,
   detectOpenAIStreamError,
   safeSseStream,
 } from "~/services/protocols/shared"
@@ -53,7 +54,10 @@ export function sanitizeReasoningEffortForCopilot(
 }
 
 export async function createCopilotChatCompletionsOnce(
-  { credential }: { connection: ProviderConnection; credential: ApiCredential },
+  {
+    connection,
+    credential,
+  }: { connection: ProviderConnection; credential: ApiCredential },
   payload: ChatCompletionsPayload,
   signal?: AbortSignal,
   ctx?: RequestExecutionContext,
@@ -90,12 +94,15 @@ export async function createCopilotChatCompletionsOnce(
   const maxRetries = 3
   const maxDelayMs = 60_000
 
-  let response = await fetch(url, {
-    method: "POST",
-    headers,
-    body,
-    signal,
-  })
+  let response = await fetch(
+    url,
+    connectionFetchInit(connection, {
+      method: "POST",
+      headers,
+      body,
+      signal,
+    }),
+  )
 
   while (!response.ok && response.status === 429 && retryCount < maxRetries) {
     // Codex usage_limit_reached = plan quota depleted, not a transient rate
@@ -136,12 +143,15 @@ export async function createCopilotChatCompletionsOnce(
     await new Promise((resolve) => setTimeout(resolve, delayMs))
     retryCount++
 
-    response = await fetch(url, {
-      method: "POST",
-      headers,
-      body,
-      signal,
-    })
+    response = await fetch(
+      url,
+      connectionFetchInit(connection, {
+        method: "POST",
+        headers,
+        body,
+        signal,
+      }),
+    )
   }
 
   if (!response.ok) {

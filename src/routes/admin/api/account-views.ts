@@ -16,16 +16,15 @@ import {
   connectionModelsToAccountModels,
   getConnectionAuthError,
   getConnectionAuthStatus,
-  getConnectionCooldownUntil,
   getConnectionExhaustedAt,
   getConnectionQuotaInfo,
   getConnectionQuotaState,
+  getConnectionRoutability,
   getConnectionSettings,
   isOAuthConnection,
   listAccountManagedConnections,
   refreshConnectionAvailability,
 } from "~/lib/provider-connections"
-import { getRemainingCooldownSeconds } from "~/lib/rate-limit"
 import { resolveMinimaxRegion } from "~/services/oauth/minimax"
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"
@@ -34,7 +33,10 @@ import { getProviderRuntime } from "~/services/providers/registry"
  * 从 ProviderConnection 派生 admin API 的 publicAccount JSON 视图。
  * 完全 connection 原生,不调用 getAccount/connectionToAccount。
  */
-export function publicAccountFromConnection(conn: ProviderConnection) {
+export function publicAccountFromConnection(
+  conn: ProviderConnection,
+  activeAccountId?: string,
+) {
   initializeProviderRegistry()
   // codebuddy / codebuddy-cn 共用协议，必须用 metadata.provider 优先的派生
   const provider = accountManagedProvider(conn)
@@ -84,13 +86,29 @@ export function publicAccountFromConnection(conn: ProviderConnection) {
     authStatus: authStatus ?? "ready",
     authError: authError ?? null,
     hasCredentials: connectionHasCredentialsNative(conn),
-    isActive: conn.id === getActiveAccountId(),
+    isActive: conn.id === (activeAccountId ?? getActiveAccountId()),
   }
 }
 
 /**
+ * Project a list of connections with one active-account lookup. Calling
+ * `publicAccountFromConnection` per row would re-sort every connection once per
+ * account (O(n² log n)) for a value that is identical across the list.
+ */
+export function publicAccountsFromConnections(
+  connections: ReadonlyArray<ProviderConnection>,
+) {
+  const activeAccountId = getActiveAccountId()
+  return connections.map((conn) =>
+    publicAccountFromConnection(conn, activeAccountId),
+  )
+}
+
+/**
  * 从 connection 派生可用性信息(等价 getAccountAvailability)。
- * 直接读 connection/credential 字段,不经过 Account 快照。
+ *
+ * 判定本身交给 lib 的 `getConnectionRoutability`（Connection 可调度性的唯一
+ * 定义点）；这里只做 admin 词汇映射与过期状态恢复，不再维护第二套规则。
  */
 export function getConnectionAvailabilityForAdmin(conn: ProviderConnection): {
   available: boolean
@@ -100,53 +118,15 @@ export function getConnectionAvailabilityForAdmin(conn: ProviderConnection): {
   // 先刷新过期的 cooldown / quota_exhausted 状态
   refreshConnectionAvailability(conn)
 
-  if (!conn.enabled) {
-    return { available: false, reason: "disabled", retryAfterSeconds: 0 }
+  const routability = getConnectionRoutability(conn)
+  return {
+    available: routability.routable,
+    reason:
+      routability.reason === "auth_error" ? "error"
+      : routability.reason === "quota_exhausted" ? "quota"
+      : routability.reason,
+    retryAfterSeconds: routability.retryAfterSeconds,
   }
-
-  // 鉴权错误:任一 credential 处于 auth_error 即视为不可用
-  const hasAuthError = conn.credentials.some((c) => c.status === "auth_error")
-  if (hasAuthError) {
-    return { available: false, reason: "error", retryAfterSeconds: 10 }
-  }
-
-  // cooldown 检查(通过 rate limiter 的内存状态)
-  const remainingCooldown = getRemainingCooldownSeconds(conn.id)
-  if (remainingCooldown > 0) {
-    return {
-      available: false,
-      reason: "cooldown",
-      retryAfterSeconds: remainingCooldown,
-    }
-  }
-
-  // 配额耗尽:任一 credential 处于 quota_exhausted
-  const exhaustedCred = conn.credentials.find(
-    (c) => c.status === "quota_exhausted",
-  )
-  if (exhaustedCred) {
-    let retryAfterSeconds = 0
-    // credential.cooldownUntil 已包含恢复时间(markCredentialQuotaExhausted 写入)
-    if (
-      exhaustedCred.cooldownUntil
-      && exhaustedCred.cooldownUntil > Date.now()
-    ) {
-      retryAfterSeconds = Math.ceil(
-        (exhaustedCred.cooldownUntil - Date.now()) / 1000,
-      )
-    }
-    // 也检查 connection 级 cooldownUntil(持久化值)
-    const connCooldownUntil = getConnectionCooldownUntil(conn)
-    if (connCooldownUntil && connCooldownUntil > Date.now()) {
-      const cooldownSec = Math.ceil((connCooldownUntil - Date.now()) / 1000)
-      if (cooldownSec > retryAfterSeconds) {
-        retryAfterSeconds = cooldownSec
-      }
-    }
-    return { available: false, reason: "quota", retryAfterSeconds }
-  }
-
-  return { available: true, reason: "available", retryAfterSeconds: 0 }
 }
 
 /**

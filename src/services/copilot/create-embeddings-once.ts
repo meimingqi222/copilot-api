@@ -16,9 +16,13 @@ import {
 import { parseModelReference } from "~/lib/route-target/model-reference"
 import { state } from "~/lib/state"
 import { copilotTokenFromCredential } from "~/services/copilot/token-refresh"
+import { connectionFetchInit } from "~/services/protocols/shared"
 
 export async function createCopilotEmbeddingsOnce(
-  { credential }: { connection: ProviderConnection; credential: ApiCredential },
+  {
+    connection,
+    credential,
+  }: { connection: ProviderConnection; credential: ApiCredential },
   payload: EmbeddingRequest,
   signal?: AbortSignal,
 ): Promise<EmbeddingResponse> {
@@ -27,15 +31,18 @@ export async function createCopilotEmbeddingsOnce(
     throw new Error("Copilot token not found")
   }
 
-  const response = await fetch(`${copilotBaseUrl(state)}/embeddings`, {
-    method: "POST",
-    headers: copilotHeadersForToken(token),
-    body: serializeUpstreamBody({
-      ...payload,
-      model: parseModelReference(payload.model).nativeModelId,
+  const response = await fetch(
+    `${copilotBaseUrl(state)}/embeddings`,
+    connectionFetchInit(connection, {
+      method: "POST",
+      headers: copilotHeadersForToken(token),
+      body: serializeUpstreamBody({
+        ...payload,
+        model: parseModelReference(payload.model).nativeModelId,
+      }),
+      signal,
     }),
-    signal,
-  })
+  )
 
   if (!response.ok) {
     throw new HTTPError("Failed to create embeddings", response)

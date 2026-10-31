@@ -27,6 +27,7 @@ import {
   persistProviderConnections,
 } from "~/lib/provider-connections"
 import { state } from "~/lib/state"
+import { connectionFetchInit } from "~/services/protocols/shared"
 
 const logger = createLogger("auth")
 
@@ -66,12 +67,12 @@ export async function refreshCopilotTokenForConnection(
 
   const response = await fetch(
     `${GITHUB_API_BASE_URL}/copilot_internal/v2/token`,
-    {
+    connectionFetchInit(connection, {
       headers: {
         ...githubApiHeaders(),
         authorization: `token ${githubToken}`,
       },
-    },
+    }),
   )
 
   if (!response.ok) {

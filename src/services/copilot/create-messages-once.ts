@@ -26,6 +26,7 @@ import {
 import { inferInitiatorFromAnthropicPayload } from "~/lib/initiator-header"
 import { copilotTokenFromCredential } from "~/services/copilot/token-refresh"
 import {
+  connectionFetchInit,
   detectAnthropicStreamError,
   safeSseStream,
 } from "~/services/protocols/shared"
@@ -99,12 +100,15 @@ export async function createCopilotMessagesOnce(
       claudeSessionId.trim()
     : await getStableSessionId(connection.id)
 
-  const response = await fetch(`${copilotBaseUrl(state)}/v1/messages`, {
-    method: "POST",
-    headers,
-    body: serializeUpstreamBody(copilotPayload),
-    signal,
-  })
+  const response = await fetch(
+    `${copilotBaseUrl(state)}/v1/messages`,
+    connectionFetchInit(connection, {
+      method: "POST",
+      headers,
+      body: serializeUpstreamBody(copilotPayload),
+      signal,
+    }),
+  )
 
   if (!response.ok) {
     const errorBody = await response.text().catch(() => "(unreadable)")

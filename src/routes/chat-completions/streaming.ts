@@ -18,7 +18,7 @@ import {
   patchRequestLog,
   recordTraceError,
 } from "~/lib/request-log"
-import { handleSseStream, writeSseEvent } from "~/lib/sse"
+import { handleSseStream, writeSseEvent, type SSEStream } from "~/lib/sse"
 import { state } from "~/lib/state"
 import { computeStreamingTiming } from "~/lib/timing"
 import { markPerformanceDispatch } from "~/lib/request-performance"
@@ -26,6 +26,7 @@ import { applyUsageIdentity, recordUsage } from "~/lib/usage"
 import { isChatCompletionResponse } from "~/lib/utils"
 import {
   type ChatCompletionChunk,
+  type ChatCompletionResponse,
   type ChatCompletionsPayload,
 } from "~/services/protocols/chat/types"
 import { dispatchChatCompletions } from "~/services/dispatch/chat-completions"
@@ -44,6 +45,203 @@ interface HandleChatStreamingResponseOptions {
   estimatedInputTokens: number
   memoryTraceId: string
   streamStartTs?: number
+}
+
+interface ChatSsePumpOptions {
+  c: Context
+  source: ChatCompletionResponse | CopilotStream
+  accountId: string | undefined
+  model: string | undefined
+  estimatedInputTokens: number
+  memoryTraceId: string
+  streamStart: number
+  signal: AbortSignal | undefined
+  /** Provider trace emitted once the SSE callback is open. */
+  onOpen?: (streaming: boolean) => void
+  /**
+   * Terminal error handling owned by the entry point that has an error-frame
+   * contract. Return `true` when the error is fully handled (the shared
+   * bookkeeping still runs), `false` to rethrow it after handling.
+   */
+  onStreamError?: (stream: SSEStream, error: unknown) => Promise<boolean>
+}
+
+/**
+ * Shared SSE pump for chat completions. Both entry points use it: a client
+ * requested stream, and a non-stream request whose upstream answered with a
+ * stream. It owns frame forwarding, the `[DONE]` terminator, usage accounting
+ * and abort bookkeeping; entry points only supply the divergent provider trace
+ * and terminal error-frame handling.
+ */
+function runChatSsePump(options: ChatSsePumpOptions) {
+  const {
+    c,
+    source,
+    accountId,
+    model,
+    estimatedInputTokens,
+    memoryTraceId,
+    streamStart,
+    signal,
+  } = options
+
+  let lastUsage: UsageInfo | undefined
+  let usageRecorded = false
+  let firstChunkTs: number | undefined
+  let downstreamCommitted = false
+  let lastFinishReason: string | undefined
+  let outputObserved = false
+
+  beginStreamLog(c)
+  return handleSseStream(
+    c,
+    async (stream) => {
+      let outcome = "completed"
+      try {
+        updateMemoryTrace(memoryTraceId, "chat_sse_open")
+
+        // A non-stream request can still receive a response object when the
+        // adapter aggregates upstream. Emit it as the single event of this SSE
+        // response instead of iterating a non-iterable.
+        if (isChatCompletionResponse(source)) {
+          options.onOpen?.(false)
+          lastFinishReason = source.choices[0]?.finish_reason ?? undefined
+          outputObserved = Boolean(source.choices[0]?.message)
+          handleNonStreamingResponse(
+            c,
+            source,
+            estimatedInputTokens,
+            Date.now() - streamStart,
+          )
+          await writeSseEvent(stream, JSON.stringify(source))
+          usageRecorded = true
+          updateMemoryTrace(memoryTraceId, "chat_downstream_committed", {
+            responseMode: "non_streaming",
+          })
+          // 单发 JSON 也是这条 SSE 响应的唯一事件，终止帧照旧。
+          try {
+            await writeSseEvent(stream, "[DONE]")
+          } catch {
+            // 客户端已经断开：终止帧没有落点。
+          }
+          return
+        }
+
+        options.onOpen?.(true)
+        for await (const rawEvent of source) {
+          if (rawEvent.data === "[DONE]") {
+            break
+          }
+          if (!rawEvent.data) {
+            continue
+          }
+
+          const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
+          const isOutput = hasChatChunkOutput(chunk)
+          outputObserved ||= isOutput
+          if (isOutput && !firstChunkTs) {
+            firstChunkTs = Date.now()
+            updateMemoryTrace(memoryTraceId, "chat_first_chunk")
+            markTraceFirstOutput(c, firstChunkTs - streamStart)
+          }
+          if (logger.level >= 4) {
+            logger.debug("Streaming raw event:", JSON.stringify(rawEvent))
+          }
+          if (chunk.usage) {
+            lastUsage = chunk.usage
+          }
+          // `choices` is typed as required but some upstreams omit it on
+          // usage-only / filter chunks — same reason `normalizeChunk` guards it.
+
+          const chunkFinishReason = chunk.choices?.find(
+            (c) => c.finish_reason,
+          )?.finish_reason
+          if (chunkFinishReason) {
+            lastFinishReason = chunkFinishReason
+          }
+          const normalized = normalizeChunk(chunk)
+          await writeSseEvent(
+            stream,
+            normalized === chunk ? rawEvent.data : JSON.stringify(normalized),
+            undefined,
+            chunk,
+          )
+          if (!downstreamCommitted) {
+            downstreamCommitted = true
+            updateMemoryTrace(memoryTraceId, "chat_downstream_committed", {
+              responseMode: "streaming",
+            })
+          }
+        }
+        // OpenAI SSE 契约的显式终止帧：上游的 [DONE] 在上面被消费成 break，
+        // 不会原样出现在我们的流里。不带它时严格 SDK（等终止帧才能释放
+        // EventSource）只能干挂 EOF。
+        try {
+          await writeSseEvent(stream, "[DONE]")
+        } catch {
+          // 客户端已经断开：终止帧没有落点，上游数据完整无后续。
+        }
+      } catch (error) {
+        outcome = signalOutcome(signal)
+        recordTraceError(c, error)
+        if (
+          options.onStreamError
+          && (await options.onStreamError(stream, error))
+        ) {
+          return
+        }
+        throw error
+      } finally {
+        markStreamTerminal(
+          c,
+          lastFinishReason ? "finish_reason" : "missing",
+          lastFinishReason ? "success" : "incomplete",
+          outputObserved,
+        )
+        if (!usageRecorded) {
+          usageRecorded = recordStreamingUsage({
+            c,
+            accountId,
+            model,
+            lastUsage,
+            estimatedInputTokens,
+            timing: computeStreamingTiming(
+              streamStart,
+              firstChunkTs,
+              lastUsage?.completion_tokens ?? 0,
+            ),
+            finishReason: lastFinishReason,
+          })
+        }
+        endMemoryTrace(memoryTraceId, outcome)
+      }
+    },
+    {
+      onAbort: () => {
+        markStreamTerminal(c, "client_abort", "cancelled", outputObserved)
+        // `run`'s `finally` has already executed by the time an abort reaches
+        // this handler — the exception passes through it on the way out — so
+        // this is the second attempt at the same request. Without the guard an
+        // upstream that reports usage on every chunk gets billed twice for any
+        // stream the client disconnects from.
+        if (usageRecorded) return
+        usageRecorded = recordStreamingUsage({
+          c,
+          accountId,
+          model,
+          lastUsage,
+          estimatedInputTokens,
+          timing: computeStreamingTiming(
+            streamStart,
+            firstChunkTs,
+            lastUsage?.completion_tokens ?? 0,
+          ),
+          finishReason: lastFinishReason ?? "aborted",
+        })
+      },
+      onFinally: () => finishRequestLog(c),
+    },
+  )
 }
 
 export function handleStreamingResponse(
@@ -107,129 +305,16 @@ export function handleStreamingResponse(
     )
   }
 
-  let lastUsage: UsageInfo | undefined
-  let usageRecorded = false
-  let firstChunkTs: number | undefined
-  let downstreamCommitted = false
-  let lastFinishReason: string | undefined
-  let outputObserved = false
-  const streamStart = streamStartTs ?? Date.now()
-
-  beginStreamLog(c)
-  return handleSseStream(
+  return runChatSsePump({
     c,
-    async (stream) => {
-      let outcome = "completed"
-      try {
-        updateMemoryTrace(memoryTraceId, "chat_sse_open")
-        for await (const rawEvent of response) {
-          if (rawEvent.data === "[DONE]") {
-            break
-          }
-          if (!rawEvent.data) {
-            continue
-          }
-
-          const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
-          const isOutput = hasChatChunkOutput(chunk)
-          outputObserved ||= isOutput
-          if (isOutput && !firstChunkTs) {
-            firstChunkTs = Date.now()
-            markTraceFirstOutput(c, firstChunkTs - streamStart)
-            updateMemoryTrace(memoryTraceId, "chat_first_chunk")
-          }
-          if (logger.level >= 4) {
-            logger.debug("Streaming raw event:", JSON.stringify(rawEvent))
-          }
-          if (chunk.usage) {
-            lastUsage = chunk.usage
-          }
-          // `choices` is typed as required but some upstreams omit it on
-          // usage-only / filter chunks — same reason `normalizeChunk` guards it.
-
-          const chunkFinishReason = chunk.choices?.find(
-            (c) => c.finish_reason,
-          )?.finish_reason
-          if (chunkFinishReason) {
-            lastFinishReason = chunkFinishReason
-          }
-          const normalized = normalizeChunk(chunk)
-          await writeSseEvent(
-            stream,
-            normalized === chunk ? rawEvent.data : JSON.stringify(normalized),
-            undefined,
-            chunk,
-          )
-          if (!downstreamCommitted) {
-            downstreamCommitted = true
-            updateMemoryTrace(memoryTraceId, "chat_downstream_committed", {
-              responseMode: "streaming",
-            })
-          }
-        }
-        // OpenAI SSE 契约的显式终止帧：上游的 [DONE] 在上面被消费成 break，
-        // 不会原样出现在我们的流里。不带它时严格 SDK（等终止帧才能释放
-        // EventSource）只能干挂 EOF。
-        try {
-          await writeSseEvent(stream, "[DONE]")
-        } catch {
-          // 客户端已经断开：终止帧没有落点，上游数据完整无后续。
-        }
-      } catch (error) {
-        outcome = signalOutcome(c.req.raw.signal)
-        recordTraceError(c, error)
-        throw error
-      } finally {
-        markStreamTerminal(
-          c,
-          lastFinishReason ? "finish_reason" : "missing",
-          lastFinishReason ? "success" : "incomplete",
-          outputObserved,
-        )
-        if (!usageRecorded) {
-          usageRecorded = recordStreamingUsage({
-            c,
-            accountId,
-            model,
-            lastUsage,
-            estimatedInputTokens,
-            timing: computeStreamingTiming(
-              streamStart,
-              firstChunkTs,
-              lastUsage?.completion_tokens ?? 0,
-            ),
-            finishReason: lastFinishReason,
-          })
-        }
-        endMemoryTrace(memoryTraceId, outcome)
-      }
-    },
-    {
-      onAbort: () => {
-        markStreamTerminal(c, "client_abort", "cancelled", outputObserved)
-        // `run`'s `finally` has already executed by the time an abort reaches
-        // this handler — the exception passes through it on the way out — so
-        // this is the second attempt at the same request. Without the guard an
-        // upstream that reports usage on every chunk gets billed twice for any
-        // stream the client disconnects from.
-        if (usageRecorded) return
-        usageRecorded = recordStreamingUsage({
-          c,
-          accountId,
-          model,
-          lastUsage,
-          estimatedInputTokens,
-          timing: computeStreamingTiming(
-            streamStart,
-            firstChunkTs,
-            lastUsage?.completion_tokens ?? 0,
-          ),
-          finishReason: lastFinishReason ?? "aborted",
-        })
-      },
-      onFinally: () => finishRequestLog(c),
-    },
-  )
+    source: response,
+    accountId,
+    model,
+    estimatedInputTokens,
+    memoryTraceId,
+    streamStart: streamStartTs ?? Date.now(),
+    signal: c.req.raw.signal,
+  })
 }
 
 interface StreamingCompletionOptions {
@@ -277,204 +362,62 @@ export async function handleStreamingCompletion(
   c.set("model", model)
   patchRequestLog(c, { streaming: true })
 
-  let lastUsage: UsageInfo | undefined
-  let usageRecorded = false
-  let firstChunkTs: number | undefined
-  let downstreamCommitted = false
-  let lastFinishReason: string | undefined
-  let outputObserved = false
   // TTFT is measured from before the upstream dispatch, not from when the
   // downstream SSE callback opens. Dispatch runs before the SSE response
   // exists (Phase 1), so capturing the clock inside the callback would only
   // measure downstream-open → first chunk and report a near-zero latency.
-  const streamStart = dispatchStart
-  beginStreamLog(c)
-  return handleSseStream(
+  return runChatSsePump({
     c,
-    async (stream) => {
-      let outcome = "completed"
-
-      try {
-        updateMemoryTrace(options.memoryTraceId, "chat_sse_open")
-        updateMemoryTrace(
-          options.memoryTraceId,
-          "chat_provider_response_open",
-          {
-            provider: result.identity.provider,
-            streaming: !isChatCompletionResponse(result.response),
-          },
-        )
-
-        if (isChatCompletionResponse(result.response)) {
-          lastFinishReason =
-            result.response.choices[0]?.finish_reason ?? undefined
-          outputObserved = Boolean(result.response.choices[0]?.message)
-          const elapsed = Date.now() - dispatchStart
-          handleNonStreamingResponse(
-            c,
-            result.response,
-            estimatedInputTokens,
-            elapsed,
-          )
-          await writeSseEvent(stream, JSON.stringify(result.response))
-          usageRecorded = true
-          updateMemoryTrace(
-            options.memoryTraceId,
-            "chat_downstream_committed",
-            {
-              responseMode: "non_streaming",
-            },
-          )
-          // 单发 JSON 也是这条 SSE 响应的唯一事件，终止帧照旧。
-          try {
-            await writeSseEvent(stream, "[DONE]")
-          } catch {
-            // 客户端已经断开：终止帧没有落点。
-          }
-          return
-        }
-
-        for await (const rawEvent of result.response) {
-          if (rawEvent.data === "[DONE]") {
-            break
-          }
-          if (!rawEvent.data) {
-            continue
-          }
-
-          const chunk = JSON.parse(rawEvent.data) as ChatCompletionChunk
-          const isOutput = hasChatChunkOutput(chunk)
-          outputObserved ||= isOutput
-          if (isOutput && !firstChunkTs) {
-            firstChunkTs = Date.now()
-            updateMemoryTrace(options.memoryTraceId, "chat_first_chunk")
-            markTraceFirstOutput(c, firstChunkTs - streamStart)
-          }
-          if (logger.level >= 4) {
-            logger.debug("Streaming raw event:", JSON.stringify(rawEvent))
-          }
-          if (chunk.usage) {
-            lastUsage = chunk.usage
-          }
-          // `choices` is typed as required but some upstreams omit it on
-          // usage-only / filter chunks — same reason `normalizeChunk` guards it.
-
-          const chunkFinishReason = chunk.choices?.find(
-            (c) => c.finish_reason,
-          )?.finish_reason
-          if (chunkFinishReason) {
-            lastFinishReason = chunkFinishReason
-          }
-          const normalized = normalizeChunk(chunk)
-          await writeSseEvent(
-            stream,
-            normalized === chunk ? rawEvent.data : JSON.stringify(normalized),
-            undefined,
-            chunk,
-          )
-          if (!downstreamCommitted) {
-            downstreamCommitted = true
-            updateMemoryTrace(
-              options.memoryTraceId,
-              "chat_downstream_committed",
-              { responseMode: "streaming" },
-            )
-          }
-        }
-        // 同上：OpenAI SSE 的显式终止帧，转译链路的 [DONE] 只在翻译器内消费。
-        try {
-          await writeSseEvent(stream, "[DONE]")
-        } catch {
-          // 客户端已经断开：终止帧没有落点，上游数据完整无后续。
-        }
-      } catch (error) {
-        outcome = signalOutcome(signal)
-        recordTraceError(c, error)
-        logger.error("Streaming error:", error)
-        const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
-        if (knownError?.status === 499) {
-          return
-        }
-        const errorMessage =
-          knownError?.message ?? extractUpstreamErrorMessage(error)
-        const errorType =
-          knownError?.type
-          ?? (error instanceof HTTPError && error.response.status === 429 ?
-            "rate_limit_error"
-          : "error")
-        // A numeric, status-like code lets downstream one-shot clients (ZCode,
-        // opencode, OpenAI SDKs) classify the failure. `>=500` (and 429)
-        // signals a retryable upstream error; without it, providers that only
-        // stream a 200 + inline error frame (CodeBuddy, etc.) surface as a
-        // non-retryable parse error.
-        const errorCode = resolveRetryableCode(error)
-        await writeSseEvent(
-          stream,
-          JSON.stringify({
-            error: {
-              message: errorMessage,
-              type: errorType,
-              code: errorCode,
-              status: errorCode,
-            },
-          }),
-          // Emit under `event: error` so strict SSE parsers (ZCode scans
-          // `event: error` frames; opencode decodes the JSON event) treat this
-          // as a terminal error instead of an opaque data frame.
-          "error",
-        )
-        throw error
-      } finally {
-        markStreamTerminal(
-          c,
-          lastFinishReason ? "finish_reason" : "missing",
-          lastFinishReason ? "success" : "incomplete",
-          outputObserved,
-        )
-        if (!usageRecorded) {
-          usageRecorded = recordStreamingUsage({
-            c,
-            accountId,
-            model,
-            lastUsage,
-            estimatedInputTokens,
-            timing: computeStreamingTiming(
-              streamStart,
-              firstChunkTs,
-              lastUsage?.completion_tokens ?? 0,
-            ),
-            finishReason: lastFinishReason,
-          })
-        }
-        endMemoryTrace(options.memoryTraceId, outcome)
+    source: result.response,
+    accountId,
+    model,
+    estimatedInputTokens,
+    memoryTraceId,
+    streamStart: dispatchStart,
+    signal,
+    onOpen: (streaming) => {
+      updateMemoryTrace(memoryTraceId, "chat_provider_response_open", {
+        provider: result.identity.provider,
+        streaming,
+      })
+    },
+    onStreamError: async (stream, error) => {
+      logger.error("Streaming error:", error)
+      const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
+      if (knownError?.status === 499) {
+        return true
       }
+      const errorMessage =
+        knownError?.message ?? extractUpstreamErrorMessage(error)
+      const errorType =
+        knownError?.type
+        ?? (error instanceof HTTPError && error.response.status === 429 ?
+          "rate_limit_error"
+        : "error")
+      // A numeric, status-like code lets downstream one-shot clients (ZCode,
+      // opencode, OpenAI SDKs) classify the failure. `>=500` (and 429)
+      // signals a retryable upstream error; without it, providers that only
+      // stream a 200 + inline error frame (CodeBuddy, etc.) surface as a
+      // non-retryable parse error.
+      const errorCode = resolveRetryableCode(error)
+      await writeSseEvent(
+        stream,
+        JSON.stringify({
+          error: {
+            message: errorMessage,
+            type: errorType,
+            code: errorCode,
+            status: errorCode,
+          },
+        }),
+        // Emit under `event: error` so strict SSE parsers (ZCode scans
+        // `event: error` frames; opencode decodes the JSON event) treat this
+        // as a terminal error instead of an opaque data frame.
+        "error",
+      )
+      return false
     },
-    {
-      onAbort: () => {
-        markStreamTerminal(c, "client_abort", "cancelled", outputObserved)
-        // `run`'s `finally` has already executed by the time an abort reaches
-        // this handler — the exception passes through it on the way out — so
-        // this is the second attempt at the same request. Without the guard an
-        // upstream that reports usage on every chunk gets billed twice for any
-        // stream the client disconnects from.
-        if (usageRecorded) return
-        usageRecorded = recordStreamingUsage({
-          c,
-          accountId,
-          model: options.payload.model,
-          lastUsage,
-          estimatedInputTokens: options.estimatedInputTokens,
-          timing: computeStreamingTiming(
-            streamStart,
-            firstChunkTs,
-            lastUsage?.completion_tokens ?? 0,
-          ),
-          finishReason: lastFinishReason ?? "aborted",
-        })
-      },
-      onFinally: () => finishRequestLog(c),
-    },
-  )
+  })
 }
 
 /**

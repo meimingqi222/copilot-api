@@ -27,6 +27,13 @@ import { elapsed } from "./windows"
 const FILE_NAME = "plan-quota.json"
 const FILE_VERSION = 2
 
+/**
+ * Version stamped into a rewritten file that carried no numeric version.
+ * Deliberately not `FILE_VERSION`: an unversioned file's Codex entries cannot
+ * be replayed, and stamping the current version would make them look safe.
+ */
+const LEGACY_FILE_VERSION = 1
+
 const RENAME_ATTEMPTS = 3
 const RENAME_RETRY_DELAY_MS = 50
 const RENAME_RETRYABLE_CODES = new Set(["EPERM", "EBUSY", "EACCES"])
@@ -38,7 +45,7 @@ interface StoredReading {
 
 interface PersistedFile {
   version: number
-  readings: Record<string, StoredReading>
+  readings: Record<string, unknown>
 }
 
 /** Test seam: `undefined` means "use the app data dir". */
@@ -47,6 +54,12 @@ let filePathOverride: string | undefined
 let readings: Record<string, StoredReading> | undefined
 /** Serializes writes so two concurrent saves cannot interleave. */
 let writeQueue: Promise<unknown> = Promise.resolve()
+/**
+ * Bumped whenever the file is rewritten or the store is re-pointed, so a read
+ * that raced with that change discards its now-stale snapshot instead of
+ * caching it.
+ */
+let cacheEpoch = 0
 
 /** Path of the allowance file (override-aware, so it is stable under tests). */
 export function planQuotaFilePath(): string {
@@ -57,16 +70,38 @@ export function planQuotaFilePath(): string {
 export function setPlanQuotaFilePath(filePath: string | undefined): void {
   filePathOverride = filePath
   readings = undefined
+  cacheEpoch++
 }
 
 /** Restore the default path and forget cached state. */
 export function resetPlanQuotaStore(): void {
   filePathOverride = undefined
   readings = undefined
+  cacheEpoch++
 }
 
 function readingKey(provider: string, user: string): string {
   return `${provider}/${user.trim().toLowerCase()}`
+}
+
+/**
+ * Does this stored key fall inside the provider/user being cleared? Keys are
+ * `provider/user`, and the user half compares like `readingKey`, so one account
+ * reached with different capitalization is the same reading. A key without the
+ * separator is not a reading this store wrote, so it is never selected.
+ */
+function matchesReadingKey(
+  key: string,
+  provider: string | undefined,
+  user: string | undefined,
+): boolean {
+  const separator = key.indexOf("/")
+  if (separator < 0) return false
+  const keyProvider = key.slice(0, separator)
+  const keyUser = key.slice(separator + 1)
+  if (provider && keyProvider !== provider) return false
+  if (user && keyUser !== user.trim().toLowerCase()) return false
+  return true
 }
 
 function normalizeWindow(value: unknown): PlanWindow | undefined {
@@ -128,6 +163,47 @@ function normalizeFile(parsed: unknown): Record<string, StoredReading> {
 }
 
 /**
+ * Read the allowance file exactly as it is on disk.
+ *
+ * A reset rewrites the entries it did not select, so it must see the file's
+ * own contents rather than the normalized cache: an entry this version cannot
+ * parse is still history, and the file's own version decides whether legacy
+ * Codex entries are replayable. A missing, unreadable or corrupt file yields
+ * undefined — there is nothing usable to rewrite, and the store treats the
+ * same file as an empty store anyway.
+ */
+async function readRawStoredFile(
+  filePath: string,
+): Promise<PersistedFile | undefined> {
+  let raw: string
+  try {
+    raw = await fs.readFile(filePath, "utf8")
+  } catch {
+    return undefined
+  }
+  try {
+    const parsed = JSON.parse(raw) as { version?: unknown; readings?: unknown }
+    if (
+      typeof parsed !== "object"
+      || parsed === null
+      || typeof parsed.readings !== "object"
+      || parsed.readings === null
+    ) {
+      return undefined
+    }
+    return {
+      version:
+        typeof parsed.version === "number" ?
+          parsed.version
+        : LEGACY_FILE_VERSION,
+      readings: parsed.readings as Record<string, unknown>,
+    }
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Load the file once and cache it. A missing file is an empty store; an
  * unreadable or corrupt file is logged and treated as empty, because a stale
  * allowance is a cache and must never take the caller down with it.
@@ -136,11 +212,20 @@ async function loadReadings(): Promise<Record<string, StoredReading>> {
   if (readings) {
     return readings
   }
+  const epoch = cacheEpoch
   const filePath = planQuotaFilePath()
-  let raw: string
+  let raw: string | undefined
   try {
     raw = await fs.readFile(filePath, "utf8")
   } catch {
+    raw = undefined
+  }
+  // A write or reset replaced what this read describes while it was in
+  // flight; retry instead of caching a snapshot that predates the change.
+  if (epoch !== cacheEpoch) {
+    return loadReadings()
+  }
+  if (raw === undefined) {
     readings = {}
     return readings
   }
@@ -186,21 +271,16 @@ async function renameWithRetry(from: string, to: string): Promise<void> {
 }
 
 /** Atomic write: temp file in the same directory, then rename over the target. */
-async function persist(store: Record<string, StoredReading>): Promise<void> {
+async function persistFile(file: PersistedFile): Promise<void> {
   const filePath = planQuotaFilePath()
   assertWritableDataPath(filePath)
   const tmpPath = `${filePath}.tmp.${process.pid}`
 
   await fs.mkdir(path.dirname(filePath), { recursive: true })
-  await fs.writeFile(
-    tmpPath,
-    JSON.stringify(
-      { version: FILE_VERSION, readings: store } satisfies PersistedFile,
-      null,
-      2,
-    ),
-    { encoding: "utf8", mode: 0o600 },
-  )
+  await fs.writeFile(tmpPath, JSON.stringify(file, null, 2), {
+    encoding: "utf8",
+    mode: 0o600,
+  })
 
   try {
     await renameWithRetry(tmpPath, filePath)
@@ -214,12 +294,21 @@ async function persist(store: Record<string, StoredReading>): Promise<void> {
   } catch {
     // chmod is a no-op on some platforms (Windows); not worth failing over.
   }
+
+  cacheEpoch++
+}
+
+async function persist(store: Record<string, StoredReading>): Promise<void> {
+  await persistFile({ version: FILE_VERSION, readings: store })
 }
 
 /**
  * Remember a reading that came back good. Persistence failures are logged and
  * swallowed: the in-memory reading stays usable for this process, and the next
  * good reading retries the write.
+ *
+ * The cache mutation happens inside the queued task, so it is ordered after
+ * any reset already in the queue and sees the file that reset left behind.
  */
 export async function keepReading(
   provider: string,
@@ -227,9 +316,11 @@ export async function keepReading(
   windows: PlanAllowance,
   now: number,
 ): Promise<void> {
-  const store = await loadReadings()
-  store[readingKey(provider, user)] = { windows, asOf: now }
-  await enqueueWrite(() => persist(store)).catch((error: unknown) => {
+  await enqueueWrite(async () => {
+    const store = await loadReadings()
+    store[readingKey(provider, user)] = { windows, asOf: now }
+    await persist(store)
+  }).catch((error: unknown) => {
     logger.warn(
       `[plan-quota] Failed to persist allowance: ${(error as Error).message}`,
     )
@@ -251,6 +342,47 @@ export async function lastReading(
     return undefined
   }
   return { windows: elapsed(stored.windows, now), asOf: stored.asOf }
+}
+
+export interface ClearPlanQuotaReadingsFilter {
+  /** Clear every reading for this provider. */
+  provider?: string
+  /** Clear this user's reading (compared case-insensitively). */
+  user?: string
+}
+
+/**
+ * Drop the stored readings selected by `provider`/`user`, or every reading
+ * when neither is given.
+ *
+ * Runs through the same queue as `keepReading`, so a reset and a save cannot
+ * overwrite each other: each queued task sees the file the previous one left.
+ * The raw file is rewritten (rather than the normalized cache) so entries this
+ * version cannot parse survive, and its version is preserved so legacy Codex
+ * entries are not stamped as current data. A missing or corrupt file is left
+ * alone, matching the store's treatment of it as empty. The cache is dropped
+ * afterwards, so the next read observes the rewritten file.
+ */
+export async function clearPlanQuotaReadings(
+  filter: ClearPlanQuotaReadingsFilter = {},
+): Promise<void> {
+  const { provider, user } = filter
+  await enqueueWrite(async () => {
+    const filePath = planQuotaFilePath()
+    assertWritableDataPath(filePath, "reset")
+    const stored = await readRawStoredFile(filePath)
+    if (stored) {
+      const remaining: Record<string, unknown> = {}
+      for (const [key, reading] of Object.entries(stored.readings)) {
+        if (!matchesReadingKey(key, provider, user)) remaining[key] = reading
+      }
+      await persistFile({ version: stored.version, readings: remaining })
+    }
+    // The cache no longer describes either the rewritten file or the next
+    // reading; the next load reads what is actually on disk.
+    readings = undefined
+    cacheEpoch++
+  })
 }
 
 /**
