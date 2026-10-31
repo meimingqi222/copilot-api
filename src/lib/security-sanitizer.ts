@@ -3,7 +3,7 @@ const REDACT_FIELD_RE =
 
 const REDACTED_VALUE = "[redacted]"
 
-export function sanitizeJson(value: unknown): unknown {
+function sanitizeJson(value: unknown): unknown {
   if (Array.isArray(value)) return value.map((item) => sanitizeJson(item))
   if (value && typeof value === "object") {
     return Object.fromEntries(

@@ -189,8 +189,16 @@ export function setGuardConfig(patch: Partial<GuardConfig>): GuardConfig {
   return getGuardConfig()
 }
 
+/**
+ * Persisted guard-config schema version. Files written before v2 carry no
+ * version and may contain the aggressive defaults earlier releases saved on
+ * every write; the repair below must run for them exactly once.
+ */
+export const GUARD_CONFIG_VERSION = 2
+
 export function loadGuardConfigFromPersistence(
   data: Partial<GuardConfig> | null | undefined,
+  configVersion?: number,
 ): GuardConfig {
   const envBase = applyEnvOverrides({ ...DEFAULT_GUARD_CONFIG })
   if (!data || typeof data !== "object") {
@@ -199,9 +207,18 @@ export function loadGuardConfigFromPersistence(
   }
   const sanitized = sanitizeGuardConfigPatch(data)
   current = { ...envBase, ...sanitized }
-  // Migrate pre-v2 defaults that were too aggressive (persisted by earlier
-  // versions on every saveGuard): adopt the new safer defaults unless the
-  // admin explicitly changed them to a different value.
+  if (configVersion === undefined || configVersion < GUARD_CONFIG_VERSION) {
+    migrateLegacyGuardDefaults(data)
+  }
+  return getGuardConfig()
+}
+
+/**
+ * Repair the defaults earlier versions persisted on every save. Gated by
+ * GUARD_CONFIG_VERSION: once a file is stamped, an admin's explicit value
+ * (even one that happens to equal an old default) is never rewritten on load.
+ */
+function migrateLegacyGuardDefaults(data: Partial<GuardConfig>): void {
   if (data.repeatedContentThreshold === 3) {
     current.repeatedContentThreshold =
       DEFAULT_GUARD_CONFIG.repeatedContentThreshold
@@ -216,7 +233,6 @@ export function loadGuardConfigFromPersistence(
   ) {
     current.probePatterns = [...DEFAULT_GUARD_CONFIG.probePatterns]
   }
-  return getGuardConfig()
 }
 
 export function resetGuardConfigForTest(): void {

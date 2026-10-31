@@ -1,5 +1,6 @@
 import {
   getGuardConfig,
+  GUARD_CONFIG_VERSION,
   loadGuardConfigFromPersistence,
   resetGuardConfigForTest,
   type GuardConfig,
@@ -71,7 +72,16 @@ export async function loadGuard(): Promise<void> {
       }
     }
     if (data.config) {
-      loadGuardConfigFromPersistence(data.config as Partial<GuardConfig>)
+      loadGuardConfigFromPersistence(
+        data.config as Partial<GuardConfig>,
+        data.configVersion,
+      )
+    }
+    // Stamp the file once. Without this, a legacy file would re-run the
+    // one-time default repair on every startup and keep overwriting values an
+    // admin chose deliberately.
+    if (data.configVersion !== GUARD_CONFIG_VERSION) {
+      await saveGuard()
     }
     logger.info(
       `Guard loaded: ${ipBlacklist.size} blocked IPs, ${uaBlacklist.size} blocked UAs, ${customUaWhitelist.length} custom UA patterns`,
@@ -87,6 +97,7 @@ export async function saveGuard(): Promise<void> {
     blacklist: getBlacklist(),
     uaWhitelist: [...customUaWhitelist],
     config: { ...getGuardConfig() },
+    configVersion: GUARD_CONFIG_VERSION,
   })
 }
 

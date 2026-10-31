@@ -262,5 +262,5 @@ export function createDumpSanitizer(inputs: ReadonlyArray<string>) {
     return redactSecretValues(result, 0, "value")
   }
 
-  return { json, error, text, snippet, addSecrets }
+  return { json, error, text, snippet, sanitize, addSecrets }
 }

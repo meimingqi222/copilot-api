@@ -3,7 +3,9 @@ import { Hono } from "hono"
 
 import { resetGuardForTest } from "~/lib/guard"
 import {
+  DEFAULT_GUARD_CONFIG,
   getGuardConfig,
+  loadGuardConfigFromPersistence,
   resetGuardConfigForTest,
   setGuardConfig,
   validateGuardConfigPatch,
@@ -344,5 +346,42 @@ describe("guard management", () => {
         (p) => p.principal === "user:overview-check",
       ),
     ).toBe(true)
+  })
+})
+
+describe("guard config persistence migration", () => {
+  beforeEach(() => {
+    resetGuardConfigForTest()
+  })
+
+  afterEach(() => {
+    resetGuardConfigForTest()
+  })
+
+  test("a versioned file keeps values an admin chose deliberately", () => {
+    loadGuardConfigFromPersistence(
+      { repeatedContentThreshold: 3, minSamplesFailureRate: 10 },
+      2,
+    )
+    expect(getGuardConfig().repeatedContentThreshold).toBe(3)
+    expect(getGuardConfig().minSamplesFailureRate).toBe(10)
+  })
+
+  test("a legacy file gets the one-time default repair", () => {
+    loadGuardConfigFromPersistence(
+      { repeatedContentThreshold: 3, minSamplesFailureRate: 10 },
+      undefined,
+    )
+    expect(getGuardConfig().repeatedContentThreshold).toBe(
+      DEFAULT_GUARD_CONFIG.repeatedContentThreshold,
+    )
+    expect(getGuardConfig().minSamplesFailureRate).toBe(
+      DEFAULT_GUARD_CONFIG.minSamplesFailureRate,
+    )
+  })
+
+  test("a legacy file with non-default values is left alone", () => {
+    loadGuardConfigFromPersistence({ repeatedContentThreshold: 5 }, undefined)
+    expect(getGuardConfig().repeatedContentThreshold).toBe(5)
   })
 })

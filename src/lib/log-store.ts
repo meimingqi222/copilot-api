@@ -192,7 +192,17 @@ export interface LogEntry {
 
 export type RequestLogRecord = Omit<LogEntry, "id">
 
-const MAX_SIZE = Number(process.env["LOG_BUFFER_SIZE"] ?? 5000)
+/** A positive integer from the environment, or the fallback for anything else. */
+function positiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim()
+  if (!raw) return fallback
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback
+}
+
+// An unparsable value used to make the bound NaN, which compares false forever:
+// the ring buffer then grew without limit. Fall back instead of trusting Number().
+const MAX_SIZE = positiveIntEnv("LOG_BUFFER_SIZE", 5000)
 
 export interface LogQueryOptions {
   llmOnly?: boolean

@@ -30,7 +30,7 @@ import {
   setRequestLogFinisher,
 } from "./request-log"
 import { appendRequestLogSync } from "./request-log-persist"
-import { sanitizeJson } from "./security-sanitizer"
+import { createDumpSanitizer } from "./request-dump-sanitizer"
 import { statsStore } from "./stats-store"
 import { publishTrace } from "./trace-bus"
 import { getClientIp } from "./utils"
@@ -379,16 +379,20 @@ async function captureRequestPreview(c: Context): Promise<string | undefined> {
       return "[body omitted: too large]"
     }
 
+    // The preview is admin-visible forensic data: use the same value-level
+    // sanitizer as request dumps, not the field-name-only filter. The raw body
+    // seeds the secret pool so echoes elsewhere in the payload are masked too.
+    const sanitizer = createDumpSanitizer([raw])
     if (contentType.includes("application/json")) {
       try {
         const parsed: unknown = JSON.parse(raw)
-        return JSON.stringify(sanitizeJson(parsed), null, 2)
+        return JSON.stringify(sanitizer.sanitize(parsed), null, 2)
       } catch {
-        return raw
+        return sanitizer.text(raw)
       }
     }
 
-    return raw
+    return sanitizer.text(raw)
   } catch {
     return undefined
   }

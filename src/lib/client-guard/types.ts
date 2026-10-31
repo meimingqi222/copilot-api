@@ -67,6 +67,8 @@ export interface GuardPersistence {
   blacklist?: Array<BlacklistEntry>
   uaWhitelist?: Array<string>
   config?: Record<string, unknown>
+  /** Guard-config schema version; absent on files written before v2. */
+  configVersion?: number
 }
 
 export interface SuspiciousAssessment {
