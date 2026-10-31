@@ -9,7 +9,6 @@ import {
 } from "~/lib/api-config"
 import { logger } from "~/lib/logger"
 import { assertWritableDataPath, PATHS } from "~/lib/paths"
-import type { ProviderId } from "~/lib/provider-config"
 import {
   managedConnectionFromInput,
   persistProviderConnections,
@@ -22,7 +21,6 @@ import { refreshCopilotTokenForConnection } from "~/services/copilot/token-refre
 // Persisted map of pending device-code flows: deviceCode → pollState
 interface PollState {
   label: string
-  provider: ProviderId
   interval: number
   expiresAt: number
   status: "pending" | "complete" | "expired"
@@ -32,6 +30,20 @@ interface PollState {
 // In-memory cache, loaded from disk on startup
 const pendingFlows = new Map<string, PollState>()
 const MAX_PENDING_DEVICE_FLOWS = 256
+
+/**
+ * Serializes writes. Two polls landing together (a second browser tab, a
+ * retrying client) would otherwise each snapshot the map and write the whole
+ * file, so the later write could drop the earlier flow's `slow_down` interval
+ * or its completion.
+ */
+let writeQueue: Promise<void> = Promise.resolve()
+
+function enqueueSave(): Promise<void> {
+  const next = writeQueue.catch(() => undefined).then(() => savePendingFlows())
+  writeQueue = next.catch(() => undefined)
+  return next
+}
 
 // Load pending flows from disk
 async function loadPendingFlows(): Promise<void> {
@@ -74,7 +86,7 @@ export function registerPendingFlow(
     if (typeof oldest === "string") pendingFlows.delete(oldest)
   }
   pendingFlows.set(deviceCode, state)
-  void savePendingFlows()
+  void enqueueSave()
 }
 
 export async function pollAccountFlow(flowId: string): Promise<{
@@ -95,7 +107,7 @@ export async function pollAccountFlow(flowId: string): Promise<{
 
   if (flow.status === "expired" || Date.now() > flow.expiresAt) {
     flow.status = "expired"
-    await savePendingFlows()
+    await enqueueSave()
     return { status: "expired" }
   }
 
@@ -138,7 +150,7 @@ export async function pollAccountFlow(flowId: string): Promise<{
     const newInterval =
       typeof json.interval === "number" ? json.interval : flow.interval + 5
     flow.interval = newInterval
-    await savePendingFlows()
+    await enqueueSave()
     logger.debug(
       `Poll device flow: slow_down received, increasing interval to ${newInterval}s`,
     )
@@ -147,7 +159,7 @@ export async function pollAccountFlow(flowId: string): Promise<{
 
   if (json.error) {
     flow.status = "expired"
-    await savePendingFlows()
+    await enqueueSave()
     return { status: "expired" }
   }
 
@@ -182,7 +194,7 @@ export async function pollAccountFlow(flowId: string): Promise<{
 
   flow.status = "complete"
   flow.accountId = connection.id
-  await savePendingFlows()
+  await enqueueSave()
 
   // 模型缓存由 persistProviderConnections / refreshModelsForConnection 内部的
   // emitStateChange("models-stale") 自动触发,无需手动调用 cacheModels()。
@@ -191,6 +203,17 @@ export async function pollAccountFlow(flowId: string): Promise<{
 }
 
 export const deviceFlowRoutes = new Hono()
+
+/** Drop all in-memory flows; the persisted file is left to the caller. */
+export function resetDeviceFlowsForTest(): void {
+  pendingFlows.clear()
+  writeQueue = Promise.resolve()
+}
+
+/** Await every queued write; tests assert on the file right after. */
+export function flushDeviceFlowSaves(): Promise<void> {
+  return writeQueue
+}
 
 deviceFlowRoutes.post("/:flowId/poll", async (c) => {
   const result = await pollAccountFlow(c.req.param("flowId"))

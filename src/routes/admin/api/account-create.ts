@@ -130,7 +130,6 @@ createAccountRoutes.post("/", async (c) => {
     registerDeviceFlow(flow, flowLabel) {
       registerPendingFlow(flow.device_code, {
         label: flowLabel,
-        provider,
         interval: flow.interval,
         expiresAt: Date.now() + flow.expires_in * 1000,
         status: "pending",
