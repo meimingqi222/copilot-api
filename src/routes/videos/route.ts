@@ -71,12 +71,13 @@ videoRoutes.post("/generations", async (c) => {
 videoRoutes.get("/:requestId", async (c) => {
   try {
     const requestId = c.req.param("requestId")
-    // We don't know the model from the request_id alone;
-    // use a wildcard model match to find any xAI account.
-    // The model is returned in the response from xAI.
+    // We don't know the model from the request_id alone: ask admission for any
+    // account that can serve the videos endpoint instead of naming a model
+    // (a disabled or non-allowed literal id would deny a legitimate lookup).
     const admission = await prepareRequestAdmission(c, {
       model: "grok-imagine-video",
       endpoint: "videos",
+      wildcardModel: true,
     })
 
     const response = await retrieveXaiVideo(

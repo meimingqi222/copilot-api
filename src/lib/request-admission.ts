@@ -126,6 +126,13 @@ interface PrepareRequestAdmissionOptions {
   routeKind?: ProtectedRouteKind
   model: string
   endpoint: ModelEndpoint
+  /**
+   * Pick any account that can serve `endpoint`, without treating `model` as the
+   * model being called. Used by lookups that only have an operation id (the
+   * video status route): the request must not be denied because a literal
+   * model id is disabled or outside the caller's model allow-list.
+   */
+  wildcardModel?: boolean
   maxTokens?: number
   stream?: boolean
   inferredInitiator?: "agent" | "user"
@@ -805,7 +812,10 @@ async function prepareRequestAdmissionImpl(
 ): Promise<RequestAdmission> {
   c.set("model", options.model)
   recordRequestedServiceTier(c, options.sessionPayload)
-  enforceUserModelAccess(c, options.model)
+  // A wildcard lookup names no model of its own: skip the per-model allow-list,
+  // which would otherwise deny the request for a model the caller never asked
+  // for. Which connection serves it is still decided by routing.
+  if (!options.wildcardModel) enforceUserModelAccess(c, options.model)
 
   const { initiator } = resolveInitiatorWithClientHeader(
     c,
