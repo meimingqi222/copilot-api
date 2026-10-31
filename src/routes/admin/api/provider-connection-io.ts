@@ -40,7 +40,14 @@ providerConnectionIoRoutes.get("/export", (c) => {
   return c.body(body)
 })
 
-/** Export a single provider connection (with secrets). */
+/**
+ * Export a single provider connection (with secrets).
+ *
+ * Account-managed connections are rejected by the `/:id` guard mounted before
+ * this module; their supported single-connection export is
+ * `GET /admin/api/accounts/:id/export` (same connection, account-shaped
+ * envelope), so this route only serves plain endpoint connections.
+ */
 providerConnectionIoRoutes.get("/:id/export", (c) => {
   const connection = getProviderConnection(c.req.param("id"))
   if (!connection) return c.json({ error: "Not found" }, 404)

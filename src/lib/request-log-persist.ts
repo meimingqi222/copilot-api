@@ -13,7 +13,7 @@ import {
 } from "~/lib/log-rotation"
 import { logger } from "~/lib/logger"
 import { isLlmRequest } from "~/lib/llm-request"
-import { sanitizeDiagnosticSnippet } from "~/lib/security-sanitizer"
+import { createDumpSanitizer } from "~/lib/request-dump-sanitizer"
 
 let appendQueue = Promise.resolve()
 
@@ -81,6 +81,45 @@ function buildRequestLogFileName(dateKey: string, segment: number): string {
     : `requests-${dateKey}.${segment}.jsonl`
 }
 
+const ERROR_MAX_LENGTH = 500
+const SNIPPET_MAX_LENGTH = 512
+
+/**
+ * Persisted logs are on by default, so they get the same secret scrubber as the
+ * request dump rather than the weaker diagnostic-snippet filter: credentials in
+ * upstream error echoes (`sk-…`, `ghp_…`, `passwd=…`) must not reach disk in
+ * clear text. One sanitizer per entry lets a secret learned from one error field
+ * also mask its echo in another.
+ */
+function sanitizePersistedErrors(entry: RequestLogRecord): void {
+  const sources = [
+    entry.error,
+    entry.errorSnippet,
+    entry.diagnosticError?.message,
+    ...(entry.attempts ?? []).map((attempt) => attempt.errorSnippet),
+  ].filter(
+    (value): value is string => typeof value === "string" && value.length > 0,
+  )
+  if (sources.length === 0) return
+  const scrub = createDumpSanitizer(sources)
+  const clean = (value: string | undefined, maxLength: number) =>
+    value ? scrub.snippet(value).slice(0, maxLength) : undefined
+  entry.error = clean(entry.error, ERROR_MAX_LENGTH)
+  entry.errorSnippet = clean(entry.errorSnippet, SNIPPET_MAX_LENGTH)
+  if (entry.diagnosticError) {
+    entry.diagnosticError = {
+      ...entry.diagnosticError,
+      message:
+        clean(entry.diagnosticError.message, ERROR_MAX_LENGTH)
+        ?? "Request failed",
+    }
+  }
+  entry.attempts = entry.attempts?.map((attempt) => ({
+    ...attempt,
+    errorSnippet: clean(attempt.errorSnippet, SNIPPET_MAX_LENGTH),
+  }))
+}
+
 export function sanitizePersistedEntry(
   entry: RequestLogRecord,
 ): RequestLogRecord {
@@ -93,20 +132,7 @@ export function sanitizePersistedEntry(
       delete sanitized.upstreamBaseUrl
     }
   }
-  sanitized.error = sanitizeDiagnosticSnippet(sanitized.error, 500)
-  sanitized.errorSnippet = sanitizeDiagnosticSnippet(sanitized.errorSnippet)
-  if (sanitized.diagnosticError) {
-    sanitized.diagnosticError = {
-      ...sanitized.diagnosticError,
-      message:
-        sanitizeDiagnosticSnippet(sanitized.diagnosticError.message, 500)
-        ?? "Request failed",
-    }
-  }
-  sanitized.attempts = sanitized.attempts?.map((attempt) => ({
-    ...attempt,
-    errorSnippet: sanitizeDiagnosticSnippet(attempt.errorSnippet),
-  }))
+  sanitizePersistedErrors(sanitized)
   return sanitized
 }
 

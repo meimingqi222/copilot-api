@@ -177,6 +177,18 @@ async function aggregateAnthropic(
       continue
     }
     const type = ev.type
+    if (type === "error") {
+      // 与 detectAnthropicStreamError 对齐：流式路径靠它拦下 error 帧，
+      // 非流式折叠若跳过这里，客户端会收到一条静默的空消息。
+      const error = ev.error as
+        | { message?: unknown; type?: unknown }
+        | undefined
+      const message =
+        typeof error?.message === "string" ? error.message
+        : typeof error?.type === "string" ? error.type
+        : "upstream streaming error"
+      throw new HTTPError(message, new Response(null, { status: 500 }), data)
+    }
     if (type === "message_start") {
       const message = ev.message as Record<string, unknown> | undefined
       agg.id = typeof message?.id === "string" ? message.id : undefined
@@ -195,6 +207,10 @@ async function aggregateAnthropic(
         block.thinking = `${(block.thinking as string) ?? ""}${delta.thinking}`
       } else if (typeof delta.partial_json === "string") {
         block.input = `${(block.input as string) ?? ""}${delta.partial_json}`
+      } else if (typeof delta.signature === "string") {
+        // 签名只在单个 signature_delta 里整段下发，不是增量文本，故直接赋值。
+        // 漏掉它会让 stream:false 的 thinking 块不带签名。
+        block.signature = delta.signature
       }
       blocks.set(index, block)
     } else if (type === "message_delta") {

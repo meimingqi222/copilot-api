@@ -85,6 +85,13 @@ export interface GuardInput {
   messageContent?: string
   /** Selected provider kind — automation detection skips non-Copilot routes. */
   provider?: string
+  /**
+   * Skip the behavior score/block for now because the final provider is not
+   * known yet (a routing-group classifier can change the leading member).
+   * `checkDeferredProtectedRouteGuardBehavior` finishes that half afterwards;
+   * the provider-independent gates still run here.
+   */
+  deferBehavior?: boolean
 }
 
 export interface EnforceInput {

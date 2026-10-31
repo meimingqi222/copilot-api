@@ -18,6 +18,13 @@ export default defineConfig({
       from: "src/services/aistudio/waa/LICENSE",
       to: "dist/AIStudio2API-LICENSE.txt",
     },
+    {
+      // account-lifecycle.ts reads this file at runtime via
+      // `import.meta.dirname`; the bundled chunk lives at the dist root, and
+      // only `dist` is published, so the source tree's copy must ship too.
+      from: "src/services/mimo/bridge.py",
+      to: "dist/bridge.py",
+    },
   ],
 
   env: {

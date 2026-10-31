@@ -1,9 +1,6 @@
-import type {
-  ModelEndpoint,
-  ProviderConnection,
-} from "~/lib/provider-connections"
+import type { ProviderConnection } from "~/lib/provider-connections"
 import type { QuotaSnapshot } from "~/lib/quota/types"
-import type { AntigravityQuotaSummaryPayload } from "~/lib/quota/parsers"
+import type { WarmupPool, WarmupTarget } from "~/lib/quota/warmup-targets"
 
 import { HTTPError } from "~/lib/error"
 import { createLogger } from "~/lib/logger"
@@ -13,22 +10,18 @@ import {
   listAccountManagedConnections,
   persistProviderConnections,
 } from "~/lib/provider-connections"
-import {
-  resolveClaudeQuotaWindows,
-  resolveCodexQuotaWindows,
-  resolveAntigravityQuotaWindows,
-} from "~/lib/quota/cycles"
 import { refreshManagedQuota } from "~/lib/quota/refresh"
+import {
+  isWarmableProtocol,
+  WARMUP_TARGETS,
+  warmupTargetsForProtocol,
+} from "~/lib/quota/warmup-targets"
 import {
   acquireRouteTargetSlot,
   routeTargetLoad,
 } from "~/lib/route-target/load"
 import { sanitizeDiagnosticSnippet } from "~/lib/security-sanitizer"
 import { getSystemSettings } from "~/lib/system-config"
-import { createClaudeMessagesOnce } from "~/services/claude/create-messages-once"
-import { createCodexResponsesOnce } from "~/services/codex/create-responses-once"
-import { lowestCodexReasoningEffort } from "~/services/codex/client-models"
-import { createAntigravityChatCompletionsOnce } from "~/services/antigravity/create-chat-completions-once"
 import { IR_WIRES } from "~/services/ir/types"
 
 const logger = createLogger("quota")
@@ -41,94 +34,34 @@ const GRACE_MINUTES = 5
 // the single line that explains why nothing was sent.
 let reportedSlot: string | undefined
 const reportedSkips = new Map<string, string>()
-type WarmupPool = keyof ReturnType<
-  typeof getSystemSettings
->["accountWarmup"]["models"]
-
-/** Protocols that a scheduled warmup can ever send for. Everything else is out of scope. */
-const WARMABLE_PROTOCOLS = [
-  "claude-native",
-  "codex-native",
-  "antigravity-native",
-] as const
-
-function isWarmableProtocol(connection: ProviderConnection): boolean {
-  return (WARMABLE_PROTOCOLS as readonly string[]).includes(connection.protocol)
-}
-
-/**
- * Warm only when the five hour window is effectively untouched: more than
- * `WARMUP_MIN_REMAINING_PERCENT` of it is left. Requiring the window to have
- * expired meant an account with a trickle of traffic could never be warmed,
- * because any usage at all kept a window open.
- */
-const WARMUP_MIN_REMAINING_PERCENT = 99
-
-function fiveHourRemainingReason(window: {
-  usedPercent?: number | null
-  windowEndMs: number
-}): string | undefined {
-  const remaining = 100 - (window.usedPercent ?? 0)
-  if (remaining > WARMUP_MIN_REMAINING_PERCENT) return undefined
-  return `five hour window has ${Math.round(remaining * 10) / 10}% left (needs more than ${WARMUP_MIN_REMAINING_PERCENT}%), resets ${new Date(window.windowEndMs).toISOString()}`
-}
-
-function poolForModel(
-  id: string,
-): "antigravityGemini" | "antigravityClaude" | undefined {
-  if (/^gemini-/i.test(id)) return "antigravityGemini"
-  if (/^claude-/i.test(id)) return "antigravityClaude"
-  return undefined
-}
-
-function lowCostFamilies(pool: WarmupPool) {
-  // These are low-cost families, not a claim about exact subscription pricing.
-  return (
-    pool === "codex" ? [/-luna(?:-|$)/i, /-mini(?:-|$)/i]
-    : pool === "antigravityGemini" ? [/^gemini-.*-flash(?:-|$)/i]
-    : [/^claude-.*haiku(?:-|$)/i]
-  )
-}
 
 function warmupCandidates(
   connection: ProviderConnection,
-  pool: WarmupPool,
-  endpoint: ModelEndpoint,
+  target: WarmupTarget,
 ) {
   return (connection.models ?? []).filter(
     (model) =>
       model.enabled
-      && model.endpoints.includes(endpoint)
-      && (!pool.startsWith("antigravity")
-        || poolForModel(model.upstreamId) === pool),
+      && model.endpoints.includes(target.endpoint)
+      && (target.acceptsModel?.(model.upstreamId) ?? true),
   )
 }
 
 export function getAccountWarmupModels() {
-  const catalog: Record<
+  const catalog = {} as Record<
     WarmupPool,
     Array<{ id: string; name: string; recommended: boolean }>
-  > = {
-    claude: [],
-    codex: [],
-    antigravityGemini: [],
-    antigravityClaude: [],
-  }
-  for (const pool of Object.keys(catalog) as WarmupPool[]) {
-    const protocol =
-      pool.startsWith("antigravity") ? "antigravity-native" : `${pool}-native`
-    const endpoint =
-      pool.startsWith("antigravity") ? "chat"
-      : pool === "claude" ? "messages"
-      : "responses"
+  >
+  for (const target of WARMUP_TARGETS) {
     const models = new Map<
       string,
       { id: string; name: string; recommended: boolean }
     >()
-    const families = lowCostFamilies(pool)
+    const families = target.lowCostFamilies
     for (const connection of listAccountManagedConnections()) {
-      if (!connection.enabled || connection.protocol !== protocol) continue
-      for (const model of warmupCandidates(connection, pool, endpoint)) {
+      if (!connection.enabled || connection.protocol !== target.protocol)
+        continue
+      for (const model of warmupCandidates(connection, target)) {
         if (!models.has(model.upstreamId))
           models.set(model.upstreamId, {
             id: model.upstreamId,
@@ -143,63 +76,34 @@ export function getAccountWarmupModels() {
       const index = families.findIndex((family) => family.test(id))
       return index < 0 ? families.length : index
     }
-    catalog[pool] = [...models.values()].sort(
+    catalog[target.pool] = [...models.values()].sort(
       (a, b) => rank(a.id) - rank(b.id) || a.id.localeCompare(b.id),
     )
   }
   return catalog
 }
 
-function selectModel(
-  connection: ProviderConnection,
-  pool: WarmupPool,
-  endpoint: ModelEndpoint,
-) {
-  const configured = getSystemSettings().accountWarmup.models[pool]
-  const candidates = warmupCandidates(connection, pool, endpoint)
+function selectModel(connection: ProviderConnection, target: WarmupTarget) {
+  const configured = getSystemSettings().accountWarmup.models[target.pool]
+  const candidates = warmupCandidates(connection, target)
   if (configured)
     return candidates.find((model) => model.upstreamId === configured)
-  for (const family of lowCostFamilies(pool)) {
+  for (const family of target.lowCostFamilies) {
     const model = candidates.find((entry) => family.test(entry.upstreamId))
     if (model) return model
   }
   return undefined
 }
 
-function idleAntigravityReason(
+function idleWindowReason(
   snapshot: QuotaSnapshot,
-  pool: WarmupPool,
   now: number,
+  target: WarmupTarget,
 ): string | undefined {
-  const groups =
-    (snapshot.details as AntigravityQuotaSummaryPayload).groups ?? []
-  const matching = groups.filter((group) => {
-    const label = group.displayName || group.display_name || ""
-    const gemini = /gemini/i.test(label)
-    const claude = /claude/i.test(label)
-    return pool === "antigravityGemini" ? gemini && !claude : claude && !gemini
-  })
-  // Ambiguous groups and weekly-only/free plans are deliberately not warmed.
-  if (matching.length !== 1)
-    return matching.length === 0 ?
-        `no quota group matched ${pool}`
-      : `${matching.length} quota groups matched ${pool}`
-  const windows = resolveAntigravityQuotaWindows({ groups: matching })
-  const fiveHour = windows.find(
-    (window) => window.windowEndMs - window.windowStartMs === 18_000_000,
-  )
-  const weekly = windows.find(
-    (window) => window.windowEndMs - window.windowStartMs === 604_800_000,
-  )
-  if (!fiveHour) return "five hour window is missing"
-  if (!weekly) return "weekly window is missing"
-  if (fiveHour.usedPercent == null) return "five hour usage is unknown"
-  const fiveHourLeft = fiveHourRemainingReason(fiveHour)
-  if (fiveHourLeft) return fiveHourLeft
-  if (weekly.usedPercent == null) return "weekly usage is unknown"
-  if (weekly.usedPercent >= 100) return "weekly allowance is exhausted"
-  if (weekly.windowEndMs <= now) return "weekly window has already ended"
-  return undefined
+  const details = snapshot.details
+  if (!details) return "quota read returned no window details"
+  if (now - snapshot.fetchedAt > 60_000) return "quota read is stale"
+  return target.idleReason({ snapshot, details, now })
 }
 
 function dueSlot(now: number): string | undefined {
@@ -240,7 +144,7 @@ function ineligibleReason(connection: ProviderConnection): string | undefined {
   if (getMutableProviderConnection(connection.id) !== connection)
     return "connection is no longer managed here"
   if (!connection.enabled) return "connection is disabled"
-  if (!isWarmableProtocol(connection))
+  if (!isWarmableProtocol(connection.protocol))
     return `protocol ${connection.protocol} is not warmed`
   const credential = connection.credentials[0]
   if (credential === undefined) return "connection has no credential"
@@ -252,48 +156,6 @@ function ineligibleReason(connection: ProviderConnection): string | undefined {
   )
   if (busy) return `connection is busy on ${busy}`
   return undefined
-}
-
-function idleWindowReason(
-  connection: ProviderConnection,
-  snapshot: QuotaSnapshot,
-  now: number,
-  pool: WarmupPool,
-): string | undefined {
-  if (!snapshot.details) return "quota read returned no window details"
-  if (now - snapshot.fetchedAt > 60_000) return "quota read is stale"
-  if (connection.protocol === "antigravity-native")
-    return idleAntigravityReason(snapshot, pool, now)
-  // A depleted weekly allowance must never turn a warmup into paid extra usage.
-  if (snapshot.premiumInteractionsRemaining === undefined)
-    return "weekly allowance is unknown"
-  if (snapshot.premiumInteractionsRemaining <= 0)
-    return "weekly allowance is exhausted"
-  const windows =
-    connection.protocol === "claude-native" ?
-      resolveClaudeQuotaWindows(snapshot.details)
-    : resolveCodexQuotaWindows(snapshot.details)
-  const full = windows.find(
-    (window) => (window.usedPercent ?? 0) >= 100 && window.windowEndMs > now,
-  )
-  if (full)
-    return `${full.id} window is at ${Math.round(full.usedPercent ?? 0)}% until ${new Date(full.windowEndMs).toISOString()}`
-  const fiveHour = windows.find((window) =>
-    ["five_hour", "five-hour"].includes(window.id),
-  )
-  if (fiveHour) return fiveHourRemainingReason(fiveHour)
-  // Claude explicitly returns null when the session window has not started.
-  // Missing/malformed reset data must not be mistaken for an idle account.
-  if (connection.protocol !== "claude-native")
-    return "quota read has no five hour window"
-  const raw = snapshot.details.five_hour
-  if (raw === null) return undefined
-  if (!raw || typeof raw !== "object")
-    return "reset data is missing or malformed"
-  const window = raw as { utilization?: number; resets_at?: unknown }
-  return window.utilization === 0 && window.resets_at === null ?
-      undefined
-    : "session window has already started"
 }
 
 /** Test-only: the per-slot report dedupe is process state, so tests must clear it. */
@@ -330,24 +192,38 @@ async function reportSkip(
   await persistProviderConnections()
 }
 
+/**
+ * Why a warm-up reply means the request did not go through, if it does. The
+ * three senders return different reply shapes, but only these two markers say
+ * the upstream refused or aborted the turn.
+ */
+function warmupFailure(response: unknown): string | undefined {
+  if (typeof response !== "object" || response === null) return undefined
+  if ("error" in response && response.error)
+    return "Upstream warmup returned an error"
+  if (
+    "status" in response
+    && ["failed", "cancelled"].includes(String(response.status))
+  )
+    return "Upstream warmup did not complete"
+  return undefined
+}
+
 async function warmConnection(
   connection: ProviderConnection,
   slot: string,
-  pool: WarmupPool,
+  target: WarmupTarget,
 ): Promise<void> {
+  const { pool } = target
   const ineligible = ineligibleReason(connection)
   if (ineligible) return reportSkip(connection, slot, pool, ineligible)
-  const endpoint =
-    connection.protocol === "antigravity-native" ? "chat"
-    : connection.protocol === "claude-native" ? "messages"
-    : "responses"
-  const model = selectModel(connection, pool, endpoint)
+  const model = selectModel(connection, target)
   if (!model)
     return reportSkip(
       connection,
       slot,
       pool,
-      `no enabled ${endpoint} model matched the ${pool} pool`,
+      `no enabled ${target.endpoint} model matched the ${pool} pool`,
     )
   // Discovery and models-stale listeners can rebuild equivalent model objects.
   // Capture the wire identity so replacements pass and in-place changes do not.
@@ -366,12 +242,12 @@ async function warmConnection(
   const snapshot = await refreshManagedQuota(connection, { force: true })
   if (!snapshot)
     return reportSkip(connection, slot, pool, "quota read returned nothing")
-  const busy = idleWindowReason(connection, snapshot, Date.now(), pool)
+  const busy = idleWindowReason(snapshot, Date.now(), target)
   if (busy) return reportSkip(connection, slot, pool, busy)
   const changed =
     ineligibleReason(connection)
     ?? (dueSlot(Date.now()) === slot ? undefined : "the catch-up window closed")
-    ?? (selectModel(connection, pool, endpoint)?.upstreamId === upstreamId ?
+    ?? (selectModel(connection, target)?.upstreamId === upstreamId ?
       undefined
     : "the model selection changed")
   if (changed) return reportSkip(connection, slot, pool, changed)
@@ -392,7 +268,7 @@ async function warmConnection(
   const late =
     ineligibleReason(connection)
     ?? (dueSlot(Date.now()) === slot ? undefined : "the catch-up window closed")
-    ?? (selectModel(connection, pool, endpoint)?.upstreamId === upstreamId ?
+    ?? (selectModel(connection, target)?.upstreamId === upstreamId ?
       undefined
     : "the model selection changed")
   if (late) {
@@ -407,65 +283,15 @@ async function warmConnection(
   }
   const credential = connection.credentials[0]
   const release = acquireRouteTargetSlot(
-    `${connection.id}::${credential.id}::${endpoint}`,
+    `${connection.id}::${credential.id}::${target.endpoint}`,
   )
   if (!release) return
   const signal = AbortSignal.timeout(30_000)
   try {
-    const effort = lowestCodexReasoningEffort(connection.id, upstreamId)
-    const response =
-      endpoint === "chat" ?
-        await createAntigravityChatCompletionsOnce(
-          { connection, credential },
-          {
-            model: upstreamId,
-            messages: [{ role: "user", content: "Reply only OK." }],
-            max_tokens: 1,
-            stream: false,
-            ...(pool === "antigravityGemini" ?
-              // Pro models reject minimal; low is supported by Pro and Flash.
-              { reasoning_effort: "low" as const }
-            : {}),
-          },
-          signal,
-        )
-      : endpoint === "messages" ?
-        await createClaudeMessagesOnce(
-          { connection, credential },
-          {
-            model: upstreamId,
-            messages: [{ role: "user", content: "Reply only OK." }],
-            max_tokens: 1,
-            stream: false,
-          },
-          signal,
-        )
-      : await createCodexResponsesOnce(
-          { connection, credential },
-          {
-            model: upstreamId,
-            // The upstream rejects a bare string: input must be a list of
-            // message items (400 "Input must be a list").
-            input: [
-              {
-                role: "user",
-                content: [{ type: "input_text", text: "Reply only OK." }],
-              },
-            ],
-            tools: [],
-            ...(effort ? { reasoning: { effort } } : {}),
-            stream: false,
-            store: false,
-          },
-          signal,
-        )
-    if ("error" in response && response.error)
-      throw new Error("Upstream warmup returned an error")
-    if (
-      "status" in response
-      && ["failed", "cancelled"].includes(String(response.status))
+    const failure = warmupFailure(
+      await target.send({ connection, credential, model: upstreamId, signal }),
     )
-      throw new Error("Upstream warmup did not complete")
+    if (failure) throw new Error(failure)
     attempt.status = "succeeded"
     logger.info(
       `Account warmup succeeded for "${connection.name}" (${upstreamId})`,
@@ -498,7 +324,9 @@ export async function runAccountWarmups(now = Date.now()): Promise<void> {
   running = true
   try {
     const managed = listAccountManagedConnections()
-    const connections = managed.filter(isWarmableProtocol)
+    const connections = managed.filter((connection) =>
+      isWarmableProtocol(connection.protocol),
+    )
     if (reportedSlot !== slot) {
       reportedSlot = slot
       reportedSkips.clear()
@@ -521,12 +349,8 @@ export async function runAccountWarmups(now = Date.now()): Promise<void> {
     for (const connection of connections) {
       if (dueSlot(Date.now()) !== slot) break
       try {
-        const pools: WarmupPool[] =
-          connection.protocol === "antigravity-native" ?
-            ["antigravityGemini", "antigravityClaude"]
-          : connection.protocol === "claude-native" ? ["claude"]
-          : ["codex"]
-        for (const pool of pools) await warmConnection(connection, slot, pool)
+        for (const target of warmupTargetsForProtocol(connection.protocol))
+          await warmConnection(connection, slot, target)
       } catch (error) {
         logger.warn(
           `Account warmup skipped for "${connection.name}": ${sanitizeDiagnosticSnippet(error instanceof Error ? error.message : String(error), 300)}`,

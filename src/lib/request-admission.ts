@@ -21,7 +21,10 @@ import {
   recordRoutedServiceTier,
 } from "~/lib/service-tier-trace"
 import { measurePerformanceStage } from "~/lib/request-performance"
-import { checkProtectedRouteGuard } from "~/lib/protected-route-guard"
+import {
+  checkDeferredProtectedRouteGuardBehavior,
+  checkProtectedRouteGuard,
+} from "~/lib/protected-route-guard"
 import {
   connectionProvider,
   getProviderConnection,
@@ -311,6 +314,181 @@ function groupRuleIntents(group: RoutingGroup): Array<string> {
   return [...intents]
 }
 
+/** Everything a group decision needs before the classifier has answered. */
+interface GroupDecisionPlan {
+  group: RoutingGroup
+  /** Rule context, deliberately without a classifier answer. */
+  ctx: RuleContext
+  /** Provider/model the group asks to classify with, if it asks at all. */
+  classifier?: { provider: string; model: string }
+  /** Rule intents the group asks a classifier about; empty when none do. */
+  intents: Array<string>
+}
+
+interface GroupResolutionSteps {
+  resolved: NonNullable<ReturnType<typeof resolveGroupMember>>
+  members: Array<string>
+  lead: ReturnType<typeof splitMember>
+}
+
+/**
+ * Read the group and the request facts a decision is judged against, without
+ * asking a classifier anything.
+ *
+ * The classifier call is deliberately not part of this phase: admission runs
+ * the protected-route guard and manual approval first, and only then lets the
+ * classifier reach an upstream model.
+ */
+async function planGroupDecision(
+  input: GroupDecisionInput,
+  deps: GroupDecisionDeps,
+): Promise<GroupDecisionPlan | undefined> {
+  const groupId = parseGroupReference(input.model)
+  if (groupId === undefined) return undefined
+
+  const getGroup = deps.getGroup ?? getRoutingGroup
+  const group = await getGroup(groupId)
+  if (!group) return undefined
+
+  return {
+    group,
+    ctx: {
+      tokens: estimateGroupTokens(input.messageContent),
+      images: sessionPayloadHasImage(input.sessionPayload),
+      effort: input.reasoningEffort,
+      agent: input.initiator ?? input.inferredInitiator ?? "user",
+      compact: input.compact,
+      at: deps.now?.() ?? new Date(),
+    },
+    classifier: classifierTargetOf(group),
+    intents: groupRuleIntents(group),
+  }
+}
+
+/** Resolve the member and the member order the context selects. */
+function resolveGroupSteps(
+  plan: GroupDecisionPlan,
+  ctx: RuleContext,
+  input: GroupDecisionInput,
+  deps: GroupDecisionDeps,
+): GroupResolutionSteps | undefined {
+  const resolved = resolveGroupMember(plan.group, ctx, {
+    knownModel: looksLikeKnownModel,
+  })
+  if (!resolved) return undefined
+  const members = orderMembersForRouting(plan.group, resolved.member, {
+    turnKey: input.turnKey,
+    rankByAllowance: deps.rankByAllowance,
+    ruleMatched: resolved.ruleIndex !== undefined,
+  })
+  return {
+    resolved,
+    members,
+    lead: splitMember(members[0] ?? resolved.member, looksLikeKnownModel),
+  }
+}
+
+/** Shape a resolution into the decision admission carries. */
+function buildGroupDecision(
+  plan: GroupDecisionPlan,
+  steps: GroupResolutionSteps,
+  automaticEffort?: string,
+): GroupDecision {
+  const { resolved, members, lead } = steps
+  const effort = lead.effort ?? automaticEffort
+  return {
+    groupId: resolved.groupId,
+    routing:
+      resolved.ruleIndex === undefined ?
+        (plan.group.routing ?? "order")
+      : "order",
+    ...(automaticEffort === undefined ? {} : { automaticEffort }),
+    member: members[0] ?? resolved.member,
+    model: lead.model,
+    ...(effort === undefined ? {} : { effort }),
+    fast: lead.fast,
+    ...(resolved.ruleIndex === undefined ?
+      {}
+    : { ruleIndex: resolved.ruleIndex }),
+    members,
+    ...(plan.group.affinity === undefined ?
+      {}
+    : { affinity: plan.group.affinity }),
+  }
+}
+
+/**
+ * The decision the request gets without a classifier answer. Admission uses it
+ * to select the target the guard sees before the classifier runs; it is not a
+ * final decision when the plan's rules ask for an intent.
+ */
+function decideWithoutIntent(
+  plan: GroupDecisionPlan,
+  input: GroupDecisionInput,
+  deps: GroupDecisionDeps,
+): GroupDecision | undefined {
+  const steps = resolveGroupSteps(plan, plan.ctx, input, deps)
+  return steps ? buildGroupDecision(plan, steps) : undefined
+}
+
+/**
+ * Finish a planned decision, optionally with the intent a classifier reported.
+ * This is where a group's `effort: auto` question is asked, so the caller must
+ * already have passed the guard and manual approval.
+ */
+async function finishGroupDecision(
+  plan: GroupDecisionPlan,
+  input: GroupDecisionInput,
+  deps: GroupDecisionDeps,
+  intent?: string,
+): Promise<GroupDecision | undefined> {
+  const ctx = intent === undefined ? plan.ctx : { ...plan.ctx, intent }
+  const steps = resolveGroupSteps(plan, ctx, input, deps)
+  if (!steps) return undefined
+
+  const { resolved, lead } = steps
+  let automaticEffort: string | undefined
+  const mayChooseAnother =
+    resolved.ruleIndex === undefined
+    && (plan.group.routing === "smart" || plan.group.routing === "usage")
+  if (
+    (lead.effort === undefined || mayChooseAnother)
+    && plan.group.effort === "auto"
+    && plan.classifier
+  ) {
+    const levels =
+      plan.group.levels && plan.group.levels.length > 0 ?
+        plan.group.levels
+      : [...EFFORT_LEVELS]
+    const classify = deps.classify ?? classifyIntent
+    const level = await classify({
+      text: input.messageContent ?? "",
+      intents: levels,
+      provider: plan.classifier.provider,
+      model: plan.classifier.model,
+    })
+    if (typeof level === "string" && isGroupEffortLevel(level))
+      automaticEffort = level
+  }
+  return buildGroupDecision(plan, steps, automaticEffort)
+}
+
+/** Ask the group's classifier for the rule intent, if its rules ask for one. */
+async function classifyGroupIntent(
+  plan: GroupDecisionPlan,
+  input: GroupDecisionInput,
+  deps: GroupDecisionDeps,
+): Promise<string | undefined> {
+  if (!plan.classifier || plan.intents.length === 0) return undefined
+  const classify = deps.classify ?? classifyIntent
+  return classify({
+    text: input.messageContent ?? "",
+    intents: plan.intents,
+    provider: plan.classifier.provider,
+    model: plan.classifier.model,
+  })
+}
+
 /**
  * Resolve a `group/<id>` model reference to the member that leads this request.
  *
@@ -324,95 +502,10 @@ export async function resolveGroupDecision(
   input: GroupDecisionInput,
   deps: GroupDecisionDeps = {},
 ): Promise<GroupDecision | undefined> {
-  const groupId = parseGroupReference(input.model)
-  if (groupId === undefined) return undefined
-
-  const getGroup = deps.getGroup ?? getRoutingGroup
-  const group = await getGroup(groupId)
-  if (!group) return undefined
-
-  const ctx: RuleContext = {
-    tokens: estimateGroupTokens(input.messageContent),
-    images: sessionPayloadHasImage(input.sessionPayload),
-    effort: input.reasoningEffort,
-    agent: input.initiator ?? input.inferredInitiator ?? "user",
-    compact: input.compact,
-    at: deps.now?.() ?? new Date(),
-  }
-
-  // Only a group that names a classifier pays for one, and only for the
-  // intents its rules actually test. `classifyIntent` resolves undefined when
-  // nothing is registered, which leaves the rule's other conditions to decide.
-  const classifier = classifierTargetOf(group)
-  if (classifier) {
-    const intents = groupRuleIntents(group)
-    if (intents.length > 0) {
-      const classify = deps.classify ?? classifyIntent
-      const intent = await classify({
-        text: input.messageContent ?? "",
-        intents,
-        provider: classifier.provider,
-        model: classifier.model,
-      })
-      if (intent !== undefined) ctx.intent = intent
-    }
-  }
-
-  const resolved = resolveGroupMember(group, ctx, {
-    knownModel: looksLikeKnownModel,
-  })
-  if (!resolved) return undefined
-
-  // The members in the order this request should try them, the lead first.
-  const members = orderMembersForRouting(group, resolved.member, {
-    turnKey: input.turnKey,
-    rankByAllowance: deps.rankByAllowance,
-    ruleMatched: resolved.ruleIndex !== undefined,
-  })
-  const lead = splitMember(members[0] ?? resolved.member, looksLikeKnownModel)
-
-  // `effort: auto` asks the classifier how hard the turn is, unless the member
-  // carries an effort of its own.
-  let automaticEffort: string | undefined
-  const mayChooseAnother =
-    resolved.ruleIndex === undefined
-    && (group.routing === "smart" || group.routing === "usage")
-  if (
-    (lead.effort === undefined || mayChooseAnother)
-    && group.effort === "auto"
-    && classifier
-  ) {
-    const levels =
-      group.levels && group.levels.length > 0 ?
-        group.levels
-      : [...EFFORT_LEVELS]
-    const classify = deps.classify ?? classifyIntent
-    const level = await classify({
-      text: input.messageContent ?? "",
-      intents: levels,
-      provider: classifier.provider,
-      model: classifier.model,
-    })
-    if (typeof level === "string" && isGroupEffortLevel(level))
-      automaticEffort = level
-  }
-  const effort = lead.effort ?? automaticEffort
-
-  return {
-    groupId: resolved.groupId,
-    routing:
-      resolved.ruleIndex === undefined ? (group.routing ?? "order") : "order",
-    ...(automaticEffort === undefined ? {} : { automaticEffort }),
-    member: members[0] ?? resolved.member,
-    model: lead.model,
-    ...(effort === undefined ? {} : { effort }),
-    fast: lead.fast,
-    ...(resolved.ruleIndex === undefined ?
-      {}
-    : { ruleIndex: resolved.ruleIndex }),
-    members,
-    ...(group.affinity === undefined ? {} : { affinity: group.affinity }),
-  }
+  const plan = await planGroupDecision(input, deps)
+  if (!plan) return undefined
+  const intent = await classifyGroupIntent(plan, input, deps)
+  return finishGroupDecision(plan, input, deps, intent)
 }
 
 /** Follow the selected account's member, rather than the provisional group lead. */
@@ -445,6 +538,263 @@ function commitAdmissionAffinity(
   })
 }
 
+interface AdmissionRoutePool {
+  routedModel: string
+  routing: ReturnType<typeof resolveModelRouting>
+  candidates: Array<RouteTarget>
+}
+
+/** Candidate pool for the model a (possibly planned) decision routes to. */
+function buildAdmissionCandidates(
+  options: PrepareRequestAdmissionOptions,
+  decision: GroupDecision | undefined,
+): AdmissionRoutePool {
+  const routedModel = decision?.model ?? options.model
+  const routing = resolveModelRouting(routedModel)
+  const candidates = buildRouteTargets({
+    connectionId: routing.connectionId,
+    legacyProvider: routing.legacyProvider,
+    accountPrefix: routing.accountPrefix,
+    publicModelId: routing.modelId,
+    aliasRestriction: routing.aliasRestriction,
+    endpoint: options.endpoint,
+    compact: options.compact,
+  })
+  return { routedModel, routing, candidates }
+}
+
+interface AdmissionTargetSession {
+  sessionId?: string
+  fallbackSessionId?: string
+  turnKey?: string
+}
+
+/**
+ * Select the route target for a decision. `preview` keeps a round-robin
+ * selection from advancing its cursor, so admission can learn the guard's
+ * provider before a classifier answers without consuming a turn twice.
+ */
+function selectAdmissionTarget(
+  decision: GroupDecision | undefined,
+  candidates: Array<RouteTarget>,
+  options: PrepareRequestAdmissionOptions,
+  session: AdmissionTargetSession,
+  preview = false,
+): RouteTarget | null {
+  const previewOption = preview ? { advanceRoundRobin: false } : {}
+  if (decision && decision.members.length > 0) {
+    return selectGroupRouteTarget(decision.members, {
+      routing: decision.routing,
+      groupId: decision.groupId,
+      endpoint: options.endpoint,
+      compact: options.compact,
+      sessionId: session.sessionId,
+      fallbackSessionId: session.fallbackSessionId,
+      turnKey: session.turnKey,
+      affinityMode: decision.affinity,
+      commitAffinity: false,
+      ...previewOption,
+    })
+  }
+  return selectRouteTarget(candidates, {
+    sessionId: session.sessionId,
+    fallbackSessionId: session.fallbackSessionId,
+    turnKey: session.turnKey,
+    commitAffinity: false,
+    ...previewOption,
+  })
+}
+
+/** The provider string the protected-route guard reasons about. */
+function guardProviderFor(target: RouteTarget | null): string {
+  if (!target) return "unroutable"
+  return target.protocol === "copilot-native" ? "copilot" : target.protocol
+}
+
+/** Whether two decisions would select from the same target pool. */
+function sameRoutingDecision(
+  a: GroupDecision | undefined,
+  b: GroupDecision | undefined,
+): boolean {
+  if (a === undefined || b === undefined) return a === b
+  if (
+    a.groupId !== b.groupId
+    || a.routing !== b.routing
+    || a.affinity !== b.affinity
+    || a.members.length !== b.members.length
+  ) {
+    return false
+  }
+  return a.members.every((member, index) => member === b.members[index])
+}
+
+/** Put the group decision on the trace, as the operator reads it. */
+function patchGroupRoutingLog(
+  c: Context,
+  decision: GroupDecision | undefined,
+  group: RoutingGroup | null | undefined,
+): void {
+  if (!decision) return
+  patchRequestLog(c, {
+    failoverReason: `routing-group:${decision.groupId}→${decision.member}`,
+    routingGroupId: decision.groupId,
+    routingGroupName: group?.name || decision.groupId,
+    routingGroupMembers: decision.members,
+    routingGroupSelectedMember: decision.member,
+    routingStrategy: group?.routing || "order",
+  })
+}
+
+/** Answer "no route" with the diagnostic that explains why. */
+function rejectNoRoute(
+  c: Context,
+  options: PrepareRequestAdmissionOptions,
+  routedModel: string,
+  initiator: RequestAdmission["initiator"],
+  appliedEffort: string | undefined,
+): never {
+  const diagnostic = diagnoseRouteFailure(options, routedModel)
+  patchRequestLog(c, {
+    modelRequested: options.model,
+    endpoint: options.endpoint,
+    apiKind: options.endpoint as import("~/lib/log-store").ApiKind,
+    streaming: options.stream,
+    reasoningEffort: appliedEffort,
+    initiator,
+    outcome: "failed",
+    error: diagnostic.message,
+    // 与线上错误体一致:额度耗尽按限流报告。
+    errorType:
+      diagnostic.reason === "quota" ? "rate_limit_exceeded" : "no_route",
+    upstreamStatus: 429,
+    retryAfterMs: diagnostic.retryAfterSeconds * 1000 || undefined,
+    failoverReason: diagnostic.reason,
+    diagnosticError: {
+      origin: "admission",
+      kind: diagnostic.reason === "quota" ? "quota_exhausted" : "no_route",
+      message: diagnostic.message,
+      status: 429,
+      retryAfterMs: diagnostic.retryAfterSeconds * 1000 || undefined,
+    },
+  })
+  throw new HTTPError(
+    diagnostic.message,
+    buildRateLimitResponse(options.endpoint, diagnostic),
+    buildRateLimitResponseBody(options.endpoint, diagnostic),
+  )
+}
+
+interface PendingClassificationInput {
+  c: Context
+  options: PrepareRequestAdmissionOptions
+  groupPlan: GroupDecisionPlan
+  groupInput: GroupDecisionInput
+  targetSession: AdmissionTargetSession
+  routingGroup: RoutingGroup | null | undefined
+  /** The provisional decision and route pool the guard already saw. */
+  decision: GroupDecision | undefined
+  route: AdmissionRoutePool
+  target: RouteTarget | null
+  /** A rule asks for an intent, so the classifier can change the decision. */
+  intentPending: boolean
+  initiator: RequestAdmission["initiator"]
+  appliedEffort: string | undefined
+}
+
+interface PendingClassificationResult {
+  decision: GroupDecision | undefined
+  route: AdmissionRoutePool
+  target: RouteTarget
+}
+
+/**
+ * Ask the classifier a pending question (rule intent, or `effort: auto`) and
+ * select the real route target afterwards. The protected-route guard has
+ * already run in admission; manual approval runs here, before the classifier
+ * reaches an upstream model.
+ */
+async function completePendingClassification(
+  input: PendingClassificationInput,
+): Promise<PendingClassificationResult> {
+  const { c, options, groupPlan, groupInput, targetSession, routingGroup } =
+    input
+  let decision = input.decision
+  let route = input.route
+  let target = input.target
+
+  if (input.intentPending) {
+    if (state.manualApprove) {
+      await awaitApproval()
+    }
+    try {
+      decision = await measurePerformanceStage(
+        c,
+        "routingDecisionMs",
+        async () => {
+          const intent = await classifyGroupIntent(groupPlan, groupInput, {})
+          return finishGroupDecision(groupPlan, groupInput, {}, intent)
+        },
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      logger.warn(
+        `Routing group resolution failed for "${options.model}": ${message}`,
+      )
+      decision = undefined
+    }
+    if (!sameRoutingDecision(decision, input.decision)) {
+      route = buildAdmissionCandidates(options, decision)
+    }
+  } else {
+    // `effort: auto` cannot change which member leads, so the target admission
+    // selected before the guard is still the one this request would use.
+    if (!target) {
+      rejectNoRoute(
+        c,
+        options,
+        route.routedModel,
+        input.initiator,
+        input.appliedEffort,
+      )
+    }
+    if (state.manualApprove) {
+      await awaitApproval()
+    }
+    try {
+      decision = await measurePerformanceStage(c, "routingDecisionMs", () =>
+        finishGroupDecision(groupPlan, groupInput, {}),
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      logger.warn(
+        `Routing group resolution failed for "${options.model}": ${message}`,
+      )
+      decision = undefined
+    }
+    if (!decision) {
+      route = buildAdmissionCandidates(options, undefined)
+    }
+  }
+
+  target = selectAdmissionTarget(
+    decision,
+    route.candidates,
+    options,
+    targetSession,
+  )
+  patchGroupRoutingLog(c, decision, routingGroup)
+  if (!target) {
+    rejectNoRoute(
+      c,
+      options,
+      route.routedModel,
+      input.initiator,
+      input.appliedEffort,
+    )
+  }
+  return { decision, route, target }
+}
+
 export async function prepareRequestAdmission(
   c: Context,
   options: PrepareRequestAdmissionOptions,
@@ -474,109 +824,100 @@ async function prepareRequestAdmissionImpl(
   // usage attribution and `modelRequested` in the trace all keep showing).
   // Group logic is best effort — a group that cannot answer leaves the request
   // exactly as a literal model name would.
+  //
+  // The group is read without asking its classifier anything. A classifier
+  // call is a real upstream request, so the protected-route guard and manual
+  // approval run first; the intent (and `effort: auto`) questions are asked
+  // only afterwards. Groups without a classifier are unaffected.
+  const groupInput: GroupDecisionInput = {
+    model: options.model,
+    messageContent: options.messageContent,
+    sessionPayload: options.sessionPayload,
+    reasoningEffort: options.reasoningEffort,
+    inferredInitiator: options.inferredInitiator,
+    initiator,
+    compact: options.compact,
+    turnKey: extractSessionTurn(options.sessionPayload).turnKey || undefined,
+  }
+  let groupPlan: GroupDecisionPlan | undefined
   let groupDecision: GroupDecision | undefined
   let groupOverrides: AppliedGroupOverrides | undefined
   let routingGroup: RoutingGroup | null | undefined
   try {
-    groupDecision = await measurePerformanceStage(c, "routingDecisionMs", () =>
-      resolveGroupDecision({
-        model: options.model,
-        messageContent: options.messageContent,
-        sessionPayload: options.sessionPayload,
-        reasoningEffort: options.reasoningEffort,
-        inferredInitiator: options.inferredInitiator,
-        initiator,
-        compact: options.compact,
-        turnKey:
-          extractSessionTurn(options.sessionPayload).turnKey || undefined,
-      }),
+    groupPlan = await measurePerformanceStage(c, "routingDecisionMs", () =>
+      planGroupDecision(groupInput, {}),
     )
+    // Deciding the provisional lead is part of "resolve the group": members
+    // and rules come from stored JSON, so an unvalidated group can throw here.
+    // A broken group is an optimisation that failed, never a failed request.
+    if (groupPlan)
+      groupDecision = decideWithoutIntent(groupPlan, groupInput, {})
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     logger.warn(
       `Routing group resolution failed for "${options.model}": ${message}`,
     )
+    groupPlan = undefined
+    groupDecision = undefined
   }
 
-  if (groupDecision) {
+  const intentPending =
+    groupPlan !== undefined
+    && groupPlan.classifier !== undefined
+    && groupPlan.intents.length > 0
+  // Without a rule intent the provisional lead is final, so admission can tell
+  // whether `effort: auto` will actually ask the classifier. When it will not,
+  // the request keeps the already-selected target and the usual check order.
+  const effortPending =
+    !intentPending
+    && groupDecision !== undefined
+    && groupPlan?.classifier !== undefined
+    && groupPlan.group.effort === "auto"
+    && (groupDecision.effort === undefined
+      || (groupDecision.ruleIndex === undefined
+        && (groupDecision.routing === "smart"
+          || groupDecision.routing === "usage")))
+  const classifierPending = intentPending || effortPending
+
+  if (groupPlan) {
     try {
-      routingGroup = await getRoutingGroup(groupDecision.groupId)
+      routingGroup = await getRoutingGroup(
+        groupDecision?.groupId ?? groupPlan.group.id,
+      )
     } catch {
       // Best effort lookup of the routing group
     }
-
-    patchRequestLog(c, {
-      failoverReason: `routing-group:${groupDecision.groupId}→${groupDecision.member}`,
-      routingGroupId: groupDecision.groupId,
-      routingGroupName: routingGroup?.name || groupDecision.groupId,
-      routingGroupMembers: groupDecision.members,
-      routingGroupSelectedMember: groupDecision.member,
-      routingStrategy: routingGroup?.routing || "order",
-    })
   }
-
-  const routedModel = groupDecision?.model ?? options.model
-
-  const routing = resolveModelRouting(routedModel)
-  const candidates = buildRouteTargets({
-    connectionId: routing.connectionId,
-    legacyProvider: routing.legacyProvider,
-    accountPrefix: routing.accountPrefix,
-    publicModelId: routing.modelId,
-    aliasRestriction: routing.aliasRestriction,
-    endpoint: options.endpoint,
-    compact: options.compact,
-  })
+  // Keep the group fields on the trace even when the guard rejects the request.
+  patchGroupRoutingLog(c, groupDecision, routingGroup)
 
   const sessionIds = extractSessionIds({
     headers: options.sessionHeaders,
     payload: options.sessionPayload,
   })
   const sessionTurn = extractSessionTurn(options.sessionPayload)
+  const targetSession = {
+    sessionId: sessionIds.primaryId || undefined,
+    fallbackSessionId: sessionIds.fallbackId || undefined,
+    turnKey: sessionTurn.turnKey || undefined,
+  }
 
-  // Select without any upstream I/O so the guard can use the actual provider.
-  // When no target exists, still run the guard with an explicit non-Copilot
-  // scope before returning the route diagnostic.
-  const target =
-    groupDecision && groupDecision.members.length > 0 ?
-      selectGroupRouteTarget(groupDecision.members, {
-        routing: groupDecision.routing,
-        groupId: groupDecision.groupId,
-        endpoint: options.endpoint,
-        compact: options.compact,
-        sessionId: sessionIds.primaryId || undefined,
-        fallbackSessionId: sessionIds.fallbackId || undefined,
-        turnKey: sessionTurn.turnKey || undefined,
-        affinityMode: groupDecision.affinity,
-        commitAffinity: false,
-      })
-    : selectRouteTarget(candidates, {
-        sessionId: sessionIds.primaryId || undefined,
-        fallbackSessionId: sessionIds.fallbackId || undefined,
-        turnKey: sessionTurn.turnKey || undefined,
-        commitAffinity: false,
-      })
-  const groupOverrideBaseline =
-    groupDecision ?
-      captureGroupOverrideBaseline(options.sessionPayload)
-    : undefined
-  if (groupDecision && target) {
-    groupDecision = retargetGroupDecision(groupDecision, target)
-    groupOverrides = applyGroupOverrides(
-      options.sessionPayload,
-      groupDecision,
-      {
-        endpoint: options.endpoint,
-        baseline: groupOverrideBaseline,
-      },
-    )
-  }
-  const appliedEffort = groupOverrides?.effort ?? options.reasoningEffort
-  let guardProvider = "unroutable"
-  if (target) {
-    guardProvider =
-      target.protocol === "copilot-native" ? "copilot" : target.protocol
-  }
+  let { routedModel, routing, candidates } = buildAdmissionCandidates(
+    options,
+    groupDecision,
+  )
+  // The guard needs the selected provider. When a classifier is still going to
+  // answer, preview the pick without advancing round-robin; the real selection
+  // then happens once afterwards, exactly as it did before.
+  const previewedDecision = groupDecision
+  let target = selectAdmissionTarget(
+    groupDecision,
+    candidates,
+    options,
+    targetSession,
+    classifierPending,
+  )
+  const guardProvider = guardProviderFor(target)
   try {
     checkProtectedRouteGuard(c, {
       routeKind: options.routeKind,
@@ -585,6 +926,10 @@ async function prepareRequestAdmissionImpl(
       stream: options.stream,
       messageContent: options.messageContent,
       provider: guardProvider,
+      // An intent rule can move the request to another provider, and
+      // `analyzeBehavior` treats Copilot differently. Score the behavior only
+      // once the classifier has picked the final target.
+      deferBehavior: intentPending,
     })
   } catch (error) {
     if (error instanceof Error) {
@@ -604,41 +949,64 @@ async function prepareRequestAdmissionImpl(
     throw error
   }
 
-  if (!target) {
-    const diagnostic = diagnoseRouteFailure(options, routedModel)
-    patchRequestLog(c, {
-      modelRequested: options.model,
-      endpoint: options.endpoint,
-      apiKind: options.endpoint as import("~/lib/log-store").ApiKind,
-      streaming: options.stream,
-      reasoningEffort: appliedEffort,
+  let appliedEffort = options.reasoningEffort
+  if (classifierPending && groupPlan) {
+    const pending = await completePendingClassification({
+      c,
+      options,
+      groupPlan,
+      groupInput,
+      targetSession,
+      routingGroup,
+      decision: previewedDecision,
+      route: { routedModel, routing, candidates },
+      target,
+      intentPending,
       initiator,
-      outcome: "failed",
-      error: diagnostic.message,
-      // 与线上错误体一致:额度耗尽按限流报告。
-      errorType:
-        diagnostic.reason === "quota" ? "rate_limit_exceeded" : "no_route",
-      upstreamStatus: 429,
-      retryAfterMs: diagnostic.retryAfterSeconds * 1000 || undefined,
-      failoverReason: diagnostic.reason,
-      diagnosticError: {
-        origin: "admission",
-        kind: diagnostic.reason === "quota" ? "quota_exhausted" : "no_route",
-        message: diagnostic.message,
-        status: 429,
-        retryAfterMs: diagnostic.retryAfterSeconds * 1000 || undefined,
-      },
+      appliedEffort,
     })
-    throw new HTTPError(
-      diagnostic.message,
-      buildRateLimitResponse(options.endpoint, diagnostic),
-      buildRateLimitResponseBody(options.endpoint, diagnostic),
-    )
+    groupDecision = pending.decision
+    ;({ routedModel, routing, candidates } = pending.route)
+    target = pending.target
+  } else {
+    if (!target)
+      rejectNoRoute(c, options, routedModel, initiator, appliedEffort)
+    if (state.manualApprove) {
+      await awaitApproval()
+    }
+  }
+  // Every branch above either selected a target or rejected the request.
+  if (!target) rejectNoRoute(c, options, routedModel, initiator, appliedEffort)
+
+  // The classifier may have changed which provider leads; finish the guard's
+  // provider-dependent behavior score now that the final target is known.
+  if (intentPending) {
+    checkDeferredProtectedRouteGuardBehavior(c, {
+      routeKind: options.routeKind,
+      model: options.model,
+      maxTokens: options.maxTokens,
+      stream: options.stream,
+      messageContent: options.messageContent,
+      provider: guardProviderFor(target),
+    })
   }
 
-  if (state.manualApprove) {
-    await awaitApproval()
+  const groupOverrideBaseline =
+    groupDecision ?
+      captureGroupOverrideBaseline(options.sessionPayload)
+    : undefined
+  if (groupDecision && target) {
+    groupDecision = retargetGroupDecision(groupDecision, target)
+    groupOverrides = applyGroupOverrides(
+      options.sessionPayload,
+      groupDecision,
+      {
+        endpoint: options.endpoint,
+        baseline: groupOverrideBaseline,
+      },
+    )
   }
+  appliedEffort = groupOverrides?.effort ?? options.reasoningEffort
 
   // Commit the previewed target only after all admission checks pass.
   commitAdmissionAffinity(

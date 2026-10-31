@@ -1,9 +1,30 @@
 const REDACTED = "[redacted]"
 const MAX_DEPTH = 64
 
+/**
+ * Exact field names that are credentials/media even though they do not end in
+ * a credential word: plurals (`tokens`, `apiKeys`, `secrets`, `passwords`,
+ * `cookies`) and the bare `session` / `session_id` / `image` / `data` fields
+ * older log redaction already treated as secret. Exact matching keeps ordinary
+ * fields that merely contain those words (`metadata`, `prompt_tokens`,
+ * `max_tokens`, `image_url`) intact.
+ */
+const EXACT_SECRET_FIELDS = new Set([
+  "tokens",
+  "apikeys",
+  "secrets",
+  "passwords",
+  "cookies",
+  "session",
+  "sessionid",
+  "image",
+  "data",
+])
+
 /** Match credentials without confusing token counters or ordinary metadata. */
 export function isDumpSecretField(key: string): boolean {
   const normalized = key.toLowerCase().replaceAll(/[^a-z0-9]/g, "")
+  if (EXACT_SECRET_FIELDS.has(normalized)) return true
   return /authorization$|cookie$|password$|passwd$|token$|apikey$|authkey$|subscriptionkey$|accesskey(?:id)?$|secret$|secretkey$|privatekey$|credentials?$|^x(?:amz|goog)signature$/.test(
     normalized,
   )
@@ -53,6 +74,74 @@ function parseJson(input: string, memo?: Map<string, unknown>): unknown {
     memo.set(input, parsed)
   }
   return parsed
+}
+
+/**
+ * How a `cookie` occurrence is treated. A header line (`Cookie: …`) owns the
+ * whole line, so everything after it must go; a `cookie=` field inside a
+ * single-line snippet only owns its own value, and the rest of the snippet is
+ * still worth keeping for diagnosis.
+ */
+type CookieRedaction = "line" | "value"
+
+/**
+ * Value-level credential passes, shared by body/header text and diagnostic
+ * snippets. Field values recurse through the same passes so a nested
+ * `password=…` inside a quoted value is caught too.
+ */
+function redactSecretValues(
+  input: string,
+  depth: number,
+  cookie: CookieRedaction,
+): string {
+  if (depth > MAX_DEPTH) return "[omitted: nesting limit]"
+  let result = input
+    .replaceAll(
+      /\b(Bearer|Basic|Cloud-IDE-JWT)\s+[^\s,;"'<>]+/gi,
+      "$1 [redacted]",
+    )
+    .replaceAll(
+      /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
+      REDACTED,
+    )
+    .replaceAll(
+      /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{12,}|github_pat_[A-Za-z0-9_]{12,})\b/g,
+      REDACTED,
+    )
+  // No key/value or URL userinfo can match without these delimiters.
+  // Avoid scanning megabytes of ordinary prose with backtracking patterns.
+  if (result.includes(":") || result.includes("=")) {
+    result = result.replaceAll(
+      /\b([a-z][a-z0-9_-]*)(["']?\s*[=:]\s*)("[^"\n]*(?:"|$)|'[^'\n]*(?:'|$)|[^\s,;&"'<>]+)/gi,
+      (_match: string, key: string, separator: string, value: string) =>
+        isDumpSecretField(key) ?
+          `${key}${separator}${REDACTED}`
+        : `${key}${separator}${redactSecretValues(value, depth + 1, cookie)}`,
+    )
+  }
+  result =
+    cookie === "line" ?
+      result.replaceAll(
+        /\b((?:set-)?cookie\s*[:=]\s*)[^\r\n]*/gi,
+        "$1[redacted]",
+      )
+    : result.replaceAll(/\b((?:set-)?cookie\s*:\s*)[^\r\n]*/gi, "$1[redacted]")
+  result = result
+    .replaceAll(
+      /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
+      REDACTED,
+    )
+    .replaceAll(
+      /data:[^\s,;"'<>]+(?:;[^,\s"'<>]*)?,[^\s"'<>]+/gi,
+      "[redacted media]",
+    )
+  if (result.includes("@") && /https?:\/\//i.test(result)) {
+    result = result.replaceAll(
+      /(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi,
+      "$1[redacted]@",
+    )
+  }
+  return result.replaceAll(/([?&]key=)[^&\s"'<>]+/gi, "$1[redacted]")
 }
 
 /** One scope shares known secrets between headers, body and error echoes. */
@@ -119,47 +208,7 @@ export function createDumpSanitizer(inputs: ReadonlyArray<string>) {
     let result = input
     for (const secret of currentSecrets())
       result = result.replaceAll(secret, REDACTED)
-    result = result
-      .replaceAll(
-        /\b(Bearer|Basic|Cloud-IDE-JWT)\s+[^\s,;"'<>]+/gi,
-        "$1 [redacted]",
-      )
-      .replaceAll(
-        /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g,
-        REDACTED,
-      )
-      .replaceAll(
-        /\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{12,}|github_pat_[A-Za-z0-9_]{12,})\b/g,
-        REDACTED,
-      )
-    // No key/value or URL userinfo can match without these delimiters.
-    // Avoid scanning megabytes of ordinary prose with backtracking patterns.
-    if (result.includes(":") || result.includes("=")) {
-      result = result.replaceAll(
-        /\b([a-z][a-z0-9_-]*)(["']?\s*[=:]\s*)("[^"\n]*(?:"|$)|'[^'\n]*(?:'|$)|[^\s,;&"'<>]+)/gi,
-        (_match: string, key: string, separator: string, value: string) =>
-          isDumpSecretField(key) ?
-            `${key}${separator}${REDACTED}`
-          : `${key}${separator}${text(value, depth + 1)}`,
-      )
-    }
-    result = result
-      .replaceAll(/\b((?:set-)?cookie\s*[:=]\s*)[^\r\n]*/gi, "$1[redacted]")
-      .replaceAll(
-        /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
-        REDACTED,
-      )
-      .replaceAll(
-        /data:[^\s,;"'<>]+(?:;[^,\s"'<>]*)?,[^\s"'<>]+/gi,
-        "[redacted media]",
-      )
-    if (result.includes("@") && /https?:\/\//i.test(result)) {
-      result = result.replaceAll(
-        /(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi,
-        "$1[redacted]@",
-      )
-    }
-    return result.replaceAll(/([?&]key=)[^&\s"'<>]+/gi, "$1[redacted]")
+    return redactSecretValues(result, depth, "line")
   }
 
   function sanitize(value: unknown, depth = 0): unknown {
@@ -198,5 +247,20 @@ export function createDumpSanitizer(inputs: ReadonlyArray<string>) {
     return parsed === undefined ? text(input) : JSON.stringify(sanitize(parsed))
   }
 
-  return { json, error, text, addSecrets }
+  /**
+   * Sanitize one diagnostic snippet (an error message, not a whole body). JSON
+   * keeps its shape with secret fields redacted; plain text gets the same
+   * value-level passes as `text`, except that a `cookie=` field redacts only
+   * its own value so the rest of the snippet stays diagnosable.
+   */
+  function snippet(input: string): string {
+    const parsed = parseJson(input, memo)
+    if (parsed !== undefined) return JSON.stringify(sanitize(parsed))
+    let result = input
+    for (const secret of currentSecrets())
+      result = result.replaceAll(secret, REDACTED)
+    return redactSecretValues(result, 0, "value")
+  }
+
+  return { json, error, text, snippet, addSecrets }
 }

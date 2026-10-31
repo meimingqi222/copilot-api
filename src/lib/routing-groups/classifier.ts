@@ -55,9 +55,9 @@ export function hasIntentClassifier(): boolean {
  * Install the default classifier, importing it on first use.
  *
  * The import is dynamic on purpose: `./classifier-default` reaches into the
- * route-target and protocol adapter layers, and this module sits on the request
- * path of every admission. A failure to load means there is simply no
- * classifier, which is the state this slot starts in.
+ * route-target, protocol adapter and dispatch layers, and this module sits on
+ * the request path of every admission. A failure to load means there is simply
+ * no classifier, which is the state this slot starts in.
  */
 async function ensureDefaultClassifier(): Promise<void> {
   if (classifier) return

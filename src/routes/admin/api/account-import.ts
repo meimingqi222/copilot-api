@@ -20,6 +20,7 @@ import {
   removeProviderConnection,
   upsertProviderConnection,
 } from "~/lib/provider-connections"
+import { PROVIDER_METADATA } from "~/lib/provider-metadata"
 import { refreshQuotaForConnection } from "~/lib/quota/scheduler"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { readJsonBody } from "~/lib/request-body"
@@ -83,57 +84,6 @@ function baseAccountFields(
   }
 }
 
-function buildCopilotAccount(
-  raw: ImportAccountPayload,
-  label: string,
-): BuildResult {
-  const githubToken = credentialString(raw, "githubToken")
-  if (!githubToken) {
-    return { error: "Missing githubToken in credentials." }
-  }
-  return {
-    input: {
-      ...baseAccountFields(raw, label, "copilot"),
-      credentials: { githubToken },
-      settings: raw.settings ?? {},
-    },
-  }
-}
-
-function buildCodebuffAccount(
-  raw: ImportAccountPayload,
-  label: string,
-): BuildResult {
-  const authToken = credentialString(raw, "authToken")
-  if (!authToken) {
-    return { error: "Missing authToken in credentials." }
-  }
-  return {
-    input: {
-      ...baseAccountFields(raw, label, "codebuff"),
-      credentials: { authToken },
-      settings: raw.settings ?? {},
-    },
-  }
-}
-
-function buildWindsurfAccount(
-  raw: ImportAccountPayload,
-  label: string,
-): BuildResult {
-  const apiKey = credentialString(raw, "apiKey")
-  if (!apiKey) {
-    return { error: "Missing apiKey in credentials." }
-  }
-  return {
-    input: {
-      ...baseAccountFields(raw, label, "windsurf"),
-      credentials: { apiKey },
-      settings: raw.settings ?? {},
-    },
-  }
-}
-
 function buildMimoAccount(
   raw: ImportAccountPayload,
   label: string,
@@ -162,33 +112,6 @@ function buildMimoAccount(
     input: {
       ...baseAccountFields(raw, label, "mimo-aistudio"),
       credentials: { serviceToken, xiaomichatbotPh },
-      settings: raw.settings ?? {},
-    },
-  }
-}
-
-function buildCodebuddyAccount(
-  raw: ImportAccountPayload,
-  label: string,
-  provider: "codebuddy" | "codebuddy-cn",
-): BuildResult {
-  const accessToken = credentialString(raw, "accessToken")
-  if (!accessToken) {
-    return { error: "Missing accessToken in credentials." }
-  }
-  const refreshToken = credentialString(raw, "refreshToken")
-  const expiresAt =
-    typeof raw.credentials?.expiresAt === "number" ?
-      raw.credentials.expiresAt
-    : undefined
-  return {
-    input: {
-      ...baseAccountFields(raw, label, provider),
-      credentials: {
-        accessToken,
-        ...(refreshToken ? { refreshToken } : {}),
-        ...(expiresAt ? { expiresAt } : {}),
-      },
       settings: raw.settings ?? {},
     },
   }
@@ -228,58 +151,86 @@ function buildLobsteraiAccount(
   }
 }
 
+function buildAistudioAccount(
+  raw: ImportAccountPayload,
+  label: string,
+): BuildResult {
+  try {
+    return {
+      input: {
+        ...baseAccountFields(raw, label, "aistudio"),
+        credentials: {
+          cookie: cookieHeader(
+            parseCookieHeader(credentialString(raw, "cookie") ?? ""),
+          ),
+        },
+        settings: raw.settings ?? {},
+      },
+    }
+  } catch (error) {
+    return {
+      error:
+        error instanceof Error ? error.message : "Invalid AI Studio Cookie.",
+    }
+  }
+}
+
+/**
+ * Deserialize a non-OAuth account from the provider descriptor: the primary
+ * credential plus the context keys it declares. Providers whose import shape
+ * needs legacy fallbacks or normalization keep a dedicated builder below.
+ */
+function buildDescriptorAccount(
+  raw: ImportAccountPayload,
+  label: string,
+  provider: ProviderId,
+): BuildResult {
+  const schema = PROVIDER_METADATA[provider].credentials
+  if (!schema) {
+    return { error: `Unsupported provider: ${provider}.` }
+  }
+  const primary = credentialString(raw, schema.primaryKey)
+  if (!primary) {
+    return { error: `Missing ${schema.primaryKey} in credentials.` }
+  }
+  const credentials: Record<string, unknown> = {
+    [schema.primaryKey]: primary,
+  }
+  for (const key of schema.contextStringKeys ?? []) {
+    const value = credentialString(raw, key)
+    if (value) credentials[key] = value
+  }
+  for (const key of schema.contextValueKeys ?? []) {
+    const value = raw.credentials?.[key]
+    if (typeof value === "number" && value) credentials[key] = value
+  }
+  return {
+    input: {
+      ...baseAccountFields(raw, label, provider),
+      credentials,
+      settings: raw.settings ?? {},
+    },
+  }
+}
+
+type AccountBuilder = (raw: ImportAccountPayload, label: string) => BuildResult
+
+/** Provider-specific import shapes that the descriptor cannot express. */
+const SPECIAL_PROVIDER_BUILDERS: Partial<Record<ProviderId, AccountBuilder>> = {
+  aistudio: buildAistudioAccount,
+  "mimo-aistudio": buildMimoAccount,
+  lobsterai: buildLobsteraiAccount,
+}
+
 /** Dispatch to the provider-specific builder for a non-OAuth import row. */
 function buildProviderAccount(
   raw: ImportAccountPayload,
   label: string,
   provider: ProviderId,
 ): BuildResult {
-  switch (provider) {
-    case "copilot": {
-      return buildCopilotAccount(raw, label)
-    }
-    case "codebuff": {
-      return buildCodebuffAccount(raw, label)
-    }
-    case "windsurf": {
-      return buildWindsurfAccount(raw, label)
-    }
-    case "aistudio": {
-      try {
-        return {
-          input: {
-            ...baseAccountFields(raw, label, provider),
-            credentials: {
-              cookie: cookieHeader(
-                parseCookieHeader(credentialString(raw, "cookie") ?? ""),
-              ),
-            },
-            settings: raw.settings ?? {},
-          },
-        }
-      } catch (error) {
-        return {
-          error:
-            error instanceof Error ?
-              error.message
-            : "Invalid AI Studio Cookie.",
-        }
-      }
-    }
-    case "mimo-aistudio": {
-      return buildMimoAccount(raw, label)
-    }
-    case "codebuddy":
-    case "codebuddy-cn": {
-      return buildCodebuddyAccount(raw, label, provider)
-    }
-    case "lobsterai": {
-      return buildLobsteraiAccount(raw, label)
-    }
-    default: {
-      return { error: `Unsupported provider: ${provider}.` }
-    }
-  }
+  const special = SPECIAL_PROVIDER_BUILDERS[provider]
+  if (special) return special(raw, label)
+  return buildDescriptorAccount(raw, label, provider)
 }
 
 /**
@@ -334,6 +285,29 @@ function initializeOAuthAccount(conn: ProviderConnection, label: string): void {
   }
 }
 
+/**
+ * Read the provider-specific credential keys declared by the descriptor, so a
+ * newly added OAuth provider survives export/import without another hardcoded
+ * key list here. The OAuth generic keys stay in the caller.
+ */
+function pickDescriptorCredentialFields(
+  raw: ImportAccountPayload,
+  provider: ProviderId,
+  pickString: (key: string) => string | undefined,
+): Record<string, unknown> {
+  const schema = PROVIDER_METADATA[provider].credentials
+  const fields: Record<string, unknown> = {}
+  for (const key of schema?.contextStringKeys ?? []) {
+    fields[key] = pickString(key)
+  }
+  for (const key of schema?.contextValueKeys ?? []) {
+    const value = raw.credentials?.[key]
+    fields[key] =
+      typeof value === "number" || typeof value === "string" ? value : undefined
+  }
+  return fields
+}
+
 function buildOAuthAccountFromImportPayload(
   raw: ImportAccountPayload,
   label: string,
@@ -381,23 +355,8 @@ function buildOAuthAccountFromImportPayload(
       accountId: pickCredentialString("accountId"),
       projectId: pickCredentialString("projectId"),
       deviceId: pickCredentialString("deviceId"),
-      ...(provider === "zcode" ?
-        {
-          // ZCode 会话 JWT（Start Plan / 限时套餐领取凭证）。导出侧经
-          // contextStringKeys 落 credentials.zcodeJwt，这里接回来。
-          zcodeJwt: pickCredentialString("zcodeJwt"),
-        }
-      : {}),
-      ...(provider === "trae-cn" ?
-        {
-          clientId: pickCredentialString("clientId"),
-          machineId: pickCredentialString("machineId"),
-          apiHost: pickCredentialString("apiHost"),
-          devicePublicKey: pickCredentialString("devicePublicKey"),
-          devicePrivateKey: pickCredentialString("devicePrivateKey"),
-        }
-      : {}),
       email: pickCredentialString("email"),
+      ...pickDescriptorCredentialFields(raw, provider, pickCredentialString),
     },
     settings: {
       baseUrl: pickSettingString("baseUrl"),

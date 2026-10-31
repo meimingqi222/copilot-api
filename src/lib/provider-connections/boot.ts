@@ -16,6 +16,7 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 import { logger } from "~/lib/logger"
 import { PATHS } from "~/lib/paths"
 import {
+  ensureConnectionMetadata,
   initializeProviderConnections,
   listProviderConnections,
   managedConnectionFromInput,
@@ -29,6 +30,7 @@ import {
   cancelAllOAuthRefreshTimers,
   scheduleOAuthRefreshForAllConnections,
 } from "~/services/oauth/refresh-scheduler"
+import { qoderSiteForConnection } from "~/services/qoder/endpoints"
 
 const bootMutex = new Mutex()
 
@@ -50,6 +52,9 @@ export async function initializeManagedConnections(): Promise<void> {
     // 否则历史用量会被固化成错误的 provider。
     await repairCodebuddyCnConnections()
     await repairCodebuddyIntlConnections()
+    // 存量 qoder 连接修复：qoder / qoder-cn 共用 qoder-native 协议，旧连接
+    // metadata.provider 为空时协议反查只能得到后注册的 qoder-cn。
+    await repairQoderProviderMetadata()
 
     logLoadedConnections()
 
@@ -231,6 +236,37 @@ async function repairCodebuddyIntlConnections(): Promise<void> {
   logger.info(
     `Migrated ${repaired.length} CodeBuddy intl connection(s) to workbuddy.ai domain: ${repaired.join(", ")}`,
   )
+}
+
+/**
+ * 一次性修复：qoder / qoder-cn 共用 qoder-native 协议，协议反查只能得到
+ * 后注册的 qoder-cn。旧连接没有 metadata.provider 时会被误判成另一个站点：
+ * OAuth 身份判重（findConnectionByOAuthIdentity）匹配不到同一账号，重登会
+ * 生成第二条连接；两份 rotating refresh token 各自续期会互相作废。
+ *
+ * 站点归属按连接自己的 baseUrl 推断（qoderSiteForConnection），与刷新、
+ * 配额和推理路径使用同一个推断，避免只修了其中一处。
+ */
+async function repairQoderProviderMetadata(): Promise<void> {
+  const repaired: Array<string> = []
+  for (const conn of listProviderConnections()) {
+    if (conn.protocol !== "qoder-native") continue
+    if (readDeclaredProvider(conn) !== undefined) continue
+    const provider = qoderSiteForConnection(conn).id
+    ensureConnectionMetadata(conn).provider = provider
+    repaired.push(`${conn.name} → ${provider}`)
+  }
+  if (repaired.length === 0) return
+  await saveProviderConnections(listProviderConnections())
+  logger.info(
+    `Backfilled provider metadata for ${repaired.length} Qoder connection(s): ${repaired.join(", ")}`,
+  )
+}
+
+/** The provider a connection already declares, or undefined for legacy rows. */
+function readDeclaredProvider(conn: ProviderConnection): string | undefined {
+  const meta = conn.metadata as Record<string, unknown> | undefined
+  return meta && typeof meta.provider === "string" ? meta.provider : undefined
 }
 
 function logLoadedConnections(): void {

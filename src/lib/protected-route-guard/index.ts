@@ -6,7 +6,7 @@ import { HTTPError } from "~/lib/error"
 import { getProtectedRouteKind } from "~/lib/protected-routes"
 import { getClientIp } from "~/lib/utils"
 
-import type { GuardInput } from "./types"
+import type { GuardInput, PrincipalBehavior } from "./types"
 
 import { enforceTokenBucket } from "./bucket"
 import {
@@ -92,13 +92,7 @@ export function checkProtectedRouteGuard(
 
   state.recentRequests.push(now)
 
-  const contentHash =
-    input.messageContent ?
-      createHash("sha256")
-        .update(input.messageContent)
-        .digest("hex")
-        .slice(0, 16)
-    : undefined
+  const contentHash = contentHashOf(input.messageContent)
 
   state.events.push({
     at: now,
@@ -108,10 +102,76 @@ export function checkProtectedRouteGuard(
     contentHash,
   })
 
+  let behavior: PrincipalBehavior | undefined
+  if (input.deferBehavior !== true) {
+    behavior = analyzeBehavior(state, now, {
+      userAgent: c.req.header("user-agent"),
+      trustedClient,
+      currentContentHash: contentHash,
+      currentModel: input.model,
+      provider: input.provider,
+    })
+    c.set("protectedRouteGuardBehavior", behavior)
+
+    enforceBehaviorBlock({
+      c,
+      principal,
+      state,
+      routeKind,
+      guardInput: { ...input, trustedClient },
+      now,
+      behavior,
+    })
+  }
+
+  enforceProbeDetection({
+    c,
+    principal,
+    state,
+    routeKind,
+    guardInput: { ...input, trustedClient },
+    now,
+  })
+
+  if (behavior) emitSuspiciousWarning(c, { principal, state, behavior })
+}
+
+/**
+ * Finish the provider-dependent half of the guard after a deferred decision.
+ *
+ * `analyzeBehavior` only runs its automation signal for Copilot routes, so
+ * admission cannot score a request before a routing-group classifier has
+ * picked the final provider. The provider-independent gates (token bucket,
+ * active block, request accounting, probe detection) already ran; this scores
+ * the behavior against the provider the request actually routes to, so a
+ * preview target can neither hide an automated Copilot request nor flag a
+ * non-Copilot one.
+ */
+export function checkDeferredProtectedRouteGuardBehavior(
+  c: Context,
+  input: GuardInput = {},
+): void {
+  const routeKind = input.routeKind ?? getProtectedRouteKind(c.req.path)
+  if (!routeKind) return
+  const clientIp = getClientIpFromRequest(c)
+  if (
+    process.env.NODE_ENV !== "test"
+    && (clientIp === "127.0.0.1" || clientIp === "::1")
+  ) {
+    return
+  }
+
+  const principal = c.get("protectedRouteGuardPrincipal")
+  const state = principal ? guardState.get(principal) : undefined
+  if (!principal || !state) return
+
+  const now = Date.now()
+  const userAgent = c.req.header("user-agent")
+  const trustedClient = input.trustedClient ?? isTrustedClient(userAgent)
   const behavior = analyzeBehavior(state, now, {
-    userAgent: c.req.header("user-agent"),
+    userAgent,
     trustedClient,
-    currentContentHash: contentHash,
+    currentContentHash: contentHashOf(input.messageContent),
     currentModel: input.model,
     provider: input.provider,
   })
@@ -126,17 +186,13 @@ export function checkProtectedRouteGuard(
     now,
     behavior,
   })
-
-  enforceProbeDetection({
-    c,
-    principal,
-    state,
-    routeKind,
-    guardInput: { ...input, trustedClient },
-    now,
-  })
-
   emitSuspiciousWarning(c, { principal, state, behavior })
+}
+
+function contentHashOf(messageContent: string | undefined): string | undefined {
+  return messageContent ?
+      createHash("sha256").update(messageContent).digest("hex").slice(0, 16)
+    : undefined
 }
 
 export function reportUpstream429(

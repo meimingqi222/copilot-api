@@ -97,35 +97,40 @@ export async function handleAnthropicViaConnection(
     applyClaudeLimitHeaders(c, result.identity)
     c.set("model", anthropicPayload.model)
     patchRequestLog(c, { streaming: false })
-    if (!isAsyncIterable(result.response)) {
-      if (
-        isDirectAnthropicResponse(
-          result.response as unknown as AnthropicResponse,
-        )
-      ) {
-        const elapsed = Date.now() - nonStreamStart
-        const response = result.response as unknown as AnthropicResponse
-        const tps =
-          elapsed > 0 ? response.usage.output_tokens / (elapsed / 1000) : 0
-        recordAnthropicUsage(c, result.accountId, response, tps)
-      } else {
-        // 上游返回了非 Anthropic 形状:用本地估算记一行,与其他端点兜底一致。
-        const estimatedInputTokens =
-          await estimateAnthropicInputTokens(anthropicPayload)
-        recordUsage({
-          c,
-          accountId: result.accountId,
-          model: anthropicPayload.model,
-          promptTokens: estimatedInputTokens,
-          completionTokens: 0,
-          totalTokens: estimatedInputTokens,
-          tps: 0,
-          streaming: false,
-          finishReason: "usage_missing",
-        })
-      }
-      return c.json(result.response as unknown as AnthropicResponse)
+    if (isAsyncIterable(result.response)) {
+      // The client asked for one JSON body, but the target answered with a
+      // stream. Release the unread stream (it holds the credential's in-flight
+      // lease) and fail explicitly: falling through to the SSE path below
+      // would dispatch the same payload a second time and leak the first
+      // stream.
+      await releaseUnreadStream(result.response, signal)
+      throw new Error("Expected non-streaming response for non-stream request")
     }
+    if (
+      isDirectAnthropicResponse(result.response as unknown as AnthropicResponse)
+    ) {
+      const elapsed = Date.now() - nonStreamStart
+      const response = result.response as unknown as AnthropicResponse
+      const tps =
+        elapsed > 0 ? response.usage.output_tokens / (elapsed / 1000) : 0
+      recordAnthropicUsage(c, result.accountId, response, tps)
+    } else {
+      // 上游返回了非 Anthropic 形状:用本地估算记一行,与其他端点兜底一致。
+      const estimatedInputTokens =
+        await estimateAnthropicInputTokens(anthropicPayload)
+      recordUsage({
+        c,
+        accountId: result.accountId,
+        model: anthropicPayload.model,
+        promptTokens: estimatedInputTokens,
+        completionTokens: 0,
+        totalTokens: estimatedInputTokens,
+        tps: 0,
+        streaming: false,
+        finishReason: "usage_missing",
+      })
+    }
+    return c.json(result.response as unknown as AnthropicResponse)
   }
 
   // Phase 1: dispatch BEFORE the downstream SSE response exists (same
@@ -256,6 +261,72 @@ export async function handleAnthropicViaConnection(
     },
     { onFinally: () => finishRequestLog(c) },
   )
+}
+
+/**
+ * Releases an upstream stream that nobody is going to read.
+ *
+ * `wrapLeaseStream` (dispatch/concurrency.ts) releases the credential's
+ * in-flight slot from a `finally`, but an async generator that has never
+ * started does not run its body — or the `finally` — on `.return()`. Pull one
+ * frame first, then close: that runs the `finally` chain (and cancels the
+ * upstream body) instead of leaving the slot held for the process lifetime.
+ *
+ * The first frame is bounded: an upstream that accepts the request and then
+ * never writes would otherwise hold this non-streaming response open forever.
+ * On timeout the stream is closed anyway; a generator stuck in its first
+ * `next()` cannot be interrupted, so the lease may outlive this attempt, but
+ * the client still gets its explicit error instead of a hung request.
+ */
+const RELEASE_UNREAD_STREAM_TIMEOUT_MS = 5_000
+
+async function releaseUnreadStream(
+  stream: AsyncIterable<unknown>,
+  signal?: AbortSignal,
+): Promise<void> {
+  const iterator = stream[Symbol.asyncIterator]()
+  const timeout = AbortSignal.timeout(RELEASE_UNREAD_STREAM_TIMEOUT_MS)
+  const guard = signal ? AbortSignal.any([signal, timeout]) : timeout
+  try {
+    await raceWithAbort(iterator.next(), guard)
+  } catch (error) {
+    // The first frame can already be the upstream failure, or the release
+    // deadline passed. The caller is about to answer with its own explicit
+    // error, so only record this one.
+    logger.debug("Upstream stream failed before release:", error)
+  }
+  try {
+    await raceWithAbort(iterator.return?.(), timeout)
+  } catch (error) {
+    logger.warn("Failed to release an unread upstream stream:", error)
+  }
+}
+
+/** Settle with `promise`, or reject as soon as `signal` aborts. */
+function raceWithAbort<T>(
+  promise: Promise<T> | undefined,
+  signal: AbortSignal,
+): Promise<T | undefined> {
+  if (!promise) return Promise.resolve(undefined)
+  if (signal.aborted) {
+    // Do not leave the iterator promise unhandled when we stop waiting.
+    promise.catch(() => undefined)
+    return Promise.reject(signal.reason)
+  }
+  return new Promise<T | undefined>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason)
+    signal.addEventListener("abort", onAbort, { once: true })
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort)
+        resolve(value)
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort)
+        reject(error)
+      },
+    )
+  })
 }
 
 /** Dispatch failure before any bytes were committed to the client (both the

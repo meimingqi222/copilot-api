@@ -59,6 +59,7 @@ function pickWeighted<T>(
   items: Array<T>,
   weightOf: (item: T) => number,
   cursorKey: string,
+  advance = true,
 ): T {
   if (items.length === 0) {
     throw new Error("pickWeighted: items array is empty")
@@ -70,7 +71,7 @@ function pickWeighted<T>(
     for (let i = 0; i < w; i++) expanded.push(item)
   }
   const cursor = (rrState.cursors.get(cursorKey) ?? 0) % expanded.length
-  rrState.cursors.set(cursorKey, cursor + 1)
+  if (advance) rrState.cursors.set(cursorKey, cursor + 1)
   return expanded[cursor]
 }
 
@@ -201,6 +202,13 @@ interface SelectRouteTargetOptions {
    * stickiness is used.
    */
   affinityMode?: AffinityMode
+  /**
+   * When false, a round-robin selection previews the pick without advancing
+   * its cursor. Used when a caller needs the target the current state would
+   * choose before it has finished deciding what to route (the pick must not
+   * consume a turn twice). Defaults to true.
+   */
+  advanceRoundRobin?: boolean
 }
 
 /**
@@ -325,7 +333,12 @@ export function selectRouteTarget(
     }
   }
 
-  const chosen = pickFromPriorityPool(topConn, minConnPrio, strategy)
+  const chosen = pickFromPriorityPool(
+    topConn,
+    minConnPrio,
+    strategy,
+    options.advanceRoundRobin !== false,
+  )
 
   // Record affinity binding for this session
   if (options.commitAffinity !== false && affinityOn && options.sessionId) {
@@ -350,6 +363,7 @@ function pickFromPriorityPool(
   topConn: Array<RouteTarget>,
   minConnPrio: number,
   strategy: ReturnType<typeof effectiveStrategyFor>,
+  advanceRoundRobin: boolean,
 ): RouteTarget {
   if (strategy === "fill-first") {
     return pickFillFirst(topConn)
@@ -375,6 +389,7 @@ function pickFromPriorityPool(
     distinctConns,
     (t) => t.connectionWeight,
     rrCursorKey("conn", `${minConnPrio}`),
+    advanceRoundRobin,
   )
 
   const credPool = topConn.filter(
@@ -386,6 +401,7 @@ function pickFromPriorityPool(
     topCreds,
     (t) => t.credentialWeight,
     rrCursorKey("cred", `${chosenConn.connectionId}:${minCredPrio}`),
+    advanceRoundRobin,
   )
 }
 

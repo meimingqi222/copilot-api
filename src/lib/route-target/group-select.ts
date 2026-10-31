@@ -35,6 +35,12 @@ export interface GroupSelectOptions {
   commitAffinity?: boolean
   /** The group's affinity override, when it names one. */
   affinityMode?: AffinityMode
+  /**
+   * Preview a round-robin pick without advancing its cursor. Admission uses
+   * this to learn the provider a guard sees before a classifier has answered;
+   * the real selection happens once afterwards.
+   */
+  advanceRoundRobin?: boolean
 }
 
 /** Every candidate a group's members resolve to, in member order. */
@@ -95,6 +101,7 @@ export function selectGroupRouteTarget(
         rebindAffinity: options.rebindAffinity,
         commitAffinity: options.commitAffinity,
         affinityMode: options.affinityMode,
+        advanceRoundRobin: options.advanceRoundRobin,
       },
     )
     if (target) return target

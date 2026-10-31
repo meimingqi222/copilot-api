@@ -19,13 +19,18 @@
  */
 
 import type { ProviderId } from "~/lib/provider-config"
+import type { RequestAdmission } from "~/lib/request-admission"
 import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
 
+import { LocalPayloadUnsupportedError } from "~/lib/error"
 import { getProviderConnection } from "~/lib/provider-connections"
 import { findEffectiveCredential } from "~/lib/provider-connections/anonymous-credential"
 import { buildRouteTargets, selectRouteTarget } from "~/lib/route-target"
+import { identityFromAdmission, recordAccountUsage } from "~/lib/usage"
+import { toPricingRound } from "~/lib/usage-pricing-rounds"
+import { executeWithFailover } from "~/services/dispatch/failover"
+import { resolveDispatchModel } from "~/services/dispatch/shared"
 import { initializeProtocolAdapters } from "~/services/protocols"
-import { getProtocolAdapter } from "~/services/protocols/registry"
 
 import {
   hasIntentClassifier,
@@ -101,14 +106,14 @@ export function intentFromReply(
 }
 
 /**
- * One non-streaming chat completion through the app's own dispatch layer.
+ * One non-streaming chat completion through the app's dispatch layer.
  *
- * Mirrors what the admin model-import helper does: build the candidate targets
- * for `provider/model`, pick one, resolve its connection and credential, and
- * hand the payload to that protocol's adapter. No target — no connection, a
- * disabled credential, an unregistered adapter — is an empty reply, not an
- * error: the caller only ever needs "which intent", and "unknown" is a fine
- * answer.
+ * The classifier asks a model one question, but it must not become a side
+ * channel around dispatch: the call takes the standard path, so its concurrency
+ * lease, pacing, cooldown/failover and usage accounting apply exactly as they
+ * do to a client turn. No target — no connection, a disabled credential, an
+ * unregistered adapter — is an empty reply, not an error: the caller only ever
+ * needs "which intent", and "unknown" is a fine answer.
  */
 async function completeWithModel(
   input: IntentClassifierInput,
@@ -130,12 +135,11 @@ async function completeWithModel(
   const credential = findEffectiveCredential(connection, target.credentialId)
   if (!credential) return ""
 
-  const adapter = getProtocolAdapter(connection.protocol)
-  const createChat = adapter?.createChatCompletions?.bind(adapter)
-  if (!createChat) return ""
-
   const payload: ChatCompletionsPayload = {
-    model: target.upstreamModelId,
+    // Routing identity, not the wire model: failover uses `payload.model` to
+    // find the next candidate. Each attempt rewrites it to the target's
+    // dispatch model below, exactly like the normal dispatch path.
+    model: target.publicModelId || input.model,
     messages: [
       { role: "system", content: classificationPrompt(input.intents) },
       { role: "user", content: input.text },
@@ -146,19 +150,69 @@ async function completeWithModel(
   }
 
   const timeout = AbortSignal.timeout(COMPLETION_TIMEOUT_MS)
-  const result = await createChat({
-    target,
-    connection,
-    credential,
+  const effectiveSignal = signal ? AbortSignal.any([signal, timeout]) : timeout
+  let used: RequestAdmission = { target, connection, credential }
+  const result = await executeWithFailover({
     payload,
-    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    admission: used,
+    routeKind: "chat",
+    logPrefix: "[intent-classifier]",
+    signal: effectiveSignal,
+    execute: (adapter, currentTarget, current) => {
+      used = current
+      const createChat = adapter?.createChatCompletions?.bind(adapter)
+      if (!createChat) {
+        return Promise.reject(
+          new LocalPayloadUnsupportedError(
+            `Protocol "${currentTarget.protocol}" cannot serve chat completions`,
+          ),
+        )
+      }
+      return createChat({
+        target: currentTarget,
+        connection: current.connection,
+        credential: current.credential,
+        // The public alias is what the client asked for; the upstream only
+        // understands the target's model id (renamed models keep a distinct
+        // upstreamId). Failover may land on a different target, so resolve per
+        // attempt.
+        payload: {
+          ...payload,
+          model: resolveDispatchModel(currentTarget, adapter),
+        },
+        signal: effectiveSignal,
+      })
+    },
   })
   if (!("response" in result)) return ""
 
   const response = result.response as {
     choices?: Array<{ message?: { content?: string | null } | null }>
+    usage?: { prompt_tokens?: number; completion_tokens?: number }
   }
+  recordClassifierUsage(used, response.usage)
   return response.choices?.[0]?.message?.content ?? ""
+}
+
+/** Account consumption for the extra upstream call, not another client request. */
+function recordClassifierUsage(
+  admission: RequestAdmission,
+  usage: { prompt_tokens?: number; completion_tokens?: number } | undefined,
+): void {
+  const promptTokens = usage?.prompt_tokens ?? 0
+  const completionTokens = usage?.completion_tokens ?? 0
+  if (promptTokens <= 0 && completionTokens <= 0) return
+  recordAccountUsage({
+    identity: identityFromAdmission(admission),
+    model: admission.target.publicModelId || admission.target.upstreamModelId,
+    rounds: [
+      toPricingRound({
+        source: "reported",
+        inputTokens: promptTokens,
+        outputTokens: completionTokens,
+      }),
+    ],
+  })
 }
 
 /** The completer in force: the test stub when one is installed. */

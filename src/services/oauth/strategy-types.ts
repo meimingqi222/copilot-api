@@ -37,7 +37,11 @@ export function createOAuthConnection(
     weight: 1,
     credentials: [credential],
     models: [],
-    metadata: {},
+    // The constructor knows the provider; record it instead of letting the
+    // lossy protocol reverse lookup guess later. codebuddy / codebuddy-cn and
+    // qoder / qoder-cn share one protocol, so the lookup can only name the
+    // last registration.
+    metadata: { provider, quotaState: "unknown" },
     createdAt: now,
     updatedAt: now,
   }

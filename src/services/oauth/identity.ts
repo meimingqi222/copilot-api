@@ -1,9 +1,9 @@
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import {
+  getConnectionProvider,
   getCredentialContextString,
   listAccountManagedConnections,
-  providerFromProtocol,
 } from "~/lib/provider-connections"
 
 /** The stable identity of an OAuth account: the vendor's account id, and the
@@ -52,7 +52,10 @@ export function findConnectionByOAuthIdentity(
 ): ProviderConnection | undefined {
   if (!identity.accountId && !identity.email) return undefined
   return connections.find((conn) => {
-    if (provider && providerFromProtocol(conn.protocol) !== provider) {
+    // Compare against the provider the connection declares: the protocol
+    // reverse lookup cannot tell codebuddy from codebuddy-cn (or qoder from
+    // qoder-cn), so it would merge the two realms.
+    if (provider && getConnectionProvider(conn) !== provider) {
       return false
     }
     const other = connectionOAuthIdentity(conn)

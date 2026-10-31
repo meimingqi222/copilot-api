@@ -32,13 +32,13 @@ providerConnectionApiRoutes.route("/presets", providerPresetRoutes)
 // 即时模型探测 (不落盘、不建连接)
 providerConnectionApiRoutes.post("/fetch-models", handleFetchModels)
 
-// Export / import (batch) — see provider-connection-io.ts
-providerConnectionApiRoutes.route("/", providerConnectionIoRoutes)
-
 // 守卫:所有 /:id 路由拒绝 account-managed connection(*-native protocol)。
 // 详见 provider-connection-guard.ts。
 // 必须在所有含 /:id 路由的子模块挂载之前注册,才能对它们生效。
 mountConnectionGuard(providerConnectionApiRoutes)
+
+// Export / import (batch) — see provider-connection-io.ts
+providerConnectionApiRoutes.route("/", providerConnectionIoRoutes)
 
 // CRUD (list / create / read / update / delete)
 providerConnectionApiRoutes.route("/", providerConnectionCrudRoutes)
