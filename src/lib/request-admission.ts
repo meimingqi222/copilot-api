@@ -9,6 +9,7 @@ import type {
 import {
   diagnoseRouteFailure,
   describeCandidates,
+  type FailureReason,
   type RouteFailureDiagnostic,
 } from "~/lib/route-diagnostics"
 
@@ -656,6 +657,10 @@ function rejectNoRoute(
   appliedEffort: string | undefined,
 ): never {
   const diagnostic = diagnoseRouteFailure(options, routedModel)
+  const status = noRouteStatus(diagnostic)
+  // No upstream request happened: the log has to say why admission refused,
+  // not pretend an upstream answered with a rate limit.
+  const recoverable = status === 429
   patchRequestLog(c, {
     modelRequested: options.model,
     endpoint: options.endpoint,
@@ -665,18 +670,19 @@ function rejectNoRoute(
     initiator,
     outcome: "failed",
     error: diagnostic.message,
-    // 与线上错误体一致:额度耗尽按限流报告。
-    errorType:
-      diagnostic.reason === "quota" ? "rate_limit_exceeded" : "no_route",
-    upstreamStatus: 429,
+    errorType: noRouteErrorType(diagnostic.reason, false),
+    upstreamStatus: status,
     retryAfterMs: diagnostic.retryAfterSeconds * 1000 || undefined,
     failoverReason: diagnostic.reason,
     diagnosticError: {
       origin: "admission",
       kind: diagnostic.reason === "quota" ? "quota_exhausted" : "no_route",
       message: diagnostic.message,
-      status: 429,
-      retryAfterMs: diagnostic.retryAfterSeconds * 1000 || undefined,
+      status,
+      retryAfterMs:
+        recoverable ?
+          diagnostic.retryAfterSeconds * 1000 || undefined
+        : undefined,
     },
   })
   throw new HTTPError(
@@ -1125,71 +1131,101 @@ async function prepareRequestAdmissionImpl(
 }
 
 /**
- * 按 endpoint 协议构造错误响应体。
+ * 按 endpoint 协议构造无路由的错误响应体。
  *
- * - Anthropic `/v1/messages`: `{ type: "error", error: { type, message } }`,
- *   `type` = `rate_limit_error`。
- *   参考:docs.anthropic.com/en/api/errors
+ * 状态码取决于「还有没有可能成功」，而不只是「上游忙不忙」：
+ *
+ * - `quota` / `cooldown`:还有救，只是要等。报 429 + `Retry-After`。
+ *   额度耗尽本质上也是一种限流：重置时刻写在 header 里,客户端等到那时重试即可。
+ *   若报成 `insufficient_quota`/`billing_error`,Codex 这类客户端会把它当终态
+ *   直接结束本轮,窗口恢复后也不会自动继续。
+ * - `unknown`:模型没有配置在任何一个 provider 上,重试永远不会成功。报 404,
+ *   否则客户端会按限流无限退避一个不存在的模型 id。
+ * - `disabled` / `auth`:路由存在但当前不可用(管理员禁用、账号全部鉴权失败)。
+ *   报 503,让客户端知道是服务端状态而不是请求错。
+ *
+ * - Anthropic `/v1/messages`: `{ type: "error", error: { type, message } }`
  * - OpenAI(`/v1/chat/completions`、`/v1/responses`、`/v1/embeddings`):
- *   `{ error: { message, type, param, code } }`,
- *   `code` = `rate_limit_exceeded`。
- *   参考:platform.openai.com/docs/guides/error-codes
+ *   `{ error: { message, type, param, code } }`
  *
- * 额度耗尽(订阅窗口用尽)也是一种限流:重置时刻写在 `Retry-After` 里,客户端
- * 自己等到那时重试即可。若报成 `insufficient_quota`/`billing_error`,Codex 这类
- * 客户端会把它当终态直接结束本轮,窗口恢复后也不会自动继续。
+ * 参考:docs.anthropic.com/en/api/errors、platform.openai.com/docs/guides/error-codes
  */
 export function buildRateLimitResponseBody(
   endpoint: ModelEndpoint,
   diagnostic: RouteFailureDiagnostic,
 ): string {
-  const isAnthropic = endpoint === "messages"
-  if (isAnthropic) {
+  const type = noRouteErrorType(diagnostic.reason, endpoint === "messages")
+  if (endpoint === "messages") {
     return JSON.stringify({
       type: "error",
-      error: {
-        type: "rate_limit_error",
-        message: diagnostic.message,
-      },
+      error: { type, message: diagnostic.message },
     })
   }
-  const code = "rate_limit_exceeded"
   return JSON.stringify({
     error: {
       message: diagnostic.message,
-      type: code,
+      type,
       param: null,
-      code,
+      code: type,
     },
   })
 }
 
+/** HTTP status for a no-route diagnostic; see buildRateLimitResponseBody. */
+function noRouteStatus(diagnostic: RouteFailureDiagnostic): number {
+  switch (diagnostic.reason) {
+    case "quota":
+    case "cooldown":
+      return 429
+    case "unknown":
+      return 404
+    case "disabled":
+    case "auth":
+      return 503
+  }
+}
+
+function noRouteErrorType(reason: FailureReason, anthropic: boolean): string {
+  switch (reason) {
+    case "quota":
+    case "cooldown":
+      return anthropic ? "rate_limit_error" : "rate_limit_exceeded"
+    case "unknown":
+      return anthropic ? "not_found_error" : "model_not_found"
+    case "disabled":
+    case "auth":
+      return anthropic ? "api_error" : "service_unavailable"
+  }
+}
+
 /**
- * 构造 429 响应,包含 3 个客户端 SDK 都会读取的退避 headers:
+ * 构造无路由响应。有退避时间(quota/cooldown)时带上 3 个客户端 SDK 都会读的
+ * 退避 headers:
  *
  * - `Retry-After`:HTTP 标准,秒。所有 SDK 默认读取此 header。
  * - `retry-after-ms`:Anthropic 风格,毫秒。oh-my-pi 等客户端优先读取,
  *   提供更高精度(避免 0.5s 被 floor 到 0)。
  * - `x-ratelimit-reset`:OpenAI 风格,秒。oh-my-pi 等客户端作为补充信号读取。
  *
- * 没有退避时间(reasons 没有 cooldown/quota)时不设置这些 headers,
- * 让客户端走默认指数退避。
+ * 不可恢复的原因(未知模型 / 全部禁用 / 全部鉴权失败)按 `noRouteStatus`
+ * 返回 404/503,并且不带退避提示——重试没有意义。
  */
 export function buildRateLimitResponse(
   endpoint: ModelEndpoint,
   diagnostic: RouteFailureDiagnostic,
 ): Response {
+  const status = noRouteStatus(diagnostic)
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   }
-  if (diagnostic.retryAfterSeconds > 0) {
+  if (status === 429 && diagnostic.retryAfterSeconds > 0) {
     const retryAfterMs = diagnostic.retryAfterSeconds * 1000
     headers["Retry-After"] = String(diagnostic.retryAfterSeconds)
     headers["retry-after-ms"] = String(retryAfterMs)
     headers["x-ratelimit-reset"] = String(diagnostic.retryAfterSeconds)
   }
   return new Response(buildRateLimitResponseBody(endpoint, diagnostic), {
-    status: 429,
+    status,
     headers,
   })
 }

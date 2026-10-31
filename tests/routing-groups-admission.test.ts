@@ -511,8 +511,30 @@ describe("prepareRequestAdmission with group references", () => {
     upsertProviderConnection(connection())
 
     const response = await admit("group/nope", BIG_TEXT)
-    expect(response.status).toBe(429)
-    const body = (await response.json()) as { error: { message: string } }
+    // A model that is not configured anywhere can never succeed, so admission
+    // reports 404 instead of a rate limit a client would retry forever.
+    expect(response.status).toBe(404)
+    const body = (await response.json()) as {
+      error: { message: string; type: string }
+    }
     expect(body.error.message).toContain('model "group/nope"')
+    expect(body.error.type).toBe("model_not_found")
+  })
+
+  test("a disabled provider answers 503, not a rate limit", async () => {
+    upsertRoutingGroup(makeGroup())
+    const upstream = connection()
+    upstream.enabled = false
+    upsertProviderConnection(upstream)
+
+    const response = await admit("vendor/small-model", BIG_TEXT)
+    // The route exists but cannot serve right now: retrying is pointless until
+    // an operator re-enables it, so this is not a 429.
+    expect(response.status).toBe(503)
+    const body = (await response.json()) as {
+      error: { type: string }
+    }
+    expect(body.error.type).toBe("service_unavailable")
+    expect(response.headers.get("retry-after")).toBeNull()
   })
 })

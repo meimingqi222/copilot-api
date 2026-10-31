@@ -28,7 +28,12 @@ interface RouteDiagnosticOptions {
   compact?: boolean
 }
 
-type FailureReason = "disabled" | "cooldown" | "quota" | "auth" | "unknown"
+export type FailureReason =
+  | "disabled"
+  | "cooldown"
+  | "quota"
+  | "auth"
+  | "unknown"
 
 export interface RouteFailureDiagnostic {
   message: string
