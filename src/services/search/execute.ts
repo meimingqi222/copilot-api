@@ -29,6 +29,7 @@ import {
   reportUpstreamSuccess,
 } from "~/lib/rate-limit"
 import { createCodexResponsesOnce } from "~/services/codex/create-responses-once"
+import { tryAcquireCredentialLease } from "~/services/dispatch/concurrency"
 import { getProtocolAdapter } from "~/services/protocols/registry"
 
 import type { SearchAnswer, SearchHit, Searcher } from "./types"
@@ -249,7 +250,10 @@ async function callOnce(
  *
  * Goes straight to the adapter, so the failover loop's rate limiting and
  * credential accounting do not apply — they are replayed here so a throttled
- * searcher is cooled instead of being hammered again on the next request.
+ * searcher is cooled instead of being hammered again on the next request. The
+ * concurrency lease is not replayed but taken directly: a search round is an
+ * upstream call on the same credential, so it must count against
+ * `COPILOT_API_CREDENTIAL_MAX_CONCURRENCY` like any other turn.
  */
 export async function executeWebSearch(
   query: string,
@@ -262,6 +266,16 @@ export async function executeWebSearch(
     const connectionId = searcher.connection.id
     const timeout = AbortSignal.timeout(SEARCH_TIMEOUT_MS)
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout
+    // Skip a saturated credential instead of queueing: the loop already has
+    // another searcher to try, and a search must not park the turn behind a
+    // long-running client request on the same account.
+    const lease = tryAcquireCredentialLease(searcher.target)
+    if (!lease) {
+      logger.debug(
+        `[search] ${describeSearcher(searcher)} is at its concurrency limit`,
+      )
+      continue
+    }
     try {
       await checkRateLimit(connectionId, combined)
       const answer = await callOnce(searcher, query, combined, initiator)
@@ -291,6 +305,8 @@ export async function executeWebSearch(
         continue
       }
       // Transport / timeout: try the next searcher instead of failing the turn.
+    } finally {
+      lease.release()
     }
   }
   throw new HTTPError(
