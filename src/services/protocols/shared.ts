@@ -439,12 +439,23 @@ export function detectOpenAIStreamError(e: SimpleSseEvent): HTTPError | null {
   }
 }
 
+interface AnthropicStreamErrorOptions {
+  /**
+   * Use `error.type` as the message when the frame carries no
+   * `error.message`. The `event: error` branch already does this; callers
+   * whose wire sends bare `data` frames (Mimo's WebSocket bridge) opt in to
+   * keep their historical log text.
+   */
+  typeAsMessageFallback?: boolean
+}
+
 /**
  * Detect errors in Anthropic-compatible SSE streams.
  * Format: event=error data={"type":"error","error":{...}}
  */
 export function detectAnthropicStreamError(
   e: SimpleSseEvent,
+  opts?: AnthropicStreamErrorOptions,
 ): HTTPError | null {
   if (e.event === "error") {
     let message = "upstream streaming error"
@@ -467,7 +478,9 @@ export function detectAnthropicStreamError(
       const parsed = JSON.parse(e.data) as JsonStreamEvent
       if (parsed.type === "error") {
         return new HTTPError(
-          parsed.error?.message ?? "upstream streaming error",
+          parsed.error?.message
+            ?? (opts?.typeAsMessageFallback ? parsed.error?.type : undefined)
+            ?? "upstream streaming error",
           new Response(null, { status: 500 }),
           e.data,
         )

@@ -8,6 +8,7 @@
  *
  * 刷新成功后旧 refreshToken 仍然有效（服务端非单次轮换），
  * 但仍以响应返回的新 token 为准。
+ * 定时调度、提前量、并发合并等通用部分在 `~/services/auth/refresh-scheduler`。
  */
 
 import type {
@@ -15,23 +16,17 @@ import type {
   ProviderConnection,
 } from "~/lib/provider-connections/types"
 
-import { runJob } from "~/lib/jobs"
 import { createLogger } from "~/lib/logger"
-import {
-  listProviderConnections,
-  persistProviderConnections,
-} from "~/lib/provider-connections"
+import { persistProviderConnections } from "~/lib/provider-connections"
 import { getMutableProviderConnection } from "~/lib/provider-connections/state"
+import { createTokenRefreshScheduler } from "~/services/auth/refresh-scheduler"
 import { parseJwtPayload } from "~/services/oauth/jwt"
 import { connectionFetchInit } from "~/services/protocols/shared"
 import { lobsteraiClientVersion, lobsteraiServerRoot } from "./config"
 
 const logger = createLogger("auth")
 
-const REFRESH_LEAD_MS = 5 * 60 * 1000
 const DEFAULT_KEYFROM = "official"
-const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
-const inflightRefreshes = new Map<string, Promise<boolean>>()
 
 interface LobsteraiRefreshResponse {
   code?: number
@@ -70,6 +65,10 @@ function jwtExpiryMs(token: string | undefined): number | undefined {
   return typeof exp === "number" && Number.isFinite(exp) ?
       Math.floor(exp * 1000)
     : undefined
+}
+
+function credentialExpiryMs(credential: ApiCredential): number | undefined {
+  return readContext(credential).expiresAt ?? jwtExpiryMs(credential.value)
 }
 
 /** 刷新 LobsterAI credential（直接改 credential.value / context，调用方负责持久化）。 */
@@ -186,98 +185,41 @@ export async function refreshLobsteraiTokenForConnection(
   return true
 }
 
-/** 是否需要在过期前刷新（提前 5 分钟）。 */
-function lobsteraiNeedsRefresh(credential: ApiCredential): boolean {
-  const ctx = readContext(credential)
-  const expiresAt = ctx.expiresAt ?? jwtExpiryMs(credential.value)
-  if (!expiresAt) return true
-  return expiresAt - REFRESH_LEAD_MS <= Date.now()
-}
-
-async function refreshOnce(conn: ProviderConnection): Promise<boolean> {
-  let inflight = inflightRefreshes.get(conn.id)
-  if (!inflight) {
-    inflight = refreshLobsteraiTokenForConnection(conn).finally(() => {
-      inflightRefreshes.delete(conn.id)
-    })
-    inflightRefreshes.set(conn.id, inflight)
-  }
-  return inflight
-}
+const scheduler = createTokenRefreshScheduler({
+  scope: "lobsterai",
+  jobLabel: "LobsterAI token refresh",
+  protocol: "lobsterai-native",
+  refresh: (conn) => refreshLobsteraiTokenForConnection(conn),
+  expiryMs: credentialExpiryMs,
+  // 有 refreshToken 即可调度；LobsterAI 的定时刷新不因 enabled 开关停止
+  // （禁用的连接仍会在 token 过期后继续尝试刷新，这是既有行为）。
+  canSchedule: (_conn, credential) =>
+    Boolean(readContext(credential).refreshToken),
+  canRefresh: (credential) => Boolean(readContext(credential).refreshToken),
+  // 定时刷新与请求前刷新共用同一张 in-flight 表。
+  dedupeScheduledRefresh: true,
+  // 请求前刷新以内存中的最新凭据为准（可能已被定时刷新轮换过），并返回
+  // 按 id 命中的那份。
+  ensure: { gate: "live", result: "by-id" },
+})
 
 /** Request-time refresh also covers imported tokens and a missed timer. */
-export async function ensureLobsteraiAccessToken(
+export function ensureLobsteraiAccessToken(
   conn: ProviderConnection,
   credential: ApiCredential,
 ): Promise<string | undefined> {
-  const live = getMutableProviderConnection(conn.id)
-  const effective =
-    live?.credentials.find((item) => item.id === credential.id) ?? credential
-  if (
-    !lobsteraiNeedsRefresh(effective)
-    || !readContext(effective).refreshToken
-  ) {
-    return effective.value || undefined
-  }
-  if (live && (await refreshOnce(live))) {
-    scheduleLobsteraiRefresh(live)
-    return live.credentials.find((item) => item.id === credential.id)?.value
-  }
-  return effective.value || undefined
+  return scheduler.ensureAccessToken(conn, credential)
 }
 
 export function cancelLobsteraiRefreshTimer(connectionId: string): void {
-  const timer = refreshTimers.get(connectionId)
-  if (timer) clearTimeout(timer)
-  refreshTimers.delete(connectionId)
+  scheduler.cancel(connectionId)
 }
 
 /** 安排下次自动刷新；瞬时失败后继续重试。 */
 export function scheduleLobsteraiRefresh(conn: ProviderConnection): void {
-  cancelLobsteraiRefreshTimer(conn.id)
-  const credential = conn.credentials[0]
-  if (!credential) return
-
-  const ctx = readContext(credential)
-  if (!ctx.refreshToken) return
-  const expiresAt = ctx.expiresAt ?? jwtExpiryMs(credential.value)
-  const refreshInMs =
-    expiresAt ?
-      Math.max(expiresAt - Date.now() - REFRESH_LEAD_MS, 60_000)
-    : 60_000
-  const refreshInSeconds = Math.floor(refreshInMs / 1000)
-
-  logger.debug(
-    `[lobsterai] scheduling refresh for "${conn.name}" in ${refreshInSeconds}s`,
-  )
-
-  const timer = setTimeout(
-    async () => {
-      refreshTimers.delete(conn.id)
-      const mutable = getMutableProviderConnection(conn.id)
-      if (!mutable) return
-      const cred = mutable.credentials[0]
-      if (!cred) return
-      if (!lobsteraiNeedsRefresh(cred)) {
-        scheduleLobsteraiRefresh(mutable)
-        return
-      }
-
-      await runJob(`lobsterai-token:${conn.id}`, () => refreshOnce(mutable), {
-        label: `LobsterAI token refresh · ${mutable.name}`,
-        connectionId: conn.id,
-      }).catch(() => {})
-      // A transient failure must not permanently stop automatic refresh.
-      scheduleLobsteraiRefresh(mutable)
-    },
-    Math.min(refreshInMs, 2_147_483_647),
-  )
-  timer.unref?.()
-  refreshTimers.set(conn.id, timer)
+  scheduler.schedule(conn)
 }
 
 export function scheduleLobsteraiRefreshForAllConnections(): void {
-  for (const conn of listProviderConnections()) {
-    if (conn.protocol === "lobsterai-native") scheduleLobsteraiRefresh(conn)
-  }
+  scheduler.scheduleAll()
 }

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from "bun:test"
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
 
 import type {
   ApiCredential,
@@ -14,6 +14,7 @@ import {
   cancelAllCodebuddyRefreshTimers,
   codebuddyNeedsRefresh,
   ensureCodebuddyAccessToken,
+  scheduleCodebuddyRefresh,
 } from "~/services/codebuddy/token-refresh"
 import { HTTPError } from "~/lib/error"
 import {
@@ -576,5 +577,76 @@ describe("CodeBuddy token refresh", () => {
       "opaque-access-token",
     )
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("CodeBuddy refresh scheduling", () => {
+  const originalSetTimeout = globalThis.setTimeout
+  const id = "codebuddy-timer-test"
+
+  afterEach(() => {
+    cancelAllCodebuddyRefreshTimers()
+    mock.restore()
+    globalThis.setTimeout = originalSetTimeout
+    globalThis.fetch = originalFetch
+    __resetProviderConnectionsForTest()
+  })
+
+  test("clamps long-lived tokens instead of overflowing the timer", async () => {
+    const now = Date.now()
+    const conn = makeConnection(
+      makeCredential({
+        value: jwt(Math.floor(now / 1000) + 30 * 86400),
+        context: { refreshToken: "refresh" },
+      }),
+    )
+    conn.id = id
+    upsertProviderConnection(conn)
+
+    const delays: Array<number | undefined> = []
+    let fire: (() => unknown) | undefined
+    spyOn(globalThis, "setTimeout").mockImplementation(((
+      handler: () => unknown,
+      delay?: number,
+    ) => {
+      delays.push(delay)
+      fire = () => handler()
+      return originalSetTimeout(() => {}, 2_147_483_647)
+    }) as unknown as typeof setTimeout)
+    const fetchMock = mock(() =>
+      Promise.reject(new Error("must not refresh early")),
+    )
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    scheduleCodebuddyRefresh(conn)
+    // CodeBuddy 自己的上限（2,147,000,000），不是 LobsterAI 的 2^31 - 1。
+    expect(delays).toEqual([2_147_000_000])
+    await fire?.()
+    expect(delays).toEqual([2_147_000_000, 2_147_000_000])
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  test("disabled connections and credentials hold no timer", () => {
+    const conn = makeConnection(
+      makeCredential({ context: { refreshToken: "r" } }),
+    )
+    conn.id = id
+    upsertProviderConnection(conn)
+
+    const delays: Array<number | undefined> = []
+    spyOn(globalThis, "setTimeout").mockImplementation(((
+      _handler: () => unknown,
+      delay?: number,
+    ) => {
+      delays.push(delay)
+      return originalSetTimeout(() => {}, 2_147_483_647)
+    }) as unknown as typeof setTimeout)
+
+    scheduleCodebuddyRefresh({ ...conn, enabled: false })
+    scheduleCodebuddyRefresh({
+      ...conn,
+      credentials: [{ ...conn.credentials[0], enabled: false }],
+    })
+    expect(delays).toEqual([])
   })
 })

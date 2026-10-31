@@ -6,6 +6,7 @@
  *   Headers: Authorization: Bearer <oldAccessToken>, X-Refresh-Token: <refreshToken>, ...
  *
  * 成功后返回新的 accessToken + refreshToken，旧 refreshToken 会被轮换失效。
+ * 定时调度、提前量、并发合并等通用部分在 `~/services/auth/refresh-scheduler`。
  */
 
 import { randomUUID } from "node:crypto"
@@ -15,13 +16,15 @@ import type {
   ProviderConnection,
 } from "~/lib/provider-connections/types"
 
-import { runJob } from "~/lib/jobs"
 import { createLogger } from "~/lib/logger"
 import {
   getMutableProviderConnection,
-  listProviderConnections,
   persistProviderConnections,
 } from "~/lib/provider-connections/state"
+import {
+  createTokenRefreshScheduler,
+  needsRefreshAt,
+} from "~/services/auth/refresh-scheduler"
 import { connectionFetchInit, getHeader } from "~/services/protocols/shared"
 
 const logger = createLogger("auth")
@@ -30,28 +33,10 @@ const CODEBUDDY_DEFAULT_BASE_URL = "https://copilot.tencent.com/v2"
 const CODEBUDDY_DEFAULT_DOMAIN = "www.codebuddy.cn"
 const CODEBUDDY_USER_AGENT = "CLI/2.148.0 CodeBuddy/2.148.0"
 const CODEBUDDY_PRODUCT = "SaaS"
-const REFRESH_LEAD_MS = 5 * 60 * 1000
 const REFRESH_RETRY_MS = 60_000
 const MAX_TIMER_DELAY_MS = 2_147_000_000
 
-const refreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const persistenceRetryTimers = new Map<string, ReturnType<typeof setTimeout>>()
-const inflightRefreshes = new Map<string, Promise<boolean>>()
-
-function waitForRefresh(
-  refresh: Promise<boolean>,
-  signal?: AbortSignal,
-): Promise<boolean> {
-  if (!signal) return refresh
-  signal.throwIfAborted()
-  return new Promise((resolve, reject) => {
-    const onAbort = () => reject(signal.reason)
-    signal.addEventListener("abort", onAbort, { once: true })
-    void refresh.then(resolve, reject).finally(() => {
-      signal.removeEventListener("abort", onAbort)
-    })
-  })
-}
 
 function schedulePersistenceRetry(connectionId: string): void {
   if (persistenceRetryTimers.has(connectionId)) return
@@ -132,6 +117,11 @@ function credentialExpiryMs(credential: ApiCredential): number | undefined {
   const jwtExpiry =
     credential.value ? decodeJwtPayload(credential.value)?.exp : undefined
   return typeof jwtExpiry === "number" ? jwtExpiry * 1000 : undefined
+}
+
+function hasRefreshToken(credential: ApiCredential): boolean {
+  const refreshToken = credential.context?.refreshToken
+  return typeof refreshToken === "string" && refreshToken.length > 0
 }
 
 /**
@@ -263,119 +253,57 @@ export async function refreshCodebuddyTokenForConnection(
  * 在过期前 5 分钟触发。
  */
 export function codebuddyNeedsRefresh(credential: ApiCredential): boolean {
-  const expiresAt = credentialExpiryMs(credential)
-  if (!expiresAt) return true
-  return expiresAt - REFRESH_LEAD_MS <= Date.now()
+  return needsRefreshAt(credentialExpiryMs(credential))
 }
 
+const scheduler = createTokenRefreshScheduler({
+  scope: "codebuddy",
+  jobLabel: "CodeBuddy token refresh",
+  protocol: "codebuddy-native",
+  refresh: (conn) => refreshCodebuddyTokenForConnection(conn),
+  expiryMs: credentialExpiryMs,
+  // 禁用的连接/凭据不持有定时器，且没有 expiresAt 时不排定时器（避免无到期
+  // 时间的凭据进入一分钟一次的刷新循环）。
+  canSchedule: (conn, credential) => conn.enabled && credential.enabled,
+  isActive: (conn, credential) => conn.enabled && credential.enabled,
+  canRefresh: hasRefreshToken,
+  requiresExpiry: true,
+  maxTimerDelayMs: MAX_TIMER_DELAY_MS,
+  // 定时刷新与请求前刷新各自发起；历史上只有请求路径做 in-flight 合并。
+  dedupeScheduledRefresh: false,
+  // 请求前刷新用调用方传入的凭据判断，返回内存里的第一份凭据。
+  ensure: { gate: "argument", result: "first" },
+  onRefreshError: (conn, error) => {
+    logger.error(
+      `[codebuddy] failed to persist refreshed token for "${conn.name}":`,
+      error,
+    )
+  },
+})
+
 /** 请求前按需刷新，并按 connection id 合并并发刷新。 */
-export async function ensureCodebuddyAccessToken(
+export function ensureCodebuddyAccessToken(
   conn: ProviderConnection,
   credential: ApiCredential,
   signal?: AbortSignal,
 ): Promise<string | undefined> {
-  if (!codebuddyNeedsRefresh(credential)) return credential.value || undefined
-  const refreshToken = credential.context?.refreshToken
-  if (typeof refreshToken !== "string" || !refreshToken) {
-    return credential.value || undefined
-  }
-
-  const live = getMutableProviderConnection(conn.id)
-  if (!live) return credential.value || undefined
-
-  let refresh = inflightRefreshes.get(conn.id)
-  if (!refresh) {
-    // Refresh is shared by all concurrent callers. Do not attach one caller's
-    // abort signal to the shared fetch; only cancel that caller's wait below.
-    refresh = refreshCodebuddyTokenForConnection(live).finally(() => {
-      inflightRefreshes.delete(conn.id)
-    })
-    inflightRefreshes.set(conn.id, refresh)
-  }
-  const succeeded = await waitForRefresh(refresh, signal)
-  const liveCredential = live.credentials[0]
-  if (succeeded) scheduleCodebuddyRefresh(live)
-  return liveCredential?.value || credential.value || undefined
+  return scheduler.ensureAccessToken(conn, credential, signal)
 }
 
-function cancelCodebuddyRefreshTimer(connectionId: string): void {
-  const timer = refreshTimers.get(connectionId)
-  if (!timer) return
-  clearTimeout(timer)
-  refreshTimers.delete(connectionId)
-}
-
+/** 取消所有 CodeBuddy 定时器（含持久化重试定时器）。 */
 export function cancelAllCodebuddyRefreshTimers(): void {
-  for (const connectionId of refreshTimers.keys()) {
-    cancelCodebuddyRefreshTimer(connectionId)
-  }
+  scheduler.cancelAll()
   for (const [connectionId, timer] of persistenceRetryTimers) {
     clearTimeout(timer)
     persistenceRetryTimers.delete(connectionId)
   }
 }
 
-/**
- * 安排下次自动刷新。
- */
+/** 安排下次自动刷新。 */
 export function scheduleCodebuddyRefresh(conn: ProviderConnection): void {
-  cancelCodebuddyRefreshTimer(conn.id)
-  if (!conn.enabled) return
-  const credential = conn.credentials[0]
-  if (!credential?.enabled) return
-  const expiresAt = credentialExpiryMs(credential)
-  if (!expiresAt) return
-
-  const refreshInMs = Math.max(
-    expiresAt - Date.now() - REFRESH_LEAD_MS,
-    REFRESH_RETRY_MS,
-  )
-  const timerDelayMs = Math.min(refreshInMs, MAX_TIMER_DELAY_MS)
-  const refreshInSeconds = Math.floor(refreshInMs / 1000)
-
-  logger.debug(
-    `[codebuddy] scheduling refresh for "${conn.name}" in ${refreshInSeconds}s`,
-  )
-
-  const timer = setTimeout(() => {
-    refreshTimers.delete(conn.id)
-    void (async () => {
-      const mutable = getMutableProviderConnection(conn.id)
-      if (!mutable || !mutable.enabled) return
-      const cred = mutable.credentials[0]
-      if (!cred?.enabled) return
-      if (!codebuddyNeedsRefresh(cred)) {
-        scheduleCodebuddyRefresh(mutable)
-        return
-      }
-
-      try {
-        await runJob(
-          `codebuddy-token:${conn.id}`,
-          () => refreshCodebuddyTokenForConnection(mutable),
-          {
-            label: `CodeBuddy token refresh · ${mutable.name}`,
-            connectionId: conn.id,
-          },
-        )
-      } catch (error: unknown) {
-        logger.error(
-          `[codebuddy] failed to persist refreshed token for "${mutable.name}":`,
-          error,
-        )
-      } finally {
-        const current = getMutableProviderConnection(conn.id)
-        // 成功时安排下一轮；临时失败时一分钟后重试。
-        if (current?.enabled) scheduleCodebuddyRefresh(current)
-      }
-    })()
-  }, timerDelayMs)
-  timer.unref?.()
-  refreshTimers.set(conn.id, timer)
+  scheduler.schedule(conn)
 }
 
 export function scheduleCodebuddyRefreshForAllConnections(): void {
-  for (const conn of listProviderConnections()) {
-    if (conn.protocol === "codebuddy-native") scheduleCodebuddyRefresh(conn)
-  }
+  scheduler.scheduleAll()
 }
