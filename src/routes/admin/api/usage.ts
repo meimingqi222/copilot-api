@@ -7,6 +7,7 @@ import {
 } from "~/lib/connection-pricing"
 
 import { forwardError, HTTPError } from "~/lib/error"
+import { createTtlCache } from "~/lib/ttl-cache"
 import {
   getProviderConnection,
   listProviderConnections,
@@ -912,38 +913,18 @@ usageApiRoutes.get("/summary", (c) => {
 // ── /performance 短缓存 ─────────────────────────────────────────
 // 聚合是同步 CPU（50k 行约 340ms），而页面会在各自动刷新周期反复
 // 请求同一时间范围。2s TTL 既挡掉连点刷新，又几乎不影响数据新鲜度。
-const PERF_CACHE_TTL_MS = 2_000
-const PERF_CACHE_MAX = 32
-const perfCache = new Map<
-  string,
-  {
-    at: number
-    revision: number
-    result: ReturnType<typeof statsStore.getPerformanceInRange>
-  }
->()
+const perfCache = createTtlCache<
+  ReturnType<typeof statsStore.getPerformanceInRange>
+>({
+  ttlMs: 2_000,
+  maxEntries: 32,
+  revision: () => statsStore.getUsageRevision(),
+})
 
 function getPerfBundle(startMs: number, endMs: number) {
-  const key = `${startMs}:${endMs}`
-  const now = Date.now()
-  const hit = perfCache.get(key)
-  const revision = statsStore.getUsageRevision()
-  if (hit && hit.revision === revision && now - hit.at < PERF_CACHE_TTL_MS)
-    return hit.result
-  const result = statsStore.getPerformanceInRange({ startMs, endMs })
-  perfCache.set(key, { at: now, revision, result })
-  void result.catch(() => {
-    if (perfCache.get(key)?.result === result) perfCache.delete(key)
-  })
-  if (perfCache.size > PERF_CACHE_MAX) {
-    // Map 迭代按插入序，删掉最旧的一半即可。
-    let remove = perfCache.size - PERF_CACHE_MAX / 2
-    for (const k of perfCache.keys()) {
-      if (remove-- <= 0) break
-      perfCache.delete(k)
-    }
-  }
-  return result
+  return perfCache.get(`${startMs}:${endMs}`, () =>
+    statsStore.getPerformanceInRange({ startMs, endMs }),
+  )
 }
 
 // Get per-model performance metrics (TTFT, TPS)
@@ -990,16 +971,13 @@ usageApiRoutes.get("/performance", async (c) => {
 })
 
 // ── /performance/trend 短缓存 ───────────────────────────────────
-const TREND_CACHE_TTL_MS = 2_000
-const TREND_CACHE_MAX = 64
-const trendCache = new Map<
-  string,
-  {
-    at: number
-    revision: number
-    result: ReturnType<typeof statsStore.getPerformanceTrendInRange>
-  }
->()
+const trendCache = createTtlCache<
+  ReturnType<typeof statsStore.getPerformanceTrendInRange>
+>({
+  ttlMs: 2_000,
+  maxEntries: 64,
+  revision: () => statsStore.getUsageRevision(),
+})
 
 function getPerfTrendBundle(options: {
   startMs: number
@@ -1009,22 +987,9 @@ function getPerfTrendBundle(options: {
   provider?: string
 }) {
   const key = `${options.model ?? ""}:${options.provider ?? ""}:${options.startMs}:${options.endMs}:${options.intervalMinutes ?? 0}`
-  const now = Date.now()
-  const hit = trendCache.get(key)
-  const revision = statsStore.getUsageRevision()
-  if (hit && hit.revision === revision && now - hit.at < TREND_CACHE_TTL_MS) {
-    return hit.result
-  }
-  const result = statsStore.getPerformanceTrendInRange(options)
-  trendCache.set(key, { at: now, revision, result })
-  if (trendCache.size > TREND_CACHE_MAX) {
-    let remove = trendCache.size - TREND_CACHE_MAX / 2
-    for (const k of trendCache.keys()) {
-      if (remove-- <= 0) break
-      trendCache.delete(k)
-    }
-  }
-  return result
+  return trendCache.get(key, () =>
+    statsStore.getPerformanceTrendInRange(options),
+  )
 }
 
 // Get performance trend time-series for a model or provider (TTFT, TPS)
