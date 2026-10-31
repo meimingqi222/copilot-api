@@ -9,6 +9,7 @@ import {
   resetTranslationLossMetricsForTest,
 } from "~/services/ir"
 import type { RequestIR } from "~/services/ir"
+import { LOSS_REASONS, lossReasonCode } from "~/services/ir/loss-reasons"
 import {
   createDetachedRequestLog,
   finalizeRequestLogContext,
@@ -254,5 +255,18 @@ describe("IR loss logging", () => {
     expect(JSON.stringify(entry)).not.toContain("my-secret")
     expect(Object.keys(entry)).not.toContain("translationLosses")
     expect(getTranslationLossesForContext(ctx)).toEqual([])
+  })
+
+  // The reason code table is the single source for the wording the planner can
+  // emit. `record()` takes a LossReason, so a new sentence fails typecheck
+  // instead of silently degrading to "unspecified" (which is how this table
+  // drifted from the planner before). This test pins the resolution itself.
+  test("every planner sentence resolves to a stable code, not unspecified", () => {
+    const reasons = Object.keys(LOSS_REASONS)
+    expect(reasons.length).toBeGreaterThan(20)
+    for (const reason of reasons) {
+      expect(lossReasonCode(reason)).not.toBe("unspecified")
+    }
+    expect(lossReasonCode("a sentence nobody declared")).toBe("unspecified")
   })
 })

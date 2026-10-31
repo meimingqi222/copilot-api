@@ -14,6 +14,8 @@ import type {
   RequestIR,
 } from "./types"
 
+import type { LossReason } from "./loss-reasons"
+
 type RequestFeatureKind =
   | "image"
   | "tool_result_image"
@@ -285,7 +287,7 @@ function record(
   target: IRWire,
   feature: RequestFeature,
   action: LossAction,
-  reason: string,
+  reason: LossReason,
 ): void {
   if (action === "preserve") return
   records.push({
@@ -301,7 +303,7 @@ function record(
 function validateAllowedTools(
   choice: IRToolChoice | undefined,
   request: RequestIR,
-): string | undefined {
+): LossReason | undefined {
   if (!choice || choice.type !== "allowed") return undefined
   const declared = new Set(request.tools?.map((tool) => tool.name) ?? [])
   if (choice.names.some((name) => !declared.has(name))) {
