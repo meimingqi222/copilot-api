@@ -9,6 +9,12 @@ const PROVIDER_FEATURES = [
   "device_flow",
   "model_discovery",
   "oauth",
+  /**
+   * Quota/rest state is scoped to (credential, model): one model can be
+   * resting while the same credential keeps serving others. Routing and the
+   * pacing limiter read this instead of matching the protocol id.
+   */
+  "model_scoped_quota",
 ] as const
 
 export type ProviderFeature = (typeof PROVIDER_FEATURES)[number]

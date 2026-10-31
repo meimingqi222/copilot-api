@@ -87,4 +87,14 @@ describe("pure provider metadata", () => {
     expect(catalog.codebuddy.protocol).toBe(catalog["codebuddy-cn"].protocol)
     expect(PROVIDER_METADATA["commandcode-plan"].planBased).toBe(true)
   })
+
+  // Routing and the pacing limiter read this feature instead of matching the
+  // protocol id, so dropping it would silently disable model-scoped rest.
+  test("every CodeBuddy domain declares model-scoped quota", () => {
+    for (const id of ["codebuddy", "codebuddy-cn"] as const) {
+      expect(PROVIDER_METADATA[id].descriptor.features).toContain(
+        "model_scoped_quota",
+      )
+    }
+  })
 })

@@ -16,6 +16,7 @@
  */
 
 import type { ProviderId } from "~/lib/provider-config"
+import { PROVIDER_METADATA } from "~/lib/provider-metadata"
 
 import {
   buildConnectionModelAliases,
@@ -28,6 +29,7 @@ import {
   accountManagedModelPrefix,
   accountManagedProvider,
   getConnectionRoutability,
+  getConnectionProvider,
   isAccountManagedConnection,
   isCredentialAvailable,
   listProviderConnections,
@@ -58,8 +60,8 @@ function safeCredentials(connection: ProviderConnection): Array<ApiCredential> {
 }
 
 /**
- * 模型级休息排除：CodeBuddy 6004 只让 (credential, model) 休息，同凭证其它
- * 模型照常路由。其它协议无此语义，直接放行（不受影响）。
+ * 模型级休息排除：声明 `model_scoped_quota` 的 provider（CodeBuddy 6004）
+ * 只让 (credential, model) 休息，同凭证其它模型照常路由；其它协议直接放行。
  * 注意是瞬时状态过滤（与账号冷却同理），/v1/models 列表不受影响。
  */
 function isModelRestingExcluded(
@@ -68,8 +70,21 @@ function isModelRestingExcluded(
   upstreamModelId: string,
 ): boolean {
   return (
-    connection.protocol === "codebuddy-native"
+    connectionHasModelScopedQuota(connection)
     && isResting({ credentialId, model: upstreamModelId })
+  )
+}
+
+/** Provider capability, not a protocol id: see ProviderFeature. */
+function connectionHasModelScopedQuota(
+  connection: ProviderConnection,
+): boolean {
+  const provider = getConnectionProvider(connection)
+  return (
+    provider !== undefined
+    && PROVIDER_METADATA[provider].descriptor.features.includes(
+      "model_scoped_quota",
+    )
   )
 }
 

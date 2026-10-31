@@ -1,6 +1,10 @@
 import { logger } from "~/lib/logger"
 import { clearModelCooldownsForConnection } from "~/lib/model-cooldown"
-import { getProviderConnection } from "~/lib/provider-connections"
+import {
+  getConnectionProvider,
+  getProviderConnection,
+} from "~/lib/provider-connections"
+import { PROVIDER_METADATA } from "~/lib/provider-metadata"
 import { parseRetryAfterMs } from "~/lib/retry-after"
 
 import { sleep } from "./utils"
@@ -273,13 +277,17 @@ export function getRemainingCooldownSeconds(accountId: string): number {
     // (由 setConnectionCooldownUntil 同步写入 metadata + credential)。
     const connection = getProviderConnection(accountId)
     const credential = connection?.credentials[0]
-    // CodeBuddy balance exhaustion only blocks paid models. Do not import
-    // that quota timestamp into the shared request-pacing limiter.
+    // Providers that scope quota to (credential, model) only block the paid
+    // model that ran out. Do not import that quota timestamp into the shared
+    // request-pacing limiter.
+    const provider = connection ? getConnectionProvider(connection) : undefined
+    const modelScopedQuota =
+      provider !== undefined
+      && PROVIDER_METADATA[provider].descriptor.features.includes(
+        "model_scoped_quota",
+      )
     const cooldownUntil =
-      (
-        connection?.protocol === "codebuddy-native"
-        && credential?.status === "quota_exhausted"
-      ) ?
+      modelScopedQuota && credential?.status === "quota_exhausted" ?
         undefined
       : credential?.cooldownUntil
     if (

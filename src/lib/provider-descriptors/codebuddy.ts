@@ -34,7 +34,13 @@ export const codebuddyMetadata = defineProviderMetadata({
     name: "CodeBuddy",
     icon: "bot",
     authMode: "oauth",
-    features: ["cooldown", "model_discovery", "quota", "oauth"],
+    features: [
+      "cooldown",
+      "model_discovery",
+      "quota",
+      "oauth",
+      "model_scoped_quota",
+    ],
     accountFields: OAUTH_ACCOUNT_FIELDS,
   },
 })
@@ -59,7 +65,13 @@ export const codebuddyCnMetadata = defineProviderMetadata({
     name: "CodeBuddy CN",
     icon: "bot",
     authMode: "oauth",
-    features: ["cooldown", "model_discovery", "quota", "oauth"],
+    features: [
+      "cooldown",
+      "model_discovery",
+      "quota",
+      "oauth",
+      "model_scoped_quota",
+    ],
     accountFields: OAUTH_ACCOUNT_FIELDS,
   },
 })
