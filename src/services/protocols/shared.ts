@@ -5,15 +5,8 @@ import {
 } from "~/lib/upstream-performance"
 
 import { HTTPError } from "~/lib/error"
-import { logger } from "~/lib/logger"
 import {
-  classifyUpstreamError,
   getConnectionProxyUrl,
-  markCredentialAuthError,
-  markCredentialCooldown,
-  markCredentialQuotaExhausted,
-  persistProviderConnections,
-  DEFAULTS,
   type ApiCredential,
   type ProviderConnection,
 } from "~/lib/provider-connections"
@@ -198,11 +191,22 @@ interface UpstreamFailureOptions {
   retryAfterMs?: number
 }
 
+/**
+ * 把上游失败转成带状态码的 HTTPError。
+ *
+ * 只做分类与 Retry-After 补齐，**不**改写 credential 状态：错误浮出后由
+ * `dispatch/cooldown.ts` 的 `markCooldown` 统一结算。历史上这里也写过一次，
+ * 但适配器拿到的是 `{ ...credential }` 浅拷贝，惩罚落在临时对象上永远不落库；
+ * 同时 dispatch 又结算一次，同一失败有两条记账路径。
+ *
+ * 例外：`skipAccountPenalty` 的调用方（CodeBuddy 6004 只冷却模型）依旧自己
+ * 落库，因为它的语义比账号级结算更细。
+ */
 export async function handleUpstreamFailure(
   response: Response,
   credential: ApiCredential,
   contextMessage: string,
-  adapterName: string,
+  _adapterName: string,
   opts?: UpstreamFailureOptions,
 ): Promise<never> {
   const body = await readResponseBytes(
@@ -211,60 +215,6 @@ export async function handleUpstreamFailure(
   )
     .then((bytes) => new TextDecoder().decode(bytes))
     .catch(() => "")
-  const classified = classifyUpstreamError({
-    status: response.status,
-    headers: response.headers,
-    body,
-  })
-
-  const upstreamCode = extractUpstreamErrorCode(body)
-  const reasonSuffix = upstreamCode ? `: ${upstreamCode}` : ""
-
-  if (!opts?.skipAccountPenalty) {
-    switch (classified.kind) {
-      case "rate_limited": {
-        markCredentialCooldown(credential, {
-          retryAfterMs: classified.retryAfterMs,
-          reason: `HTTP ${response.status}${reasonSuffix}`,
-        })
-        break
-      }
-      case "auth_error": {
-        markCredentialAuthError(
-          credential,
-          `HTTP ${response.status}: ${body.slice(0, 200)}`,
-        )
-        break
-      }
-      case "quota_exhausted": {
-        markCredentialQuotaExhausted(
-          credential,
-          `HTTP ${response.status}: ${body.slice(0, 200)}`,
-          classified.retryAfterMs,
-        )
-        break
-      }
-      case "server_error": {
-        markCredentialCooldown(credential, {
-          retryAfterMs: classified.retryAfterMs ?? DEFAULTS.COOLDOWN_5XX_MS,
-          reason: `HTTP ${response.status}`,
-        })
-        break
-      }
-      default: {
-        break
-      }
-    }
-
-    if (!credential.id.startsWith("__")) {
-      await persistProviderConnections().catch((err: unknown) => {
-        logger.warn(
-          `[${adapterName}] failed to persist credential status:`,
-          (err as Error).message,
-        )
-      })
-    }
-  }
 
   const responseWithRetryAfter = buildResponseWithRetryAfter(
     response,
@@ -275,18 +225,6 @@ export async function handleUpstreamFailure(
   throw new HTTPError(contextMessage, responseWithRetryAfter, body)
 }
 
-function extractUpstreamErrorCode(body: string): string | undefined {
-  try {
-    const parsed = JSON.parse(body) as {
-      error?: { code?: string | number; type?: string }
-    }
-    const code = parsed.error?.code ?? parsed.error?.type
-    return code === undefined ? undefined : String(code)
-  } catch {
-    return undefined
-  }
-}
-
 function buildResponseWithRetryAfter(
   response: Response,
   body: string,
@@ -294,11 +232,14 @@ function buildResponseWithRetryAfter(
   explicitRetryAfterMs?: number,
 ): Response {
   const headers = new Headers(response.headers)
+  // Dispatch records the credential cooldown only after this error surfaces, so
+  // the adapter has to derive the backoff hint from what the upstream itself
+  // said: its Retry-After, then any cooldown already on the credential.
   const cooldownUntil = credential.cooldownUntil
   const remainingMs =
     cooldownUntil && cooldownUntil > Date.now() ? cooldownUntil - Date.now()
     : explicitRetryAfterMs && explicitRetryAfterMs > 0 ? explicitRetryAfterMs
-    : undefined
+    : parseRetryAfterMsFromResponse(response)
   if (remainingMs) {
     const remainingSeconds = Math.max(1, Math.ceil(remainingMs / 1000))
     headers.set("Retry-After", String(remainingSeconds))
@@ -310,6 +251,18 @@ function buildResponseWithRetryAfter(
     statusText: response.statusText,
     headers,
   })
+}
+
+/** Upstream-declared backoff (Retry-After seconds or HTTP date), in ms. */
+function parseRetryAfterMsFromResponse(response: Response): number | undefined {
+  const raw = response.headers.get("retry-after")
+  if (!raw) return undefined
+  const seconds = Number(raw)
+  if (Number.isFinite(seconds) && seconds > 0) return seconds * 1000
+  const date = Date.parse(raw)
+  if (Number.isNaN(date)) return undefined
+  const remaining = date - Date.now()
+  return remaining > 0 ? remaining : undefined
 }
 
 // ─── Streaming error detection helpers ─────────────────────────────────────

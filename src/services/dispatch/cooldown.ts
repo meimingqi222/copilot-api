@@ -349,6 +349,21 @@ async function markAccountManagedCooldown(
       await markAccountManagedQuotaExhausted(conn, cooldownMs, logPrefix)
       return
     }
+    // An account-managed connection has exactly one credential, so an
+    // auth_error is the connection's own state: without this branch the 401
+    // merely looked like a rate limit (or nothing at all) and the account kept
+    // being selected until an operator noticed.
+    if (classified.kind === "auth_error") {
+      invalidateSessionAffinityAuth(authKey)
+      setConnectionAuthStatus(
+        conn,
+        "error",
+        `HTTP ${status}: ${(error.responseBody ?? "").slice(0, 200)}`,
+      )
+      syncConnectionExhaustedState(conn)
+      await persistConnectionState(logPrefix, "connection auth error state")
+      return
+    }
     if (status === 429) {
       invalidateSessionAffinityAuth(authKey)
       await markConnectionRateLimited(

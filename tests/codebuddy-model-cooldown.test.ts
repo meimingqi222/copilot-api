@@ -361,7 +361,7 @@ describe("codebuddy adapter 6004 handling", () => {
     },
   )
 
-  test("plain 429 still cools the credential", async () => {
+  test("a plain 429 leaves settlement to dispatch", async () => {
     const connection = adapterConnection()
     const createChat = codebuddyNativeAdapter.createChatCompletions
     if (!createChat) throw new Error("adapter missing createChatCompletions")
@@ -370,21 +370,24 @@ describe("codebuddy adapter 6004 handling", () => {
         new Response(JSON.stringify({ msg: "slow down" }), { status: 429 }),
       )) as unknown as typeof fetch
 
-    await expect(
-      createChat({
-        target: target("deepseek-x"),
-        connection,
-        credential: connection.credentials[0],
-        payload: {
-          model: "deepseek-x",
-          messages: [{ role: "user", content: "hi" }],
-          stream: false,
-        },
-        signal: undefined,
-      }),
-    ).rejects.toThrow()
+    const error = await createChat({
+      target: target("deepseek-x"),
+      connection,
+      credential: connection.credentials[0],
+      payload: {
+        model: "deepseek-x",
+        messages: [{ role: "user", content: "hi" }],
+        stream: false,
+      },
+      signal: undefined,
+    }).catch((error: unknown) => error)
+    expect(error).toBeInstanceOf(HTTPError)
 
-    expect(connection.credentials[0].status).toBe("cooldown")
+    // The adapter classifies and throws; dispatch is the only writer of
+    // credential state. That single writer is what makes the penalty land on
+    // the stored credential instead of an adapter-local copy.
+    expect(connection.credentials[0].status).toBe("ready")
+    expect(connection.credentials[0].cooldownUntil).toBeUndefined()
     expect(isModelCoolingDown("__cb-cred", "deepseek-x")).toBe(false)
   })
 
