@@ -22,7 +22,7 @@ import {
 } from "~/lib/provider-connections"
 import { findEffectiveCredential } from "~/lib/provider-connections/anonymous-credential"
 
-import { buildRouteTargets } from "./build"
+import { buildRouteTargetsForRouting } from "./build"
 import { selectGroupRouteTarget } from "./group-select"
 import { resolveModelRouting } from "./model-reference"
 import { selectRouteTarget } from "./select"
@@ -69,12 +69,7 @@ export function switchToNextRouteTarget(
     })
   }
   const routing = resolveModelRouting(modelId)
-  const candidates = buildRouteTargets({
-    connectionId: routing.connectionId,
-    legacyProvider: routing.legacyProvider,
-    accountPrefix: routing.accountPrefix,
-    publicModelId: routing.modelId,
-    aliasRestriction: routing.aliasRestriction,
+  const candidates = buildRouteTargetsForRouting(routing, {
     endpoint,
     compact: session?.compact,
   })
@@ -132,12 +127,7 @@ export function selectNextResponsesWsTarget(
     })
   }
   const routing = resolveModelRouting(modelId)
-  const candidates = buildRouteTargets({
-    legacyProvider: routing.legacyProvider,
-    accountPrefix: routing.accountPrefix,
-    publicModelId: routing.modelId,
-    connectionId: routing.connectionId,
-    aliasRestriction: routing.aliasRestriction,
+  const candidates = buildRouteTargetsForRouting(routing, {
     endpoint: "responses",
     compact: session?.compact,
   }).filter(

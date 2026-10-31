@@ -46,6 +46,7 @@ import {
 } from "~/lib/provider-connections/anonymous-credential"
 
 import { connectionModelEndpoints } from "./model-support"
+import { type ResolvedModelRouting } from "./model-reference"
 import { isResting } from "./resting"
 
 /**
@@ -270,6 +271,38 @@ export function buildRouteTargets(
   }
 
   return targets
+}
+
+/** Options a model reference cannot carry itself. */
+interface ModelRouteTargetOptions {
+  /** 限定 endpoint(chat/messages/responses/embeddings)。 */
+  endpoint?: ModelEndpoint
+  /** 压缩请求:只保留原生 responses 直通。 */
+  compact?: boolean
+  /** 保留暂时不可用的候选(诊断 / trace 需要)。默认 true。 */
+  onlyAvailable?: boolean
+}
+
+/**
+ * Build candidates for one already-resolved model reference, applying every
+ * routing dimension the reference carries. Callers used to copy these seven
+ * fields by hand and had already drifted apart (the intent classifier lost
+ * four of them), so new dimensions must be added here, not at each call site.
+ */
+export function buildRouteTargetsForRouting(
+  routing: ResolvedModelRouting,
+  options: ModelRouteTargetOptions = {},
+): Array<RouteTarget> {
+  return buildRouteTargets({
+    connectionId: routing.connectionId,
+    legacyProvider: routing.legacyProvider,
+    accountPrefix: routing.accountPrefix,
+    publicModelId: routing.modelId,
+    aliasRestriction: routing.aliasRestriction,
+    endpoint: options.endpoint,
+    onlyAvailable: options.onlyAvailable,
+    compact: options.compact,
+  })
 }
 
 /**

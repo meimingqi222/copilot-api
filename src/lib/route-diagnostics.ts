@@ -14,7 +14,7 @@ import {
   refreshConnectionAvailability,
 } from "~/lib/provider-connections"
 import {
-  buildRouteTargets,
+  buildRouteTargetsForRouting,
   resolveModelRouting,
   routeEvidenceFor,
   targetKey,
@@ -51,12 +51,7 @@ export function diagnoseRouteFailure(
     model === options.model ?
       `"${model}"`
     : `"${model}" (routing group ${options.model})`
-  const allCandidates = buildRouteTargets({
-    connectionId: routing.connectionId,
-    legacyProvider: routing.legacyProvider,
-    accountPrefix: routing.accountPrefix,
-    publicModelId: routing.modelId,
-    aliasRestriction: routing.aliasRestriction,
+  const allCandidates = buildRouteTargetsForRouting(routing, {
     endpoint: options.endpoint,
     onlyAvailable: false,
     compact: options.compact,

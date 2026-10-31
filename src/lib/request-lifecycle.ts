@@ -60,10 +60,19 @@ export function getKnownRouteErrorDetails(
   return undefined
 }
 
+/**
+ * Wire-specific envelope for a guard/rate-limit rejection. Each endpoint speaks
+ * its own protocol: OpenAI (`{error:{message,type}}`), Anthropic
+ * (`{type:"error",error:{type,message}}`) and Gemini
+ * (`{error:{code,message,status}}`).
+ */
+type KnownRouteErrorEnvelope = "openai" | "anthropic" | "gemini"
+
 export function respondToKnownRouteError(
   c: Context,
   error: unknown,
   rateLimitType = "error",
+  envelope: KnownRouteErrorEnvelope = "openai",
 ): Response | undefined {
   const details = getKnownRouteErrorDetails(error, rateLimitType)
   if (!details) {
@@ -94,10 +103,32 @@ export function respondToKnownRouteError(
     return new Response(null, { status: 499 })
   }
 
-  return c.json(
-    { error: { message: details.message, type: details.type } },
-    { status: details.status as 403 | 429 },
-  )
+  return c.json(knownRouteErrorBody(envelope, details), {
+    status: details.status as 403 | 429,
+  })
+}
+
+function knownRouteErrorBody(
+  envelope: KnownRouteErrorEnvelope,
+  details: { status: number; message: string; type: string },
+): Record<string, unknown> {
+  if (envelope === "anthropic") {
+    return {
+      type: "error",
+      error: { type: details.type, message: details.message },
+    }
+  }
+  if (envelope === "gemini") {
+    return {
+      error: {
+        code: details.status,
+        message: details.message,
+        status:
+          details.status === 429 ? "RESOURCE_EXHAUSTED" : "PERMISSION_DENIED",
+      },
+    }
+  }
+  return { error: { message: details.message, type: details.type } }
 }
 
 function getKnownRouteErrorSource(error: unknown): string {

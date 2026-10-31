@@ -12,7 +12,7 @@ import type { GroupRoutingMode } from "~/lib/routing-groups/types"
 
 import { splitMember } from "~/lib/routing-groups/resolve"
 
-import { buildRouteTargets } from "~/lib/route-target/build"
+import { buildRouteTargetsForRouting } from "~/lib/route-target/build"
 import { resolveModelRouting } from "~/lib/route-target/model-reference"
 import { selectRouteTarget } from "~/lib/route-target/select"
 import { selectGroupPolicyTarget } from "~/lib/route-target/group-policy"
@@ -55,12 +55,7 @@ export function buildGroupRouteTargets(
     const { model } = splitMember(member)
     const routing = resolveModelRouting(model)
     out.push(
-      ...buildRouteTargets({
-        connectionId: routing.connectionId,
-        legacyProvider: routing.legacyProvider,
-        accountPrefix: routing.accountPrefix,
-        publicModelId: routing.modelId,
-        aliasRestriction: routing.aliasRestriction,
+      ...buildRouteTargetsForRouting(routing, {
         endpoint: options.endpoint,
         compact: options.compact,
         onlyAvailable: options.onlyAvailable ?? false,

@@ -19,7 +19,12 @@ geminiRoutes.post("/models/*", async (c) => {
     return await handleGenerateContent(c)
   } catch (error) {
     recordTraceError(c, error)
-    const knownErrorResponse = respondToKnownRouteError(c, error)
+    const knownErrorResponse = respondToKnownRouteError(
+      c,
+      error,
+      "rate_limit_error",
+      "gemini",
+    )
     if (knownErrorResponse) return knownErrorResponse
     return forwardError(c, error)
   }

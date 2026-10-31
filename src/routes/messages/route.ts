@@ -18,6 +18,7 @@ messageRoutes.post("/", async (c) => {
       c,
       error,
       "rate_limit_error",
+      "anthropic",
     )
     if (knownErrorResponse) {
       return knownErrorResponse

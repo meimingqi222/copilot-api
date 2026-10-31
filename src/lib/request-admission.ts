@@ -34,7 +34,7 @@ import { findEffectiveCredential } from "~/lib/provider-connections/anonymous-cr
 import { patchRequestLog, publishTraceSnapshot } from "~/lib/request-log"
 import {
   buildGroupRouteTargets,
-  buildRouteTargets,
+  buildRouteTargetsForRouting,
   commitRouteTargetAffinity,
   resolveModelRouting,
   selectGroupRouteTarget,
@@ -551,12 +551,7 @@ function buildAdmissionCandidates(
 ): AdmissionRoutePool {
   const routedModel = decision?.model ?? options.model
   const routing = resolveModelRouting(routedModel)
-  const candidates = buildRouteTargets({
-    connectionId: routing.connectionId,
-    legacyProvider: routing.legacyProvider,
-    accountPrefix: routing.accountPrefix,
-    publicModelId: routing.modelId,
-    aliasRestriction: routing.aliasRestriction,
+  const candidates = buildRouteTargetsForRouting(routing, {
     endpoint: options.endpoint,
     compact: options.compact,
   })
@@ -1091,12 +1086,7 @@ async function prepareRequestAdmissionImpl(
         compact: options.compact,
         onlyAvailable: false,
       })
-    : buildRouteTargets({
-        connectionId: routing.connectionId,
-        legacyProvider: routing.legacyProvider,
-        accountPrefix: routing.accountPrefix,
-        publicModelId: routing.modelId,
-        aliasRestriction: routing.aliasRestriction,
+    : buildRouteTargetsForRouting(routing, {
         endpoint: options.endpoint,
         onlyAvailable: false,
         compact: options.compact,

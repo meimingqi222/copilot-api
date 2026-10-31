@@ -36,7 +36,7 @@ interface ParsedModelRef {
   modelId: string
 }
 
-interface ResolvedModelRouting {
+export interface ResolvedModelRouting {
   connectionId?: string
   legacyProvider?: ProviderId
   accountPrefix?: string
