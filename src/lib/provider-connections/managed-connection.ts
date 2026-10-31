@@ -370,16 +370,12 @@ function connectionCredentialRecord(
   const ctx = cred.context
   const schema = PROVIDER_METADATA[provider].credentials
 
+  // The only rename the generic descriptor keys cannot express: the OAuth
+  // flow stores the account id as `oauthAccountId`, exports call it `accountId`.
   if (ctx && isOAuthProviderId(provider)) {
-    for (const key of ["refreshToken", "idToken", "expiresAt"]) {
-      if (ctx[key] !== undefined) credentials[key] = ctx[key]
-    }
     if (typeof ctx.oauthAccountId === "string") {
       credentials.accountId = ctx.oauthAccountId
     }
-    if (typeof ctx.projectId === "string") credentials.projectId = ctx.projectId
-    if (typeof ctx.deviceId === "string") credentials.deviceId = ctx.deviceId
-    if (typeof ctx.apiKey === "string") credentials.apiKey = ctx.apiKey
   }
   const extraKeys = getConnectionCredentialExtras(conn)
   if (extraKeys) {

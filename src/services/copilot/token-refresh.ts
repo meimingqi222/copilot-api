@@ -103,7 +103,7 @@ export async function refreshCopilotTokenForConnection(
   scheduleConnectionTokenRefresh(connection.id, data.refresh_in)
 }
 
-export function scheduleConnectionTokenRefresh(
+function scheduleConnectionTokenRefresh(
   connectionId: string,
   refreshInSeconds: number,
 ): void {

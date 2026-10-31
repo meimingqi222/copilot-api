@@ -13,6 +13,8 @@ import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import {
   __resetProviderConnectionsForTest,
   createConnection,
+  getConnectionAuthError,
+  getConnectionAuthStatus,
   getConnectionRoutability,
   getProviderConnection,
   markCredentialAuthError,
@@ -113,6 +115,10 @@ describe("getConnectionRoutability", () => {
     const result = getConnectionRoutability(mustGet("c1"))
     expect(result.routable).toBe(false)
     expect(result.reason).toBe("auth_error")
+    // The admin view must read the same truth the router does, not the stale
+    // metadata mirror (which still says "ready").
+    expect(getConnectionAuthStatus(mustGet("c1"))).toBe("error")
+    expect(getConnectionAuthError(mustGet("c1"))).toBe("bad key")
   })
 
   test("connection-level legacy authStatus error excludes the connection", async () => {

@@ -31,7 +31,6 @@ import {
   scheduleConnectionModelDiscovery,
 } from "./lib/provider-connections"
 import { scheduleQuotaRefresh } from "./lib/quota/scheduler"
-import { initializeCredentialRefreshers } from "./services/providers/credential-refreshers"
 import { ensureDirectProviderConnections } from "./lib/provider-defaults"
 import { initProxyFromEnv } from "./lib/proxy"
 import { setClaudeCallbackBaseUrl } from "./services/claude/cli/server-address"
@@ -251,7 +250,6 @@ async function runServer(options: RunServerOptions): Promise<void> {
   await initializeProviderConnections()
   loadModelAliases()
   initializeProtocolAdapters()
-  initializeCredentialRefreshers()
 
   // Refresh Copilot tokens for copilot-native connections
   for (const connection of listAccountManagedConnections()) {

@@ -187,7 +187,7 @@ export async function refreshLobsteraiTokenForConnection(
 }
 
 /** 是否需要在过期前刷新（提前 5 分钟）。 */
-export function lobsteraiNeedsRefresh(credential: ApiCredential): boolean {
+function lobsteraiNeedsRefresh(credential: ApiCredential): boolean {
   const ctx = readContext(credential)
   const expiresAt = ctx.expiresAt ?? jwtExpiryMs(credential.value)
   if (!expiresAt) return true

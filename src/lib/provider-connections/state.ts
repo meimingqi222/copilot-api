@@ -91,7 +91,6 @@ function cloneConnections(): Array<ProviderConnection> {
 }
 
 async function withMutation<T>(operation: () => T | Promise<T>): Promise<T> {
-  const previous = cloneConnections()
   const run = mutationQueue
     .catch((error: unknown) => {
       logger.warn(
@@ -99,6 +98,11 @@ async function withMutation<T>(operation: () => T | Promise<T>): Promise<T> {
       )
     })
     .then(async () => {
+      // Capture the rollback point inside the serial queue, right before this
+      // operation runs. A snapshot taken before enqueueing would also undo
+      // mutations that ran (and persisted) ahead of this one when this
+      // operation fails.
+      const previous = cloneConnections()
       try {
         const result = await operation()
         await persist()

@@ -1,16 +1,11 @@
 /**
- * 凭据刷新器接口。
+ * 凭据刷新策略名，持久化在 connection / credential 上。
  *
- * 对 Copilot/OAuth 等需要定期刷新 token 的 provider,
- * credential.value 代表"当前生效 token",credential.context 代表"刷新所需的源材料"。
- *
- * 语义约定:
- * - credential.value = 当前用于发请求的 token(Bearer ${credential.value})
- * - credential.context = 刷新所需的源材料(githubToken / refreshToken 等)
- * - buildBaseHeaders 始终使用 credential.value,无需感知 refresher
+ * 真正的刷新由各 provider 的 connection-native 实现与其调度器完成
+ * （refreshCopilotTokenForConnection / refreshOAuthConnectionToken /
+ * scheduleOAuthRefreshForConnection 等），不存在按类型分派的运行时注册表。
+ * 这里只保留持久化的策略标识，供旧文件解析与展示使用。
  */
-import type { ApiCredential } from "./types"
-
 export type CredentialRefresherType =
   | "copilot-token"
   | "oauth-token"
@@ -18,24 +13,3 @@ export type CredentialRefresherType =
   | "codebuddy-token"
   | "lobsterai-token"
   | "static"
-
-export interface CredentialRefresher {
-  type: CredentialRefresherType
-
-  /** 刷新 credential.value,更新 context 中的过期时间。 */
-  refresh(credential: ApiCredential): Promise<void>
-
-  /** 判断是否需要刷新(基于 context 中的 expiry)。 */
-  needsRefresh(credential: ApiCredential): boolean
-
-  /** 安排下次自动刷新。 */
-  scheduleNextRefresh(credential: ApiCredential): void
-}
-
-const registry = new Map<CredentialRefresherType, CredentialRefresher>()
-
-export function registerCredentialRefresher(
-  refresher: CredentialRefresher,
-): void {
-  registry.set(refresher.type, refresher)
-}

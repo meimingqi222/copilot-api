@@ -35,6 +35,7 @@ import {
   setConnectionCredentialExtra,
 } from "~/lib/provider-connections"
 import { createOAuthConnection } from "~/services/oauth/strategy-types"
+import { applyQoderOAuthBundle } from "~/services/oauth/qoder"
 import {
   applyTraeCnOAuthBundle,
   newTraeCnDevice,
@@ -425,6 +426,42 @@ test("zcode export/import preserves the session JWT used for plan claims", async
     (c) => c.name === "zcode-claim-jwt",
   )!
   expect(zcodeSessionJwt(restored)).toBe("zcode-session-jwt")
+})
+
+test("qoder export/import preserves the device identity used for COSY signing", async () => {
+  const original = createOAuthConnection("qoder", "qoder-device")
+  applyQoderOAuthBundle(original, {
+    jobToken: "job-token",
+    jobRefreshToken: "job-refresh",
+    expiresAt: Date.now() + 3600_000,
+    deviceToken: "device-token",
+    deviceRefreshToken: "device-refresh",
+    uid: "uid-1",
+    machineId: "machine-1",
+    chatTokenKind: "device",
+    email: "qoder@example.com",
+  })
+  const exported = serializeConnectionForExport(original)
+  expect(exported.credentials).toMatchObject({
+    uid: "uid-1",
+    machineId: "machine-1",
+    deviceToken: "device-token",
+    deviceRefreshToken: "device-refresh",
+    chatTokenKind: "device",
+  })
+
+  const { body } = await importAccounts([exported])
+  expect(body.imported).toBe(1)
+  expect(body.failed).toBe(0)
+  const restored = listAccountManagedConnections().find(
+    (c) => c.name === "qoder-device",
+  )!
+  const context = restored.credentials[0]?.context as Record<string, unknown>
+  expect(context.uid).toBe("uid-1")
+  expect(context.machineId).toBe("machine-1")
+  expect(context.deviceToken).toBe("device-token")
+  expect(context.deviceRefreshToken).toBe("device-refresh")
+  expect(context.chatTokenKind).toBe("device")
 })
 
 /** Guard against the extraction dropping the provider on the account shape. */

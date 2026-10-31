@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 
 import {
   __resetProviderConnectionsForTest,
+  addModel,
   classifyUpstreamError,
   createConnection,
   DEFAULTS,
@@ -99,6 +100,30 @@ describe("provider-connections state", () => {
     const conn = getProviderConnection("deepseek")
     expect(conn?.protocol).toBe("openai-compatible")
     expect(conn?.credentials[0].status).toBe("ready")
+  })
+
+  test("a queued mutation that fails keeps an earlier successful write", async () => {
+    await setupSimpleConnection()
+    const duplicate: Parameters<typeof addModel>[1] = {
+      publicId: "deepseek-chat",
+      upstreamId: "deepseek-chat",
+      endpoints: ["chat"],
+      enabled: true,
+    }
+    // Enqueue both before either runs: the failing one must roll back only its
+    // own operation, not the snapshot taken before the successful one.
+    const first = addModel("deepseek", {
+      publicId: "deepseek-reasoner",
+      upstreamId: "deepseek-reasoner",
+      endpoints: ["chat"],
+      enabled: true,
+    })
+    const second = addModel("deepseek", duplicate)
+    await first
+    await expect(second).rejects.toThrow(/already exists/)
+    expect(
+      getProviderConnection("deepseek")?.models?.map((m) => m.publicId),
+    ).toEqual(["deepseek-chat", "deepseek-reasoner"])
   })
 
   test("switching to anthropic-compatible migrates existing chat models to messages", async () => {

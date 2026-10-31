@@ -248,12 +248,19 @@ export function getConnectionCredentialExtras(
 }
 
 export function getConnectionAuthStatus(conn: ProviderConnection): string {
+  // credential.status is the live truth: markCredentialAuthError writes it and
+  // the router already refuses auth_error credentials. metadata.authStatus is
+  // the OAuth-flow mirror, so read it only when the credential says nothing.
+  const cred = conn.credentials[0]
+  if (cred?.status === "auth_error") return "error"
   return readConnectionMetadata(conn)?.authStatus ?? "ready"
 }
 
 export function getConnectionAuthError(
   conn: ProviderConnection,
 ): string | null {
+  const cred = conn.credentials[0]
+  if (cred?.status === "auth_error" && cred.lastError) return cred.lastError
   return readConnectionMetadata(conn)?.authError ?? null
 }
 

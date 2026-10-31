@@ -25,6 +25,40 @@ interface ProviderCredentials {
   defaultHeaders?: Readonly<Record<string, string>>
 }
 
+/**
+ * Context keys every OAuth provider shares. Declared here so descriptors only
+ * add what is provider-specific; `connectionCredentialRecord` reads the merged
+ * list instead of keeping a second hard-coded copy.
+ */
+const OAUTH_CONTEXT_STRING_KEYS = [
+  "refreshToken",
+  "idToken",
+  "projectId",
+  "deviceId",
+  "apiKey",
+] as const
+const OAUTH_CONTEXT_VALUE_KEYS = ["expiresAt"] as const
+
+function withOAuthContextKeys(
+  declared: ProviderCredentials,
+): ProviderCredentials {
+  return {
+    ...declared,
+    contextStringKeys: [
+      ...new Set([
+        ...OAUTH_CONTEXT_STRING_KEYS,
+        ...(declared.contextStringKeys ?? []),
+      ]),
+    ],
+    contextValueKeys: [
+      ...new Set([
+        ...OAUTH_CONTEXT_VALUE_KEYS,
+        ...(declared.contextValueKeys ?? []),
+      ]),
+    ],
+  }
+}
+
 /** Keep literal identity types without depending on the assembled provider catalog. */
 export function defineProviderMetadata<
   const Id extends string,
@@ -38,8 +72,11 @@ export function defineProviderMetadata<
   descriptor: ProviderDescriptor<Id>
 }) {
   const credentials: ProviderCredentials | undefined =
-    metadata.credentials
-    ?? (metadata.oauth ? { primaryKey: "accessToken" } : undefined)
+    metadata.oauth ?
+      withOAuthContextKeys(
+        metadata.credentials ?? { primaryKey: "accessToken" },
+      )
+    : metadata.credentials
   return {
     ...metadata,
     credentials,
