@@ -30,6 +30,7 @@ import {
   type GroupDecisionInput,
 } from "~/lib/request-admission"
 import { getRequestLogContext, initRequestLog } from "~/lib/request-log"
+import { getRedactionDiagnostics } from "~/lib/redaction/diagnostics"
 import {
   classifyIntent,
   clearRoutingGroupsCacheForTest,
@@ -46,6 +47,7 @@ import {
   resetIntentClassifierCompleterForTest,
   setIntentClassifierCompleterForTest,
 } from "~/lib/routing-groups/classifier-default"
+import { initializeSystemConfig } from "~/lib/system-config"
 
 const INPUT: IntentClassifierInput = {
   text: "write me a parser",
@@ -53,6 +55,9 @@ const INPUT: IntentClassifierInput = {
   provider: "vendor",
   model: "small-model",
 }
+
+/** A home path, which the default redaction rules mask. */
+const redactionHome = ["C:", "Users", "Fixture Person"].join("\\")
 
 beforeEach(() => {
   resetIntentClassifierForTest()
@@ -292,6 +297,75 @@ describe("an intent rule in admission", () => {
     const body = await admit("write me a parser")
     expect(body.publicModelId).toBe("vendor/small-model")
     expect(asked).toEqual([])
+  })
+
+  test("the classifier's own model call is redacted and recorded", async () => {
+    // The classifier resolves its target by provider id, which only matches an
+    // account-managed connection (`connectionMatchesProvider`). Endpoint
+    // connections such as the lane fixture above never match, so this case
+    // needs an account-shaped one to reach the upstream at all.
+    await upsertRoutingGroup({
+      ...group,
+      classifier: { provider: "codebuddy", model: "large-model" },
+    })
+    const upstreamConnection = connection()
+    // codebuddy-native is account-managed (so `legacyProvider` matches it) and
+    // implements createChatCompletions with no extra signing material, which is
+    // what the classifier's call needs to reach an upstream.
+    upstreamConnection.protocol = "codebuddy-native"
+    upstreamConnection.baseUrl = "https://upstream.test/v2"
+    upstreamConnection.metadata = {
+      provider: "codebuddy",
+      quotaState: "unknown",
+    }
+    upsertProviderConnection(upstreamConnection)
+    const originalEnv = process.env.UPSTREAM_REDACTION
+    const originalFetch = globalThis.fetch
+    process.env.UPSTREAM_REDACTION = '{"enabled":true}'
+    initializeSystemConfig({ save: () => {}, onChange: () => {} })
+    try {
+      // The classifier reads the caller's text during admission, before the
+      // request owns a redaction scope. Without its own scope the plaintext
+      // reached a different model unrecorded and absent from the diagnostics.
+      const bodies: Array<string> = []
+      globalThis.fetch = ((_url: string, init?: RequestInit) => {
+        bodies.push(String(init?.body ?? ""))
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: "x",
+              object: "chat.completion",
+              created: 1,
+              model: "small",
+              choices: [
+                {
+                  index: 0,
+                  message: { role: "assistant", content: "code" },
+                  finish_reason: "stop",
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        )
+      }) as unknown as typeof fetch
+
+      // A home path is what the redaction rules mask by default.
+      await admit(`read ${redactionHome}/project and write me a parser`)
+
+      // The classifier reached an upstream, and that call is a logged redaction
+      // attempt rather than an invisible side channel. The sensitive part is
+      // gone from the body while the request text stays readable.
+      expect(bodies).toHaveLength(1)
+      expect(getRedactionDiagnostics().entries.length).toBeGreaterThan(0)
+      expect(bodies[0]).toContain("write me a parser")
+      expect(bodies[0]).not.toContain("Fixture Person")
+    } finally {
+      globalThis.fetch = originalFetch
+      if (originalEnv === undefined) delete process.env.UPSTREAM_REDACTION
+      else process.env.UPSTREAM_REDACTION = originalEnv
+      initializeSystemConfig({ save: () => {}, onChange: () => {} })
+    }
   })
 })
 

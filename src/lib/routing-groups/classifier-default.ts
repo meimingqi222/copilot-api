@@ -25,6 +25,7 @@ import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
 import { LocalPayloadUnsupportedError } from "~/lib/error"
 import { getProviderConnection } from "~/lib/provider-connections"
 import { findEffectiveCredential } from "~/lib/provider-connections/anonymous-credential"
+import { runRedactedCall, withRedactionUpstream } from "~/lib/redaction/context"
 import { buildRouteTargets, selectRouteTarget } from "~/lib/route-target"
 import { identityFromAdmission, recordAccountUsage } from "~/lib/usage"
 import { toPricingRound } from "~/lib/usage-pricing-rounds"
@@ -152,38 +153,55 @@ async function completeWithModel(
   const timeout = AbortSignal.timeout(COMPLETION_TIMEOUT_MS)
   const effectiveSignal = signal ? AbortSignal.any([signal, timeout]) : timeout
   let used: RequestAdmission = { target, connection, credential }
-  const result = await executeWithFailover({
-    payload,
-    admission: used,
-    routeKind: "chat",
-    logPrefix: "[intent-classifier]",
-    signal: effectiveSignal,
-    execute: (adapter, currentTarget, current) => {
-      used = current
-      const createChat = adapter?.createChatCompletions?.bind(adapter)
-      if (!createChat) {
-        return Promise.reject(
-          new LocalPayloadUnsupportedError(
-            `Protocol "${currentTarget.protocol}" cannot serve chat completions`,
-          ),
-        )
-      }
-      return createChat({
-        target: currentTarget,
-        connection: current.connection,
-        credential: current.credential,
-        // The public alias is what the client asked for; the upstream only
-        // understands the target's model id (renamed models keep a distinct
-        // upstreamId). Failover may land on a different target, so resolve per
-        // attempt.
-        payload: {
-          ...payload,
-          model: resolveDispatchModel(currentTarget, adapter),
-        },
-        signal: effectiveSignal,
-      })
-    },
-  })
+  // The classifier reads the caller's message text. When upstream redaction is
+  // on, that text must be masked before it leaves for a different model — this
+  // call happens during admission, before the request's own redaction scope
+  // exists, so it opens its own. Without this the plaintext went out unrecorded
+  // and absent from the redaction diagnostics.
+  const result = await runRedactedCall(payload, undefined, async (prepared) =>
+    withRedactionUpstream(
+      {
+        id: connection.id,
+        name: connection.name,
+        protocol: connection.protocol,
+        model: target.publicModelId,
+      },
+      prepared,
+      () =>
+        executeWithFailover({
+          payload: prepared,
+          admission: used,
+          routeKind: "chat",
+          logPrefix: "[intent-classifier]",
+          signal: effectiveSignal,
+          execute: (adapter, currentTarget, current) => {
+            used = current
+            const createChat = adapter?.createChatCompletions?.bind(adapter)
+            if (!createChat) {
+              return Promise.reject(
+                new LocalPayloadUnsupportedError(
+                  `Protocol "${currentTarget.protocol}" cannot serve chat completions`,
+                ),
+              )
+            }
+            return createChat({
+              target: currentTarget,
+              connection: current.connection,
+              credential: current.credential,
+              // The public alias is what the client asked for; the upstream only
+              // understands the target's model id (renamed models keep a distinct
+              // upstreamId). Failover may land on a different target, so resolve
+              // per attempt.
+              payload: {
+                ...prepared,
+                model: resolveDispatchModel(currentTarget, adapter),
+              },
+              signal: effectiveSignal,
+            })
+          },
+        }),
+    ),
+  )
   if (!("response" in result)) return ""
 
   const response = result.response as {

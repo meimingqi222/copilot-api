@@ -19,6 +19,7 @@ import { copilotBaseUrl, copilotHeadersForToken } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { parseModelReference } from "~/lib/route-target/model-reference"
 import { logger } from "~/lib/logger"
+import { reportUpstreamRateLimitMs } from "~/lib/rate-limit"
 import { state } from "~/lib/state"
 import { copilotTokenFromCredential } from "~/services/copilot/token-refresh"
 import {
@@ -132,6 +133,12 @@ export async function createCopilotChatCompletionsOnce(
     logger.warn(
       `Copilot API rate limited, retry ${retryCount + 1}/${maxRetries} after ${delayMs}ms`,
     )
+
+    // The private retry keeps a transient 429 from becoming a whole-connection
+    // rest, but the shared limiter still has to see the failure: otherwise this
+    // endpoint backs off while every other request keeps hammering the same
+    // account, and the request log shows a clean request that never happened.
+    await reportUpstreamRateLimitMs(connection.id, delayMs)
 
     if (signal?.aborted) {
       throw new HTTPError(

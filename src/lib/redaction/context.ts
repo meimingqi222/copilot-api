@@ -1020,9 +1020,7 @@ export function maskUpstream<T>(value: T): T {
   const masked = current.scope.mask(value, current.issuer)
   current.publish?.()
   return masked
-}
-
-/** Adapters and lazy search streams stay in the same scope, including final serializers. */
+} /** Adapters and lazy search streams stay in the same scope, including final serializers. */
 export function withRedactionIssuer<T>(issuer: string, run: () => T): T {
   const current = active.getStore()
   return current ? active.run({ ...current, issuer }, run) : run()
