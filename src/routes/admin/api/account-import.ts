@@ -31,6 +31,7 @@ import {
   refreshCopilotTokenForConnection,
 } from "~/services/copilot/token-refresh"
 import { scheduleLobsteraiRefreshForAllConnections } from "~/services/lobsterai/token-refresh"
+import { scheduleCodebuddyRefreshForAllConnections } from "~/services/codebuddy/token-refresh"
 import {
   importCpaAuthRecords,
   parseCpaAuthPayload,
@@ -517,7 +518,11 @@ importAccountRoutes.post("/import-cpa", async (c) => {
     if (result.imported.length > 0) {
       initializeProviderRegistry()
       await persistProviderConnections()
+      // Both providers refresh on a timer and both are importable here; only
+      // scheduling one left the other's new accounts without a refresh until
+      // the next restart.
       scheduleLobsteraiRefreshForAllConnections()
+      scheduleCodebuddyRefreshForAllConnections()
       logger.info(
         `Imported ${result.imported.length} CPA auth account(s): ${result.imported.join(", ")}`,
       )
