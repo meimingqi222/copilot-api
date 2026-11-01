@@ -18,6 +18,19 @@ const BASE = {
 }
 
 describe("cleanClaudeEnv", () => {
+  test("clears inherited extra body and prompt cache switches", () => {
+    const keys = [
+      "CLAUDE_CODE_EXTRA_BODY",
+      "DISABLE_PROMPT_CACHING",
+      "DISABLE_PROMPT_CACHING_HAIKU",
+      "DISABLE_PROMPT_CACHING_SONNET",
+      "DISABLE_PROMPT_CACHING_OPUS",
+    ]
+    const env = cleanClaudeEnv(
+      Object.fromEntries(keys.map((key) => [key, "inherited"])),
+    )
+    for (const key of keys) expect(env[key]).toBeUndefined()
+  })
   test("drops every gateway and nesting override", () => {
     const env = cleanClaudeEnv(BASE)
     for (const key of [

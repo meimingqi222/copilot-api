@@ -5,6 +5,7 @@ import {
 import {
   parseStreamJsonLine,
   type ClaudeCliUsage,
+  type ClaudeStreamJsonEvent,
 } from "~/services/claude/cli/stream-json"
 import { readClaudeSearchResults } from "~/services/claude/cli/search-results"
 
@@ -12,10 +13,42 @@ function wire(event: unknown): string {
   return JSON.stringify({ type: "stream_event", event })
 }
 
+interface TurnOptions {
+  structured: boolean
+  allowTool?: (name: string) => boolean
+}
+
+function hiddenBlock(
+  block: ClaudeStreamJsonEvent["content_block"],
+  options: TurnOptions,
+): boolean {
+  if (block?.type !== "tool_use") return options.structured
+  const name = block.name ?? ""
+  return (
+    name === "WebSearch"
+    || name === "StructuredOutput"
+    || stripMcpToolPrefix(name) === CLAUDE_WAIT_TOOL_NAME
+    || options.allowTool?.(name) === false
+  )
+}
+
+function standingRefusal(
+  result: NonNullable<ReturnType<typeof parseStreamJsonLine>>,
+  stopReason: string | undefined,
+  structured: boolean,
+): boolean {
+  return (
+    !structured
+    && !result.api_error_status
+    && stopReason === "refusal"
+    && (result.api_error_status === 0 || result.stop_reason === "refusal")
+  )
+}
+
 /** Fold CLI-owned tool rounds into one response and wait for final validation. */
 export async function* normalizeClaudeTurns(
   lines: AsyncIterable<string>,
-  options: { structured: boolean },
+  options: TurnOptions,
 ): AsyncIterable<string> {
   let started = false
   let nextIndex = 0
@@ -107,12 +140,15 @@ export async function* normalizeClaudeTurns(
     }
     if (parsed.type === "result") {
       if (!started) yield start()
+      if (parsed.stop_reason) stopReason = parsed.stop_reason
       if (
-        parsed.is_error
+        (parsed.is_error
+          && !standingRefusal(parsed, stopReason, options.structured))
         || (options.structured && parsed.structured_output == null)
       ) {
         yield JSON.stringify({
           type: "result",
+          subtype: parsed.subtype,
           is_error: true,
           result:
             parsed.result?.trim()
@@ -180,12 +216,7 @@ export async function* normalizeClaudeTurns(
           && block.id
         )
           searchIds.add(block.id)
-        const ownTool =
-          block?.type === "tool_use"
-          && (block.name === "WebSearch"
-            || block.name === "StructuredOutput"
-            || stripMcpToolPrefix(block.name ?? "") === CLAUDE_WAIT_TOOL_NAME)
-        if (ownTool || (options.structured && block?.type !== "tool_use")) {
+        if (hiddenBlock(block, options)) {
           hidden.add(original)
           continue
         }

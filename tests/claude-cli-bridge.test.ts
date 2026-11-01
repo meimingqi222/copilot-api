@@ -144,6 +144,31 @@ function textOf(events: Array<{ type: string }>): string {
 // ── happy paths ─────────────────────────────────────────────────────────────
 
 describe("claude cli bridge", () => {
+  loopbackTest(
+    "tool_choice none refuses the callback without exposing or parking the tool",
+    async () => {
+      useCallbackGateway()
+      process.env.FAKE_CLAUDE_SCENARIO = "tool"
+      const reply = await collectClaudeCliMessages(context, {
+        ...userPayload("answer in words"),
+        tool_choice: { type: "none" },
+        tools: [{ name: "get_weather", input_schema: { type: "object" } }],
+      })
+      expect(reply.stop_reason).toBe("end_turn")
+      expect(reply.content.some((block) => block.type === "tool_use")).toBe(
+        false,
+      )
+      expect(JSON.stringify(reply.content)).toContain(
+        "not allowed for this turn",
+      )
+      expect(
+        runRegistry.findParked([TOOL_USE_ID], {
+          connectionId: context.connection.id,
+          credentialId: context.credential.id,
+        }),
+      ).toBeUndefined()
+    },
+  )
   loopbackTest.each(["text", "image"])(
     "replays a mixed tool continuation instead of dropping new instructions (%s)",
     async (kind) => {

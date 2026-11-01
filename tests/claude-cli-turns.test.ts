@@ -53,6 +53,67 @@ async function translate(values: Array<unknown>, structured = false) {
 }
 
 describe("CLI internal turn normalization", () => {
+  test.each([0, 429])(
+    "standing refusal keeps its stop reason but a later HTTP %s stays an error",
+    async (status) => {
+      const events = await translate([
+        ...turn("mcp__copilotapi__wait_for_tool", "refusal"),
+        {
+          type: "result",
+          is_error: true,
+          api_error_status: status,
+          stop_reason: "refusal",
+          result: "test failure",
+        },
+      ])
+      expect(events.some((event) => event.type === "error")).toBe(status !== 0)
+      expect(
+        events.findLast((event) => event.type === "message_delta"),
+      ).toMatchObject({ delta: { stop_reason: "refusal" } })
+    },
+  )
+  test("tool calls denied this turn never appear in client output", async () => {
+    const values = [
+      ...turn("mcp__copilotapi__get_weather"),
+      { type: "result", is_error: false },
+    ]
+    const events = await drain(
+      translateClaudeStreamJson(
+        normalizeClaudeTurns(lines(values), {
+          structured: false,
+          allowTool: () => false,
+        }),
+        { model: "test" },
+      ),
+    )
+    expect(events.some((event) => event.type === "content_block_start")).toBe(
+      false,
+    )
+    expect(
+      events.filter((event) => event.type === "message_stop"),
+    ).toHaveLength(1)
+  })
+  test("waits through a refusal for Claude Code's next attempt", async () => {
+    const events = await translate([
+      ...turn("mcp__copilotapi__wait_for_tool", "refusal"),
+      event({ type: "message_start", message: { usage: { input_tokens: 3 } } }),
+      event({
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text", text: "fallback answer" },
+      }),
+      event({ type: "content_block_stop", index: 0 }),
+      event({ type: "message_delta", delta: { stop_reason: "end_turn" } }),
+      event({ type: "message_stop" }),
+      { type: "result", is_error: false },
+    ])
+    expect(events.filter((item) => item.type === "message_stop")).toHaveLength(
+      1,
+    )
+    expect(
+      events.findLast((item) => item.type === "message_delta"),
+    ).toMatchObject({ delta: { stop_reason: "end_turn" } })
+  })
   test("associates parallel search results by tool use ID even out of order", async () => {
     const values = [
       event({ type: "message_start", message: { id: "parallel", usage: {} } }),

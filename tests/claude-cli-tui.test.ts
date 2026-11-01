@@ -11,6 +11,7 @@ import {
 import { setClaudeCliTestHooks } from "~/services/claude/cli/binary"
 import { claudeCliArgs } from "~/services/claude/cli/args"
 import { selectClaudeCliMode } from "~/services/claude/cli/mode"
+import { ClaudeCliUnavailableError } from "~/services/claude/cli/errors"
 import {
   interactiveClaudeArgs,
   pasteClaudeText,
@@ -125,27 +126,11 @@ test("mode selection preserves -p defaults and SDK-only contracts", () => {
       },
     },
     { tools: [{ type: "web_search_20250305", name: "web_search" }] },
-    {
-      messages: [
-        {
-          role: "user" as const,
-          content: [
-            {
-              type: "image" as const,
-              source: {
-                type: "url" as const,
-                url: "https://example.com/a.png",
-              },
-            },
-          ],
-        },
-      ],
-    },
     { messages: [{ role: "user" as const, content: "a".repeat(410 * 1024) }] },
   ])
-    expect(
-      selectClaudeCliMode(context.connection, { ...request, ...change }).mode,
-    ).toBe("print")
+    expect(() =>
+      selectClaudeCliMode(context.connection, { ...request, ...change }),
+    ).toThrow("Interactive mode")
   const args = interactiveClaudeArgs(
     claudeCliArgs({ model: "m", mcpConfigPath: "mcp.json", effort: "xhigh" }),
     "sid",
@@ -190,6 +175,125 @@ test.each(["tap", "transcript", "trust"])(
   },
   30_000,
 )
+
+test("interactive images are pasted as files in order and removed after acceptance", async () => {
+  process.env.FAKE_TUI_SCENARIO = "images"
+  const data =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="
+  const first = payload()
+  first.messages = [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "before" },
+        {
+          type: "image",
+          source: { type: "base64", media_type: "image/png", data },
+        },
+        { type: "text", text: "between" },
+        {
+          type: "image",
+          source: { type: "base64", media_type: "image/png", data },
+        },
+        { type: "text", text: "after" },
+      ],
+    },
+  ]
+  const reply = await collectClaudeCliMessages(context, first)
+  const detail = JSON.parse(text(reply)) as {
+    pid: number
+    input: string
+    images: Array<{ file: string; bytes: string }>
+  }
+  expect(detail.input).toMatch(/before\[Image #1\]between\[Image #2\]after/)
+  expect(detail.images.map((image) => image.bytes)).toEqual([data, data])
+  const cleanedBy = Date.now() + 2000
+  while (
+    (await Bun.file(detail.images[0].file).exists())
+    && Date.now() < cleanedBy
+  )
+    await Bun.sleep(20)
+  expect(await Bun.file(detail.images[0].file).exists()).toBe(false)
+  const follow = next(first, reply)
+  follow.messages[follow.messages.length - 1] = first.messages[0]
+  const second = JSON.parse(
+    text(await collectClaudeCliMessages(context, follow)),
+  ) as typeof detail
+  expect(second.pid).toBe(detail.pid)
+  expect(second.images.map((image) => image.bytes)).toEqual([data, data])
+  expect(second.input).toMatch(/before\[Image #1\]between\[Image #2\]after/)
+}, 30_000)
+
+test("a synthetic refusal waits for Claude Code's fallback instead of failing the stream", async () => {
+  const values: Array<unknown> = []
+  const events = new ClaudeTuiEvents((row) => values.push(row))
+  events.transcript({ type: "user", message: { content: "hi" } })
+  events.transcript({
+    type: "assistant",
+    message: {
+      id: "refused",
+      model: "real",
+      content: [{ type: "text", text: "partial" }],
+      stop_reason: "refusal",
+    },
+  })
+  events.transcript({
+    type: "assistant",
+    isApiErrorMessage: true,
+    message: {
+      model: "<synthetic>",
+      content: [{ type: "text", text: "safeguards refused" }],
+      stop_reason: "refusal",
+    },
+  })
+  events.transcript({
+    type: "assistant",
+    message: {
+      id: "fallback",
+      model: "real",
+      content: [{ type: "text", text: "answer" }],
+      stop_reason: "end_turn",
+    },
+  })
+  events.transcript({ type: "system", subtype: "turn_duration" })
+  events.tick()
+  const reply = await collectAnthropicResponse(
+    translateClaudeStreamJson(
+      normalizeClaudeTurns(
+        (async function* () {
+          for (const value of values) yield JSON.stringify(value)
+        })(),
+        { structured: false },
+      ),
+      { model: "test" },
+    ),
+    "test",
+  )
+  expect(reply.stop_reason).toBe("end_turn")
+  expect(text(reply)).toBe("partialanswer")
+})
+
+test("interactive safeguards reach the child and changed safety context starts a fresh run", async () => {
+  const first = {
+    ...payload(),
+    safeguards: [
+      {
+        dangerous_tool_use: {
+          classifier_context: { purpose: "fictional-test" },
+        },
+      },
+    ],
+  }
+  const reply = await collectClaudeCliMessages(context, first)
+  const detail = JSON.parse(text(reply)) as { pid: number; extraBody: unknown }
+  expect(detail.extraBody).toEqual({ safeguards: first.safeguards })
+  const follow = { ...next(first, reply), safeguards: [] }
+  const second = JSON.parse(
+    text(await collectClaudeCliMessages(context, follow)),
+  ) as { pid: number; extraBody: unknown }
+  expect(second.pid).not.toBe(detail.pid)
+  expect(second.extraBody).toEqual({ safeguards: [] })
+}, 30_000)
 
 test("transcript fallback preserves separate signed thinking rows and suppresses late tapped duplicates", async () => {
   const lines: Array<string> = []
@@ -363,10 +467,11 @@ loopbackTest(
   30_000,
 )
 
-test("interactive startup failure safely falls back before sending the prompt", async () => {
+test("interactive startup failure never launches a print request", async () => {
   process.env.FAKE_TUI_SCENARIO = "startup-fail"
-  const result = await collectClaudeCliMessages(context, payload())
-  expect(text(result)).toContain("hello")
+  await expect(
+    collectClaudeCliMessages(context, payload()),
+  ).rejects.toBeInstanceOf(ClaudeCliUnavailableError)
 }, 30_000)
 
 test("changing the account mode cannot reuse the previous interactive process", async () => {

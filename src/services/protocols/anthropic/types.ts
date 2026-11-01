@@ -39,6 +39,8 @@ export interface AnthropicMessagesPayload {
     format?: { type: "json_schema"; schema: Record<string, unknown> }
   }
   service_tier?: "auto" | "standard_only"
+  /** Claude-native safety context; forwarded in the CLI's isolated extra body. */
+  safeguards?: Array<Record<string, unknown>>
   reasoning_effort?:
     | "minimal"
     | "low"

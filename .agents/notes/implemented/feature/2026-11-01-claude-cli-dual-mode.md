@@ -25,11 +25,26 @@ cursor, so stripping ANSI from accumulated text cannot identify the choice.
 Only the service-owned empty working directory is trusted. Built-in tools
 remain disabled and only this run's MCP server is allowed.
 
-Images in the rendered prompt, native search, JSON Schema and text exceeding
-400 KB retain print mode. Search stays on its existing permission protocol so
+Requirement revised on 2026-11-01 after reviewing magpie's follow-up changes:
+an interactive account never falls back to print, including before user input.
+Native search, JSON Schema and text exceeding 400 KB are rejected before run
+checkout or startup. Search retains its existing Print permission protocol so
 domain and max-use constraints cannot disappear. Missing PTY support or failed
-interactive startup may fall back only before sending a user prompt. Both
-fallback paths log their use of print mode; they never change to legacy HTTP.
+interactive startup is a local unavailable error, without credential cooldown.
+Print remains an explicit account choice and is still the default.
+Claude-native safeguards are passed through the isolated `CLAUDE_CODE_EXTRA_BODY`;
+the complete payload session key forces a fresh run when that context changes.
+
+`src/services/claude/cli/tui-images.ts` accepts inline and public URL images,
+validates actual image bytes, pins checked DNS addresses at the socket and
+rechecks redirects. It deliberately loads `undici/index.js`: Bun's built-in
+undici Agent is a stub that ignores the required connector. Fetches are direct
+and carry no account credentials. Each image is at most 5 MB; message files and
+the per-run URL cache are capped at 20 MB, with 20 files per message and 32 cached
+URLs. Files are pasted in order, waiting for Claude Code's image acknowledgment,
+then deleted after the user row is persisted. Acknowledgments use only output
+since the current paste; retained markers from previous turns must not release
+the wait before Claude finishes loading the new image. Downloads stop on cancellation.
 
 `src/services/claude/cli/tui-events.ts` joins main tapped SSE with the session
 transcript by message ID. Streamed replies suppress their persisted twin;
@@ -38,6 +53,8 @@ thinking rows, and retains blocks appended after an earlier quiet interval.
 An unidentifiable main stream uses transcript output instead of exposing a
 background request. The helper removes its transcript after the PTY exits;
 forced termination retains the existing transcript TTL cleanup as a backstop.
+Synthetic refusal rows are held until Claude Code finishes retrying. A final
+refusal retains its stop reason; a subsequent HTTP error remains an error.
 
 ## Alternatives considered
 
@@ -45,8 +62,9 @@ Changing `CLAUDE_CODE_ENTRYPOINT` would only label a print run. Scraping rendere
 answer text would lose tool arguments, signatures and token usage. Routing
 native search through unrestricted interactive permissions would bypass caller
 constraints. Installing node-pty as mandatory would break print-only Linux
-installations without native build tools, so it is optional and loaded inside
-the startup fallback boundary.
+installations without native build tools, so it is optional and loaded only by
+the interactive helper. Retrying as print was deliberately removed because it
+changes the selected mode and prompt cache; startup failure cannot authorize it.
 
 ## Consequences
 
@@ -56,14 +74,15 @@ version-dependent, with complete-block transcript output as the fallback.
 The MIT-licensed magpie tap attribution is shipped with the build.
 
 `tsdown.config.ts` must keep node-pty external: bundling its JavaScript moves
-native-module and ConPTY-worker resolution into dist and silently forces every
-built run back to print mode. It also copies the tap and MIT notice to dist.
+native-module and ConPTY-worker resolution into dist and breaks every built
+interactive run. It also copies the tap and MIT notice to dist.
 Run the same PTY regressions against a build with
 `COPILOT_API_TEST_CLAUDE_ENTRY=dist/main.js bun test tests/claude-cli-tui.test.ts`.
 
 Regression coverage is in `tests/claude-cli-tui.test.ts` (real PTY input/output,
 partial trust redraw, signed thinking, tool callbacks, mode isolation, startup
-fallback and cancellation), `tests/account-update.test.ts`,
+refusal retries, images, strict startup failure and cancellation),
+`tests/claude-cli-images.test.ts`, `tests/account-update.test.ts`,
 `tests/accounts-claude-cli-status.test.ts` and `tests/claude-cli-env.test.ts`.
 `tests/admin-account-view-parity.test.ts` verifies the account API response,
 subsequent listing and the persisted connection record agree on the mode.

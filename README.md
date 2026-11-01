@@ -427,14 +427,21 @@ conversation reuse, proxy and cancellation paths. A Bun preload captures main
 response streams where the installed Claude version exposes them; otherwise
 the session transcript supplies complete content blocks. Transcripts stay in
 the service-owned account config directory and are removed when the run ends.
-Images in the prompt, native search, JSON Schema and prompts over 400 KB use
-`-p` for that request. Interactive startup failures also fall back before any
-user message is sent; both kinds of fallback are logged on the server.
+Interactive mode never falls back to `-p`. Native search, JSON Schema and prompts
+over 400 KB are rejected before startup; select Print explicitly for those
+requests. Startup failures fail the request and leave the saved mode unchanged.
+Inline images and public HTTP(S) image URLs are pasted as temporary image files.
+Downloads validate every destination (including DNS and redirects), inspect image
+bytes and cap each image at 5 MB. URL images use a direct, unauthenticated fetch,
+with a per-run cache bounded to 32 entries / 20 MB; image files are deleted once
+Claude Code accepts the message. Client cache marks use Claude Code's own caching.
+Claude-native `safeguards` are passed in the isolated startup environment; changing
+them starts a fresh run so an older safety context cannot be reused.
 
 The optional `node-pty` dependency supplies the PTY. Windows and macOS use its
 prebuilt binaries; Linux needs a working native build toolchain (Python, make
 and a C++ compiler) when installing dependencies. If the native module is
-unavailable, interactive startup falls back to `-p`. The stream tap is adapted
+unavailable, interactive startup reports an error. The stream tap is adapted
 from magpie under its MIT license, shipped in `dist/MAGPIE-LICENSE.txt`.
 
 Other knobs:

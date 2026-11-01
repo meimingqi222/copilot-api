@@ -16,6 +16,12 @@ import {
 
 const schema = { type: "object", properties: {} }
 
+test("tool_choice none preserves the same MCP definitions for the prompt cache", () => {
+  expect(bridgeTools(payload({ tool_choice: { type: "none" } }))).toEqual(
+    bridgeTools(payload()),
+  )
+})
+
 function payload(
   extra: Partial<AnthropicMessagesPayload> = {},
 ): AnthropicMessagesPayload {

@@ -86,6 +86,7 @@ import { claudeCallbackBaseUrl } from "~/services/claude/cli/server-address"
 import { readStreamJsonLines } from "~/services/claude/cli/stream-json"
 import {
   bridgeTools,
+  clientToolAllowed,
   declaredToolNames,
   toolResultIds,
   toolResults,
@@ -166,6 +167,7 @@ export async function streamClaudeCliMessages(
   payload: AnthropicMessagesPayload,
 ): Promise<AsyncIterable<AnthropicStreamEventData>> {
   context.signal?.throwIfAborted()
+  selectClaudeCliMode(context.connection, payload)
   new ClaudeSearchPolicy(payload)
   const scope = {
     connectionId: context.connection.id,
@@ -292,7 +294,7 @@ async function withHeadPeek(
 ): Promise<AsyncIterable<AnthropicStreamEventData>> {
   const iterator = segment[Symbol.asyncIterator]()
   const head: Array<AnthropicStreamEventData> = []
-  let failure: string | undefined
+  let failure: ClaudeCliError | ClaudeCliUnavailableError | undefined
 
   let timedOut = false
   const timer = setTimeout(() => {
@@ -306,7 +308,10 @@ async function withHeadPeek(
       const event = next.value
       head.push(event)
       if (event.type === "error") {
-        failure = event.error.message
+        failure =
+          event.error.type === "claude_cli_unavailable" ?
+            new ClaudeCliUnavailableError(event.error.message)
+          : new ClaudeCliError(event.error.message)
         break
       }
       if (
@@ -331,7 +336,7 @@ async function withHeadPeek(
   if (failure !== undefined) {
     run.abort()
     await iterator.return?.()
-    throw toHttpError(new ClaudeCliError(failure))
+    throw toHttpError(failure)
   }
 
   return prepend(head, iterator)
@@ -510,6 +515,7 @@ export class ClaudeCliRun implements BridgeRun {
         for await (const event of translateClaudeStreamJson(
           normalizeClaudeTurns(this.outputLines(), {
             structured: this.structured,
+            allowTool: (name) => clientToolAllowed(this.payload, name),
           }),
           {
             model,
@@ -546,13 +552,6 @@ export class ClaudeCliRun implements BridgeRun {
       readChunks(this.proc.stdout),
     )) {
       const status = parseStreamJsonLine(line)
-      if (status?.type === "system" && status.subtype === "copilot_cli_mode") {
-        logger.info(
-          "claude-cli: interactive startup unavailable; using -p for this run",
-          { connectionId: this.connectionId, reason: status.result },
-        )
-        continue
-      }
       if (!this.controls.handle(status)) yield line
     }
   }
@@ -784,6 +783,16 @@ export class ClaudeCliRun implements BridgeRun {
     if (this.finished) {
       throw new ClaudeCliError("the Claude Code run has ended")
     }
+    if (!clientToolAllowed(this.payload, name))
+      return {
+        is_error: true,
+        content: [
+          {
+            type: "text",
+            text: "This tool is not allowed for this turn. Answer without calling it.",
+          },
+        ],
+      }
     const ready = this.takePending(toolUseId)
     if (ready) return ready
     this.awaitingResult.add(toolUseId)
@@ -1019,11 +1028,7 @@ async function spawnRun(
         process.execPath,
         ...helperArgs(configPath, "claude-tui-helper"),
       ]
-    } else if (mode.reason)
-      logger.info("claude-cli: using -p for this request", {
-        reason: mode.reason,
-        connectionId: context.connection.id,
-      })
+    }
     context.signal?.throwIfAborted()
     const proc = Bun.spawn(command, {
       cwd: home,
@@ -1032,7 +1037,13 @@ async function spawnRun(
         proxyUrl: getConnectionProxyUrl(context.connection),
         // 让 CLI 的配置与会话（含对话转录）落在我们自己的目录里，
         // 而不是用户的 ~/.claude。已实测确认不影响 token 认证。
-        overrides: { CLAUDE_CONFIG_DIR: configDir },
+        overrides: {
+          CLAUDE_CONFIG_DIR: configDir,
+          CLAUDE_CODE_EXTRA_BODY:
+            payload.safeguards === undefined ?
+              undefined
+            : JSON.stringify({ safeguards: payload.safeguards }),
+        },
       }),
       stdin: "pipe",
       stdout: "pipe",

@@ -58,6 +58,8 @@ interface ClaudeStreamJsonLine {
   type?: string
   subtype?: string
   is_error?: boolean
+  api_error_status?: number
+  stop_reason?: string
   result?: string
   structured_output?: unknown
   tool_use_result?: unknown

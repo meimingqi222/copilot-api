@@ -823,7 +823,7 @@ const i18n = {
       "accounts.claudeCliMode.print": "-p 模式（默认）",
       "accounts.claudeCliMode.interactive": "交互式 TUI 模式",
       "accounts.claudeCliModeHint":
-        "保存后对新请求生效。交互模式使用真实伪终端；图片输入、原生搜索、JSON Schema、超长提示词或交互启动失败时回退到 -p，并记录服务端日志。",
+        "保存后对新请求生效。交互模式使用真实伪终端，支持图片与流式输出；不会自动回退到 -p。原生搜索、JSON Schema 和超过 400 KB 的提示词需手动选择 -p 模式。",
       "accounts.claudeCliModeSuccess": "Claude Code 运行模式已更新",
       "accounts.claudeCli.missing":
         "未检测到 Claude Code CLI，当前无法使用 CLI 接入。请在运行 copilot-api 的服务器或容器中安装 Claude Code，并确保服务进程能找到 claude 命令；安装后刷新此页重新检测。也可手动切换为 HTTP（旧版）。",
@@ -2962,7 +2962,7 @@ const i18n = {
       "accounts.claudeCliMode.print": "Print (-p, default)",
       "accounts.claudeCliMode.interactive": "Interactive TUI",
       "accounts.claudeCliModeHint":
-        "Applies to new requests after saving. Interactive mode uses a real PTY. Image input, native search, JSON Schema, oversized prompts and interactive startup failures use -p instead and are logged on the server.",
+        "Applies to new requests after saving. Interactive mode uses a real PTY with images and streaming; it never falls back to -p. Select Print manually for native search, JSON Schema or prompts over 400 KB.",
       "accounts.claudeCliModeSuccess": "Claude Code run mode updated",
       "accounts.claudeCli.missing":
         "Claude Code CLI was not found; CLI transport cannot run. Install Claude Code on the server or in the container running copilot-api and make the claude command accessible to the service process. Refresh this page after installation to check again, or manually select HTTP (legacy).",

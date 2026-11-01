@@ -30,6 +30,8 @@ if (process.env.FAKE_TUI_SCENARIO === "startup-fail") {
   )
   let buffer = ""
   let pasted = ""
+  let image = 0
+  let images: Array<{ file: string; bytes: string }> = []
   let turn = 0
   let stream = 0
   const reply = async (text: string) => {
@@ -133,9 +135,16 @@ if (process.env.FAKE_TUI_SCENARIO === "startup-fail") {
         proxy: process.env.HTTPS_PROXY,
         entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT ?? null,
         tap: process.env.COPILOT_API_CLAUDE_TAP ?? null,
+        images,
+        extraBody:
+          process.env.CLAUDE_CODE_EXTRA_BODY ?
+            JSON.parse(process.env.CLAUDE_CODE_EXTRA_BODY)
+          : null,
       }),
     )
     process.stdout.write("❯ ")
+    images = []
+    image = 0
   }
   process.stdin.on("data", (chunk: Buffer) => {
     if (!trusted) {
@@ -157,7 +166,29 @@ if (process.env.FAKE_TUI_SCENARIO === "startup-fail") {
       if (start >= 0) {
         const end = buffer.indexOf("\x1b[201~", start)
         if (end < 0) return
-        pasted += buffer.slice(start + 6, end)
+        const part = buffer.slice(start + 6, end)
+        if (
+          fs.existsSync(part)
+          && /image-\d+\.(png|jpg|gif|webp)$/.test(part)
+        ) {
+          const acceptImage = () => {
+            images.push({
+              file: part,
+              bytes: fs.readFileSync(part).toString("base64"),
+            })
+            pasted += `[Image #${++image}]`
+            if (process.env.FAKE_TUI_SCENARIO === "images") {
+              // Native TUI updates can paint the label and its number separately.
+              const digits = String(image)
+              process.stdout.write(
+                `[Image #${" ".repeat(digits.length)}]\x1b[${digits.length + 1}D${digits}\x1b[C`,
+              )
+            } else process.stdout.write(`[Image #${image}]`)
+          }
+          if (process.env.FAKE_TUI_SCENARIO === "images")
+            setTimeout(acceptImage, 250)
+          else acceptImage()
+        } else pasted += part
         buffer = buffer.slice(end + 6)
         process.stdout.write("[Pasted text]")
       } else if (buffer.includes("\r")) {

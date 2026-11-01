@@ -100,6 +100,32 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
 }
 
 describe("Claude CLI persistent sessions", () => {
+  test.each(["none", "no-tools"])(
+    "a title request with %s leaves the main conversation available",
+    async (choice) => {
+      const request = {
+        ...payload(),
+        tools: [{ name: "read", input_schema: { type: "object" } }],
+      }
+      const first = await collectClaudeCliMessages(context, request)
+      const follow = nextPayload(request, first)
+      const title = {
+        ...follow,
+        messages: [
+          ...follow.messages.slice(0, -1),
+          { role: "user" as const, content: "Give a title" },
+        ],
+      }
+      if (choice === "none")
+        Object.assign(title, { tool_choice: { type: "none" } })
+      else title.tools = []
+      const aside = await collectClaudeCliMessages(context, title)
+      expect(detail(aside).pid).not.toBe(detail(first).pid)
+      const second = await collectClaudeCliMessages(context, follow)
+      expect(detail(second)).toMatchObject({ pid: detail(first).pid, turn: 2 })
+    },
+    20_000,
+  )
   test("an old segment cannot release the next segment's consumer", async () => {
     const registration = spyOn(runRegistry, "register")
     try {

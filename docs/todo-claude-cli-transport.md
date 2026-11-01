@@ -4,8 +4,8 @@
 
 > CLI 现支持账号级 `claudeCliMode: "print" | "interactive"`，默认保持 `print`。
 > 交互模式使用 PTY/ConPTY 和会话转录，不能使用 `--no-session-persistence`；
-> 运行结束后删除该会话转录。图片提示词、原生搜索、JSON Schema、超长输入和
-> 交互启动失败回退到 `-p`；后者仅在发送用户消息前发生。当前规则见 README。
+> 运行结束后删除该会话转录。支持内联图片与公网图片 URL；交互模式不会自动
+> 回退到 `-p`。原生搜索、JSON Schema 和超长输入需手动选择 Print。当前规则见 README。
 
 状态：**已实现，并通过真机验证**（2026-09-30 用真 `claude` 2.1.285 + Pro 订阅跑通；结论见 §0 与 §10）
 

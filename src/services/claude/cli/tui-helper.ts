@@ -12,6 +12,8 @@ import {
 import { ClaudeTuiEvents, jsonObject } from "~/services/claude/cli/tui-events"
 import { JsonlTail } from "~/services/claude/cli/tui-tail"
 import { redactAndTruncate } from "~/services/claude/cli/redact"
+import { ClaudeTuiImages } from "~/services/claude/cli/tui-images"
+import type { AnthropicImageSource } from "~/services/protocols/anthropic/types"
 
 export interface ClaudeTuiConfig {
   command: Array<string>
@@ -24,6 +26,8 @@ export interface ClaudeTuiConfig {
 const emit = (value: unknown): void => {
   process.stdout.write(JSON.stringify(value) + "\n")
 }
+
+class ClaudeTuiStartupError extends Error {}
 
 /** An isolated helper keeps PTY native handles outside the server's event loop. */
 class ClaudeTuiHelper {
@@ -47,8 +51,11 @@ class ClaudeTuiHelper {
   private readonly preload: string
   private readonly tapFile: string
   private readonly config: ClaudeTuiConfig
+  private readonly images: ClaudeTuiImages
+  private readonly cancellation = new AbortController()
   constructor(config: ClaudeTuiConfig) {
     this.config = config
+    this.images = new ClaudeTuiImages(config.tmpDir)
     this.preload = `.copilot-tui-${this.sessionId}.js`
     this.tapFile = path.join(config.tmpDir, "tap.jsonl")
   }
@@ -66,25 +73,7 @@ class ClaudeTuiHelper {
         await this.start()
         await this.ready()
       } catch (error) {
-        await this.stop()
-        if (this.cancelled) return 0
-        // No prompt was sent: retrying here cannot duplicate a model request.
-        process.stderr.write(
-          "claude-tui: interactive startup unavailable; using -p for this run\n",
-        )
-        emit({
-          type: "system",
-          subtype: "copilot_cli_mode",
-          mode: "print",
-          result: redactAndTruncate(String(error)),
-        })
-        return await Bun.spawn([...this.config.command, ...this.config.args], {
-          cwd: this.config.cwd,
-          env: process.env,
-          stdin: "inherit",
-          stdout: "inherit",
-          stderr: "inherit",
-        }).exited
+        throw new ClaudeTuiStartupError(String(error))
       }
       emit({ type: "system", subtype: "init", session_id: this.sessionId })
       const input = createInterface({
@@ -120,6 +109,7 @@ class ClaudeTuiHelper {
       process.stdin.removeListener("end", stop)
       await this.stop()
       this.screen.dispose()
+      await this.images.clearFiles()
       await fs.rm(path.join(this.config.cwd, this.preload), { force: true })
       if (this.transcript) {
         await fs.rm(this.transcript, { force: true })
@@ -254,31 +244,77 @@ class ClaudeTuiHelper {
     if (envelope?.type !== "user") return
     const content = jsonObject(envelope.message)?.content
     const blocks = Array.isArray(content) ? content.map(jsonObject) : []
-    if (blocks.some((block) => block?.type !== "text"))
-      throw new Error("Interactive mode requires text input")
-    const text =
-      typeof content === "string" ? content : (
-        blocks.map((block) => String(block?.text ?? "")).join("\n\n")
-      )
+    const pieces: Array<{ text?: string; image?: string }> = []
+    const signal = AbortSignal.any([
+      this.cancellation.signal,
+      AbortSignal.timeout(15_000),
+    ])
+    if (typeof content === "string") pieces.push({ text: content })
+    for (const block of blocks) {
+      if (block?.type === "text" && typeof block.text === "string")
+        pieces.push({ text: block.text })
+      else if (block?.type === "image" && jsonObject(block.source))
+        pieces.push({
+          image: await this.images.write(
+            block.source as AnthropicImageSource,
+            signal,
+          ),
+        })
+      else throw new Error("Interactive mode requires text or image input")
+    }
     const before = this.rows
-    this.terminal?.write(pasteClaudeText(text.trim() ? text : "."))
-    const tail = text.trim().slice(-16).replace(/\s+/g, " ")
-    const deadline = Date.now() + 10_000
-    while (!this.ended && Date.now() < deadline) {
-      const plain = this.plain().replace(/\s+/g, " ")
-      if (!tail || plain.includes(tail) || plain.includes("Pasted text")) break
-      await Bun.sleep(50)
+    let image = 0
+    for (const piece of pieces) {
+      if (piece.image) {
+        this.paste(piece.image)
+        image = await this.imageShown(image)
+      } else {
+        const text = piece.text ?? ""
+        this.paste(text.trim() ? text : ".")
+        await this.textShown(text)
+      }
     }
     await Bun.sleep(150)
     for (let attempt = 0; attempt < 4 && !this.ended; attempt++) {
       this.terminal?.write("\r")
       const sentBy = Date.now() + 3000
       while (!this.ended && Date.now() < sentBy) {
-        if (this.rows > before) return
+        if (this.rows > before) {
+          await this.images.clearFiles()
+          return
+        }
         await Bun.sleep(50)
       }
     }
     throw new Error("Claude Code did not accept the interactive message")
+  }
+
+  private paste(text: string): void {
+    // Earlier turns' image/paste markers cannot acknowledge this paste.
+    // Erase only our virtual screen, preserving cursor/modes for partial redraws.
+    this.screen.write("\x1b[2J")
+    this.terminal?.write(pasteClaudeText(text))
+  }
+
+  private async imageShown(after: number): Promise<number> {
+    const deadline = Date.now() + 10_000
+    while (!this.ended && Date.now() < deadline) {
+      for (const match of this.plain().matchAll(/\[Image #(\d+)\]/g))
+        if (Number(match[1]) > after) return Number(match[1])
+      await Bun.sleep(50)
+    }
+    throw new Error("Claude Code did not accept the interactive image")
+  }
+
+  private async textShown(text: string): Promise<void> {
+    const tail = text.trim().slice(-16).replace(/\s+/g, " ")
+    const deadline = Date.now() + 10_000
+    while (!this.ended && Date.now() < deadline) {
+      const plain = this.plain().replace(/\s+/g, " ")
+      if (!tail || plain.includes(tail) || plain.includes("Pasted text")) return
+      await Bun.sleep(50)
+    }
+    throw new Error("Claude Code did not accept the interactive text")
   }
 
   private async poll(): Promise<void> {
@@ -316,6 +352,7 @@ class ClaudeTuiHelper {
 
   private stop(): Promise<void> {
     this.ended = true
+    this.cancellation.abort()
     this.stopping ??= (async () => {
       if (this.terminal) {
         const terminal = this.terminal
@@ -339,6 +376,10 @@ export async function runClaudeTuiHelper(args: Array<string>): Promise<number> {
     process.stderr.write(`claude-tui: ${redactAndTruncate(String(error))}\n`)
     emit({
       type: "result",
+      subtype:
+        error instanceof ClaudeTuiStartupError ?
+          "copilot_tui_unavailable"
+        : "error_during_execution",
       is_error: true,
       result:
         "Claude Code interactive bridge failed; select -p mode or check the server installation",

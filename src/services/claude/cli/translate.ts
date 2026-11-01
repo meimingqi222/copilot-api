@@ -130,9 +130,12 @@ export async function* translateClaudeStreamJson(
     if (parsed.type === "result") {
       // 终局信封。usage 已经在 message_delta 里给过，这里只关心错误。
       if (parsed.is_error) {
-        yield claudeErrorEvent(
+        const failure = claudeErrorEvent(
           parsed.result?.trim() || "Claude Code reported an error",
         )
+        if (parsed.subtype === "copilot_tui_unavailable")
+          failure.error.type = "claude_cli_unavailable"
+        yield failure
       }
       continue
     }

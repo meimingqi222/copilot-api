@@ -3,8 +3,8 @@
  *
  * 两个要点：
  *
- * - `tool_choice: "none"` 时不暴露任何工具；`tool_choice: {type:"tool", name}`
- *   时只暴露那一个。否则模型可能去调一个调用方明确禁止的工具。
+ * - `tool_choice: "none"` 保留定义以稳定缓存，但在回调和输出处拒绝调用；
+ *   `tool_choice: {type:"tool", name}` 时只暴露那一个。
  * - 输出**按名字稳定排序**。工具定义位于 token 流的 messages 之前，顺序抖动
  *   会让整段 prompt cache 失效（见 `docs/todo-claude-cli-transport.md` §6.1）。
  */
@@ -16,7 +16,10 @@ import type {
 
 import type { McpToolResult } from "~/services/claude/cli/run-registry"
 
-import { CLAUDE_WAIT_TOOL_NAME } from "./mcp-names"
+import {
+  CLAUDE_WAIT_TOOL_NAME,
+  stripMcpToolPrefix,
+} from "~/services/claude/cli/mcp-names"
 
 /** MCP `tools/list` 里的一个工具。 */
 export interface BridgeTool {
@@ -99,7 +102,6 @@ export function bridgeTools(
   const names = bridgeToolNames(payload)
   const out: Array<BridgeTool> = []
   for (const tool of payload.tools ?? []) {
-    if (choice?.type === "none") continue
     if (only && tool.name !== only) continue
     // The Claude CLI executes client tools itself; upstream server tools
     // (e.g. web_search) have no bridge representation.
@@ -119,6 +121,18 @@ export function bridgeTools(
     : 0,
   )
   return out
+}
+
+/** Enforce permission separately from the cache-stable tool definitions. */
+export function clientToolAllowed(
+  payload: AnthropicMessagesPayload,
+  name: string,
+): boolean {
+  if (payload.tool_choice?.type === "none") return false
+  if (payload.tool_choice?.type !== "tool") return true
+  const short = stripMcpToolPrefix(name)
+  const declared = declaredToolNames(payload).get(short) ?? short
+  return payload.tool_choice.name === declared
 }
 
 /** 从调用方的 messages 里收集所有 `tool_result` 的 `tool_use_id`。 */

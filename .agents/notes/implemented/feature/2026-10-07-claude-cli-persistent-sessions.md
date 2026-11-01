@@ -20,4 +20,16 @@ Replaying every turn costs repeated process startup and loses in-memory context.
 
 ## Consequences
 
+The 2026-11-01 cache optimization keeps the same MCP definitions under
+`tool_choice:none`; `src/services/claude/cli/tools.ts` separates definitions from
+per-turn permission. The callback refuses denied calls immediately, without
+parking, and `src/services/claude/cli/turns.ts` suppresses their streamed blocks.
+Both checks are required: hiding output alone would leave the callback waiting
+for a tool result the caller never saw. Title/summary requests with none or no
+tools retain separate runs and leave the main conversation idle; their different
+configuration must not be normalized into the main conversation's session key.
+Inherited prompt-cache switches and extra request bodies are stripped from the
+CLI environment. Regression coverage includes `tests/claude-cli-tool-names.test.ts`,
+`tests/claude-cli-bridge.test.ts` and the existing session/turn tests.
+
 CLI behavior now covers normal continuation, native search and schema output. Effort-only changes use apply_flag_settings and await acknowledgment; errors or timeouts restart with complete history, and cancellation releases the run. Other configuration changes restart. Parked runs permit additive client tools with unchanged definitions and transcript. Stream cancellation remains scoped to the current HTTP segment; completed idle and parked runs outlive it. Checks in `tests/claude-cli-session.test.ts`, `tests/claude-cli-controls.test.ts`, `tests/claude-cli-mcp-helper.test.ts` and `tests/claude-cli-turns.test.ts` cover PID reuse, control acknowledgment, search permissions, tool updates, incremental input, isolation, concurrent checkout, eviction, schema failures and both response modes. Real CLI 2.1.251 accepted effort updates and sent WebSearch permission requests against a loopback mock upstream; a zero search budget denied execution and completed normally. On 2026-10-07, real subscription inference with claude-sonnet-5-5 passed short text replies, same-process continuation with a low-to-medium effort update, MCP tool calls, parked continuation with additive client tools and validated JSON schema output. Additional live checks passed streaming text, inline images, MCP image results, streaming schema output, native web search with source URLs and allowed/blocked domain filters, zero search budget, refusal of a second search with max_uses set to one, cancellation and process cleanup. These checks cover the bridge paths; they do not claim exhaustive upstream failure or quota testing. Live reports remain in ignored temp storage.

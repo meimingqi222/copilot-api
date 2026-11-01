@@ -29,6 +29,7 @@ export class ClaudeTuiEvents {
   private endingAt: number | undefined
   private failed = false
   private busy = false
+  private stopReason: unknown
   private readonly emit: (value: unknown) => void
   constructor(emit: (value: unknown) => void) {
     this.emit = emit
@@ -77,6 +78,11 @@ export class ClaudeTuiEvents {
       if (row.isApiErrorMessage || message.model === "<synthetic>") {
         const info = jsonObject(row.apiErrorParams)?.rate_limit_info
         if (info) this.emit({ type: "rate_limit_event", rate_limit_info: info })
+        // A refusal can be retracted when Claude Code retries or changes models.
+        if (message.stop_reason === "refusal") {
+          this.stopReason = "refusal"
+          return
+        }
         const content = Array.isArray(message.content) ? message.content : []
         this.error(
           content
@@ -86,6 +92,7 @@ export class ClaudeTuiEvents {
         return
       }
       if (typeof message.id !== "string") return
+      this.stopReason = message.stop_reason
       if (this.pending && this.pending.message.id !== message.id)
         this.flushWhole(true)
       if (this.fallback && this.fallback.id !== message.id) this.finishWhole()
@@ -124,9 +131,15 @@ export class ClaudeTuiEvents {
     this.flushWhole(true)
     this.finishWhole()
     if (!this.failed)
-      this.emit({ type: "result", subtype: "success", is_error: false })
+      this.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        stop_reason: this.stopReason,
+      })
     this.endingAt = undefined
     this.busy = false
+    this.stopReason = undefined
     // IDs are needed only until the turn settles; long-lived sessions stay bounded.
     this.streams.clear()
     this.streamed.clear()
