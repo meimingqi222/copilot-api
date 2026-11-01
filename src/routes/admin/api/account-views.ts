@@ -47,7 +47,15 @@ export function publicAccountFromConnection(
   const settings = { ...getConnectionSettings(conn) }
   // 有效代理值(连接级 → 系统默认)。UI 用它回显，留空表示跟随默认。
   const proxyUrl = getConnectionProxyUrl(conn) ?? null
-  if (provider === "claude") delete settings.claudeTransport
+  if (provider === "claude") {
+    delete settings.claudeTransport
+    delete settings.claudeCliMode
+    if (
+      conn.metadata?.claudeCliMode === "print"
+      || conn.metadata?.claudeCliMode === "interactive"
+    )
+      settings.claudeCliMode = conn.metadata.claudeCliMode
+  }
   if (
     provider === "claude"
     && (conn.metadata?.claudeTransport === "cli"

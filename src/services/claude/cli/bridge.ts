@@ -35,6 +35,10 @@ import type {
 
 import { claudeCliArgs } from "~/services/claude/cli/args"
 import {
+  configuredClaudeCliMode,
+  selectClaudeCliMode,
+} from "~/services/claude/cli/mode"
+import {
   claudeConfigDir,
   claudeHome,
   claudeLaunchCommand,
@@ -197,7 +201,7 @@ export async function streamClaudeCliMessages(
   const next = continuation(payload)
   if (next) {
     const idle = runRegistry.takeIdle(
-      sessionKey(sessionOwner(context), payload, next.history),
+      sessionKey(sessionOwner(context, payload), payload, next.history),
     )
     if (idle instanceof ClaudeCliRun) {
       let sent = false
@@ -223,7 +227,10 @@ export async function streamClaudeCliMessages(
   return withHeadPeek(withRequestAbort(run.attach(), run, context.signal), run)
 }
 
-function sessionOwner(context: ClaudeCliRunContext): string {
+function sessionOwner(
+  context: ClaudeCliRunContext,
+  payload: AnthropicMessagesPayload,
+): string {
   return createHash("sha256")
     .update(
       JSON.stringify([
@@ -231,6 +238,8 @@ function sessionOwner(context: ClaudeCliRunContext): string {
         context.credential.id,
         context.model,
         context.accessToken,
+        configuredClaudeCliMode(context.connection),
+        selectClaudeCliMode(context.connection, payload).mode,
         getConnectionProxyUrl(context.connection),
       ]),
     )
@@ -373,13 +382,16 @@ async function* readChunks(
  *
  * 用"argv[1] 是否指向一个真实文件"区分两者，而不是猜运行模式。
  */
-function helperArgs(bridgePath: string): Array<string> {
+function helperArgs(
+  bridgePath: string,
+  command = "claude-mcp-helper",
+): Array<string> {
   const fromArgv = process.argv[1]
   const script = fromArgv ? path.resolve(fromArgv) : undefined
   if (script && existsSync(script)) {
-    return [script, "claude-mcp-helper", bridgePath]
+    return [script, command, bridgePath]
   }
-  return ["claude-mcp-helper", bridgePath]
+  return [command, bridgePath]
 }
 
 function errorEvent(message: string): AnthropicStreamEventData {
@@ -447,7 +459,7 @@ export class ClaudeCliRun implements BridgeRun {
       (value) => this.write(value),
       (name, input) => this.policy.permission(name, input),
     )
-    this.owner = sessionOwner(options.context)
+    this.owner = sessionOwner(options.context, options.payload)
     this.payload = options.payload
     this.structured = !!options.payload.output_config?.format
     this.token = options.token
@@ -533,7 +545,15 @@ export class ClaudeCliRun implements BridgeRun {
     for await (const line of readStreamJsonLines(
       readChunks(this.proc.stdout),
     )) {
-      if (!this.controls.handle(parseStreamJsonLine(line))) yield line
+      const status = parseStreamJsonLine(line)
+      if (status?.type === "system" && status.subtype === "copilot_cli_mode") {
+        logger.info(
+          "claude-cli: interactive startup unavailable; using -p for this run",
+          { connectionId: this.connectionId, reason: status.result },
+        )
+        continue
+      }
+      if (!this.controls.handle(status)) yield line
     }
   }
 
@@ -602,7 +622,7 @@ export class ClaudeCliRun implements BridgeRun {
       this.finished
       || this.consuming
       || this.configuring
-      || this.owner !== sessionOwner(context)
+      || this.owner !== sessionOwner(context, payload)
       || hasFreshContent(payload)
     )
       return false
@@ -973,31 +993,51 @@ async function spawnRun(
     )
 
     context.signal?.throwIfAborted()
-    const proc = Bun.spawn(
-      [
-        ...claudeLaunchCommand(binary),
-        ...claudeCliArgs({
-          model: context.model,
-          mcpConfigPath,
-          effort: claudeEffort(payload),
-          webSearch: !!claudeSearchDeclaration(payload),
-          jsonSchema: payload.output_config?.format?.schema,
+    const args = claudeCliArgs({
+      model: context.model,
+      mcpConfigPath,
+      effort: claudeEffort(payload),
+      webSearch: !!claudeSearchDeclaration(payload),
+      jsonSchema: payload.output_config?.format?.schema,
+    })
+    const mode = selectClaudeCliMode(context.connection, payload)
+    let command = [...claudeLaunchCommand(binary), ...args]
+    if (mode.mode === "interactive") {
+      const configPath = path.join(tmpDir, "tui.json")
+      await fs.writeFile(
+        configPath,
+        JSON.stringify({
+          command: claudeLaunchCommand(binary),
+          args,
+          cwd: home,
+          configDir,
+          tmpDir,
         }),
-      ],
-      {
-        cwd: home,
-        env: cleanClaudeEnv(process.env, {
-          oauthToken: context.accessToken,
-          proxyUrl: getConnectionProxyUrl(context.connection),
-          // 让 CLI 的配置与会话（含对话转录）落在我们自己的目录里，
-          // 而不是用户的 ~/.claude。已实测确认不影响 token 认证。
-          overrides: { CLAUDE_CONFIG_DIR: configDir },
-        }),
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    )
+        { mode: 0o600 },
+      )
+      command = [
+        process.execPath,
+        ...helperArgs(configPath, "claude-tui-helper"),
+      ]
+    } else if (mode.reason)
+      logger.info("claude-cli: using -p for this request", {
+        reason: mode.reason,
+        connectionId: context.connection.id,
+      })
+    context.signal?.throwIfAborted()
+    const proc = Bun.spawn(command, {
+      cwd: home,
+      env: cleanClaudeEnv(process.env, {
+        oauthToken: context.accessToken,
+        proxyUrl: getConnectionProxyUrl(context.connection),
+        // 让 CLI 的配置与会话（含对话转录）落在我们自己的目录里，
+        // 而不是用户的 ~/.claude。已实测确认不影响 token 认证。
+        overrides: { CLAUDE_CONFIG_DIR: configDir },
+      }),
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    })
 
     const run = new ClaudeCliRun({ token, context, proc, tmpDir, payload })
     runRegistry.register(run)

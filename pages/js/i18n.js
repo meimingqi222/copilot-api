@@ -819,6 +819,12 @@ const i18n = {
       "accounts.claudeTransportHint":
         "默认固定走 Claude Code CLI；未安装时会报错，不会自动改走 HTTP。点击按钮可切换。全局 HTTP 环境变量会覆盖此设置。",
       "accounts.claudeTransportSuccess": "Claude 接入方式已更新",
+      "accounts.claudeCliMode": "Claude Code 运行模式",
+      "accounts.claudeCliMode.print": "-p 模式（默认）",
+      "accounts.claudeCliMode.interactive": "交互式 TUI 模式",
+      "accounts.claudeCliModeHint":
+        "保存后对新请求生效。交互模式使用真实伪终端；图片输入、原生搜索、JSON Schema、超长提示词或交互启动失败时回退到 -p，并记录服务端日志。",
+      "accounts.claudeCliModeSuccess": "Claude Code 运行模式已更新",
       "accounts.claudeCli.missing":
         "未检测到 Claude Code CLI，当前无法使用 CLI 接入。请在运行 copilot-api 的服务器或容器中安装 Claude Code，并确保服务进程能找到 claude 命令；安装后刷新此页重新检测。也可手动切换为 HTTP（旧版）。",
       "accounts.claudeCli.installed":
@@ -2952,6 +2958,12 @@ const i18n = {
       "accounts.claudeTransportHint":
         "Claude Code CLI is the fixed default. If it is missing, requests fail instead of switching to HTTP. Click to change transport. The global HTTP environment setting overrides this choice.",
       "accounts.claudeTransportSuccess": "Claude transport updated",
+      "accounts.claudeCliMode": "Claude Code run mode",
+      "accounts.claudeCliMode.print": "Print (-p, default)",
+      "accounts.claudeCliMode.interactive": "Interactive TUI",
+      "accounts.claudeCliModeHint":
+        "Applies to new requests after saving. Interactive mode uses a real PTY. Image input, native search, JSON Schema, oversized prompts and interactive startup failures use -p instead and are logged on the server.",
+      "accounts.claudeCliModeSuccess": "Claude Code run mode updated",
       "accounts.claudeCli.missing":
         "Claude Code CLI was not found; CLI transport cannot run. Install Claude Code on the server or in the container running copilot-api and make the claude command accessible to the service process. Refresh this page after installation to check again, or manually select HTTP (legacy).",
       "accounts.claudeCli.installed":

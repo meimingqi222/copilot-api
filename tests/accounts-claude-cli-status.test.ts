@@ -60,3 +60,51 @@ test("account card distinguishes missing CLI from HTTP and unknown detection sta
     "httpForced",
   )
 })
+
+test("account card saves the run mode and keeps the saved value on failure", async () => {
+  const updates: Array<unknown> = []
+  let fail = false
+  const view = runInNewContext(
+    readFileSync("pages/js/views/accounts.js", "utf8") + "\naccountsView()",
+    {
+      ViewHelpers: {},
+      I18n: { t: (key: string) => key },
+      API: {
+        accounts: {
+          async update(
+            id: string,
+            patch: { settings: { claudeCliMode: string } },
+          ) {
+            updates.push({ id, patch })
+            if (fail) throw new Error("save failed")
+            return {
+              account: {
+                settings: { claudeTransport: "cli", ...patch.settings },
+              },
+            }
+          },
+        },
+      },
+    },
+  ) as {
+    showToast: () => void
+    claudeCliMode: (account: unknown) => string
+    setClaudeCliMode: (account: unknown, mode: string) => Promise<void>
+  }
+  view.showToast = () => {}
+  const account = {
+    id: "claude",
+    settings: { claudeTransport: "cli" } as Record<string, string>,
+  }
+  expect(view.claudeCliMode(account)).toBe("print")
+  await view.setClaudeCliMode(account, "interactive")
+  expect(view.claudeCliMode(account)).toBe("interactive")
+  expect(updates).toEqual([
+    { id: "claude", patch: { settings: { claudeCliMode: "interactive" } } },
+  ])
+  fail = true
+  await view.setClaudeCliMode(account, "print")
+  expect(view.claudeCliMode(account)).toBe("interactive")
+  await view.setClaudeCliMode(account, "invalid")
+  expect(updates).toHaveLength(2)
+})

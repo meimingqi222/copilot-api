@@ -282,7 +282,9 @@ describe("admin account view parity (Phase 4 G1 freeze)", () => {
       "http://localhost/admin/api/accounts/oauth-parity-1",
       {
         method: "PUT",
-        body: JSON.stringify({ settings: { claudeTransport: "http" } }),
+        body: JSON.stringify({
+          settings: { claudeTransport: "http", claudeCliMode: "interactive" },
+        }),
       },
     )
     expect(putRes.status).toBe(200)
@@ -290,12 +292,22 @@ describe("admin account view parity (Phase 4 G1 freeze)", () => {
       account: { settings: Record<string, unknown> }
     }
     expect(updated.account.settings.claudeTransport).toBe("http")
+    expect(updated.account.settings.claudeCliMode).toBe("interactive")
 
     const listRes = await adminJson("http://localhost/admin/api/accounts")
     const listed = (await listRes.json()) as {
       accounts: Array<{ settings: Record<string, unknown> }>
     }
     expect(listed.accounts[0].settings.claudeTransport).toBe("http")
+    expect(listed.accounts[0].settings.claudeCliMode).toBe("interactive")
+    const stored = (await Bun.file(PATHS.PROVIDER_CONNECTIONS_PATH).json()) as {
+      connections: Array<{ id: string; metadata?: { claudeCliMode?: string } }>
+    }
+    expect(
+      stored.connections.find(
+        (connection) => connection.id === "oauth-parity-1",
+      )?.metadata?.claudeCliMode,
+    ).toBe("interactive")
   })
 
   test("windsurf account: publicAccountFromConnection produces expected JSON shape", async () => {

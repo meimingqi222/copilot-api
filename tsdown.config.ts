@@ -13,7 +13,14 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   removeNodeProtocol: false,
+  // Native binaries and the ConPTY worker resolve relative to node-pty itself.
+  external: ["node-pty"],
   copy: [
+    { from: "src/services/claude/cli/tui-tap.js", to: "dist/tui-tap.js" },
+    {
+      from: "src/services/claude/cli/MAGPIE-LICENSE.txt",
+      to: "dist/MAGPIE-LICENSE.txt",
+    },
     {
       from: "src/services/aistudio/waa/LICENSE",
       to: "dist/AIStudio2API-LICENSE.txt",

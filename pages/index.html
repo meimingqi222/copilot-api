@@ -41,7 +41,7 @@
         }, FAILSAFE_MS)
       })()
     </script>
-    <script src="/admin/static/js/i18n.js?v=0.7.33"></script>
+    <script src="/admin/static/js/i18n.js?v=0.7.34"></script>
     <script src="/admin/static/js/api.js?v=0.7.5"></script>
     <script src="/admin/static/js/admin-icons.js?v=0.7.0"></script>
     <script src="/admin/static/js/view-helpers.js?v=0.7.6"></script>
@@ -1935,6 +1935,35 @@
                             class="text-xs text-[var(--apple-text-tertiary)] mt-1"
                             x-text="t('accounts.claudeTransportHint')"
                           ></p>
+                          <div
+                            x-show="claudeTransport(account) === 'cli'"
+                            class="mt-3"
+                          >
+                            <label
+                              class="text-sm text-[var(--apple-text-secondary)]"
+                            >
+                              <span x-text="t('accounts.claudeCliMode')"></span>
+                              <select
+                                class="input mt-1 w-full"
+                                :value="claudeCliMode(account)"
+                                :disabled="claudeCli?.httpForced"
+                                @change="await setClaudeCliMode(account, $event.target.value); $event.target.value = claudeCliMode(account)"
+                              >
+                                <option
+                                  value="print"
+                                  x-text="t('accounts.claudeCliMode.print')"
+                                ></option>
+                                <option
+                                  value="interactive"
+                                  x-text="t('accounts.claudeCliMode.interactive')"
+                                ></option>
+                              </select>
+                            </label>
+                            <p
+                              class="text-xs text-[var(--apple-text-tertiary)] mt-1"
+                              x-text="t('accounts.claudeCliModeHint')"
+                            ></p>
+                          </div>
                           <p
                             x-show="claudeCliStatus(account)"
                             role="status"
@@ -8552,7 +8581,7 @@
     <script src="/admin/static/js/views/redaction.js?v=0.8.13"></script>
     <script src="/admin/static/js/views/dashboard.js?v=0.7.4"></script>
     <script src="/admin/static/js/views/users.js?v=0.7.3"></script>
-    <script src="/admin/static/js/views/accounts.js?v=0.7.4"></script>
+    <script src="/admin/static/js/views/accounts.js?v=0.7.5"></script>
     <script src="/admin/static/js/views/connections.js?v=0.7.9"></script>
     <script src="/admin/static/js/views/model-aliases.js?v=0.7.3"></script>
     <script src="/admin/static/js/views/routing-groups.js?v=0.7.7"></script>

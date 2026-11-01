@@ -10,6 +10,8 @@ const BASE = {
   ANTHROPIC_AUTH_TOKEN: "tok-should-not-leak",
   CLAUDECODE: "1",
   CLAUDE_CODE_ENTRYPOINT: "cli",
+  CLAUDE_CODE_CHILD_SESSION: "1",
+  CLAUDE_CODE_SESSION_ID: "parent-session",
   CLAUDE_CODE_SSE_PORT: "12345",
   CLAUDE_CODE_OAUTH_TOKEN: "user-env-token",
   UNRELATED: "kept",
@@ -24,6 +26,8 @@ describe("cleanClaudeEnv", () => {
       "ANTHROPIC_AUTH_TOKEN",
       "CLAUDECODE",
       "CLAUDE_CODE_ENTRYPOINT",
+      "CLAUDE_CODE_CHILD_SESSION",
+      "CLAUDE_CODE_SESSION_ID",
       "CLAUDE_CODE_SSE_PORT",
     ]) {
       expect(env[key]).toBeUndefined()

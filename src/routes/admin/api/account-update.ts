@@ -195,7 +195,9 @@ export function patchRequiresModelRefresh(patch: ConnectionPatch): boolean {
     patch.credentialValue !== undefined
     || Boolean(
       patch.settings
-        && Object.keys(patch.settings).some((key) => key !== "claudeTransport"),
+        && Object.keys(patch.settings).some(
+          (key) => key !== "claudeTransport" && key !== "claudeCliMode",
+        ),
     )
   )
 }
@@ -280,6 +282,13 @@ function applySettingsPatchToConnection(
   const meta = ensureConnectionMetadata(conn)
 
   if (provider && isOAuthProviderId(provider)) {
+    if (
+      provider === "claude"
+      && (settings.claudeCliMode === "print"
+        || settings.claudeCliMode === "interactive")
+    ) {
+      meta.claudeCliMode = settings.claudeCliMode
+    }
     if (
       provider === "claude"
       && (settings.claudeTransport === "cli"

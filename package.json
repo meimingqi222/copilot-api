@@ -51,6 +51,7 @@
   },
   "dependencies": {
     "@puppeteer/browsers": "^3.2.6",
+    "@xterm/headless": "5.5.0",
     "citty": "^0.1.6",
     "clipboardy": "^5.0.0",
     "consola": "^3.4.2",
@@ -75,5 +76,11 @@
     "tsdown": "^0.15.6",
     "typescript": "^5.9.3",
     "zod": "^4.1.11"
-  }
+  },
+  "optionalDependencies": {
+    "node-pty": "1.1.0"
+  },
+  "trustedDependencies": [
+    "node-pty"
+  ]
 }

@@ -8,7 +8,12 @@ const argv = process.argv.slice(2)
 // It speaks newline-delimited JSON-RPC on stdio, so it must be dispatched
 // before anything else can write to stdout — including citty's help output and
 // the app's own startup banner. Keep this branch free of heavy imports.
-if (argv[0] === "claude-mcp-helper") {
+if (argv[0] === "claude-tui-helper") {
+  const { runClaudeTuiHelper } = await import(
+    "~/services/claude/cli/tui-helper"
+  )
+  process.exitCode = await runClaudeTuiHelper(argv.slice(1))
+} else if (argv[0] === "claude-mcp-helper") {
   const { runClaudeMcpHelper } = await import(
     "./services/claude/cli/mcp-helper"
   )

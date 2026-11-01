@@ -967,6 +967,25 @@ function accountsView() {
       return account.settings?.claudeTransport === "http" ? "http" : "cli"
     },
 
+    claudeCliMode(account) {
+      return account.settings?.claudeCliMode === "interactive" ?
+          "interactive"
+        : "print"
+    },
+
+    async setClaudeCliMode(account, mode) {
+      if (!["print", "interactive"].includes(mode)) return
+      try {
+        const result = await API.accounts.update(account.id, {
+          settings: { claudeCliMode: mode },
+        })
+        account.settings = result.account.settings
+        this.showToast(I18n.t("accounts.claudeCliModeSuccess"), "success")
+      } catch {
+        this.showToast(I18n.t("error.update"), "error")
+      }
+    },
+
     claudeCliStatus(account) {
       if (!this.claudeCli) return null
       if (this.claudeCli.httpForced) return "httpForced"

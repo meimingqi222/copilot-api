@@ -416,6 +416,27 @@ an error and does not silently switch to HTTP. You can also set
 `metadata.claudeTransport` to `"cli"` or `"http"` in
 `provider-connections.json`. The global HTTP override above takes precedence.
 
+Under CLI, the account card also selects **Print (-p)** or **Interactive TUI**.
+Print remains the default for existing and new accounts. The choice is stored as
+`metadata.claudeCliMode` (`"print"` or `"interactive"`) and applies to new requests;
+runs from another mode are not reused. HTTP ignores this choice.
+
+Interactive mode runs the real Claude Code in a PTY (ConPTY on Windows), with
+only the proxy's MCP tools enabled. It preserves the existing tool callback,
+conversation reuse, proxy and cancellation paths. A Bun preload captures main
+response streams where the installed Claude version exposes them; otherwise
+the session transcript supplies complete content blocks. Transcripts stay in
+the service-owned account config directory and are removed when the run ends.
+Images in the prompt, native search, JSON Schema and prompts over 400 KB use
+`-p` for that request. Interactive startup failures also fall back before any
+user message is sent; both kinds of fallback are logged on the server.
+
+The optional `node-pty` dependency supplies the PTY. Windows and macOS use its
+prebuilt binaries; Linux needs a working native build toolchain (Python, make
+and a C++ compiler) when installing dependencies. If the native module is
+unavailable, interactive startup falls back to `-p`. The stream tap is adapted
+from magpie under its MIT license, shipped in `dist/MAGPIE-LICENSE.txt`.
+
 Other knobs:
 
 | Environment variable                 | Default | Meaning                                                                                                                                                                                                                                                                                                                        |

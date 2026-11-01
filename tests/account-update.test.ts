@@ -150,6 +150,30 @@ describe("parseBodyToPatch + applyConnectionPatchToConnection", () => {
         "cli",
       )
       expect(() => resolveClaudeTransport(conn)).toThrow()
+      const modePatch = parseBodyToPatch(conn, {
+        settings: { claudeCliMode: "interactive" },
+      })
+      expect(patchRequiresModelRefresh(modePatch)).toBe(false)
+      applyConnectionPatchToConnection(conn, modePatch)
+      expect(conn.metadata?.claudeCliMode).toBe("interactive")
+      expect(publicAccountFromConnection(conn).settings.claudeCliMode).toBe(
+        "interactive",
+      )
+      expect(publicAccountFromConnection(conn).settings.claudeTransport).toBe(
+        "cli",
+      )
+      applyConnectionPatchToConnection(
+        conn,
+        parseBodyToPatch(conn, { settings: { claudeCliMode: "invalid" } }),
+      )
+      expect(conn.metadata?.claudeCliMode).toBe("interactive")
+      applyConnectionPatchToConnection(
+        conn,
+        parseBodyToPatch(conn, { settings: { claudeCliMode: "print" } }),
+      )
+      expect(publicAccountFromConnection(conn).settings.claudeCliMode).toBe(
+        "print",
+      )
     } finally {
       setClaudeCliTestHooks({})
     }

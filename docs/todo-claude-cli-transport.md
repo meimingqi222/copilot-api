@@ -2,6 +2,11 @@
 
 > 以下记录最初的实施方案。当前 Claude 账号默认固定走 CLI；找不到二进制会报错，不再自动回落 HTTP。管理界面的 Claude 账户卡片可显式切换 CLI/HTTP，详见 README 的 Claude transport 说明。
 
+> CLI 现支持账号级 `claudeCliMode: "print" | "interactive"`，默认保持 `print`。
+> 交互模式使用 PTY/ConPTY 和会话转录，不能使用 `--no-session-persistence`；
+> 运行结束后删除该会话转录。图片提示词、原生搜索、JSON Schema、超长输入和
+> 交互启动失败回退到 `-p`；后者仅在发送用户消息前发生。当前规则见 README。
+
 状态：**已实现，并通过真机验证**（2026-09-30 用真 `claude` 2.1.285 + Pro 订阅跑通；结论见 §0 与 §10）
 
 ---
