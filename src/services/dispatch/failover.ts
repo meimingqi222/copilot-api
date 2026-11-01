@@ -231,6 +231,14 @@ export async function executeWithFailover<
   }
 
   const saturated = new Map<string, RequestAdmission>()
+  // The last real upstream failure this request failed over from. A later
+  // target that only fails because our translation can't carry the payload
+  // (Codex's custom_tool_call to a non-Responses wire) must not replace it:
+  // the client would see a 422 it can't act on instead of the 429 quota
+  // refusal with its retry advice.
+  let upstreamFailure:
+    | { error: unknown; admission: RequestAdmission; rest?: RestDecision }
+    | undefined
   let attemptIndex = 0
   while (true) {
     const heldVerify = verifyHeldError(
@@ -355,6 +363,13 @@ export async function executeWithFailover<
       }
       if (error instanceof LocalPayloadUnsupportedError) {
         if (advanceToNextTarget()) continue
+        if (upstreamFailure)
+          throw withRetryAdvice(
+            upstreamFailure.error,
+            upstreamFailure.admission,
+            upstreamFailure.rest,
+            { model: requestedModel, endpoint: routeKind },
+          )
         throw error
       }
       if (
@@ -377,6 +392,7 @@ export async function executeWithFailover<
         await markCooldown(current, error, logPrefix, rest)
       }
 
+      upstreamFailure = { error, admission: current, rest }
       if (!advanceToNextTarget()) {
         throw withRetryAdvice(error, current, rest, {
           model: requestedModel,

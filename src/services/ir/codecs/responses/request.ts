@@ -1,5 +1,6 @@
 import type { ResponsesPayload } from "~/services/protocols/responses/types"
 import type {
+  DecodeLoss,
   IRGenerationOptions,
   IRPart,
   IRTextPart,
@@ -10,7 +11,6 @@ import type {
   RequestIR,
 } from "~/services/ir/types"
 import { encodeChatTextFormat } from "~/services/ir/codecs/messages-chat/text-format"
-import { createHash } from "node:crypto"
 import { LocalPayloadUnsupportedError } from "~/lib/error"
 import { readOpenAIServiceTier } from "~/lib/service-tier"
 import { isResponsesServerTool } from "~/services/protocols/responses/types"
@@ -20,24 +20,31 @@ import {
 } from "~/services/ir/image-generation"
 
 import { asRecord, asString } from "~/lib/json-shape"
+import {
+  customToolArguments,
+  customToolDescription,
+  customToolParameters,
+} from "~/services/ir/codecs/responses/custom-tool"
+import {
+  type CodexInputState,
+  decodeCodexInputItem,
+  isLiteInput,
+  LITE_NAMESPACE,
+  TOOL_SEARCH_NAME,
+} from "~/services/ir/codecs/responses/codex-input"
+import { flatToolName } from "~/services/ir/codecs/responses/tool-names"
 
 type RecordValue = Record<string, unknown>
 
-function flatToolName(namespace: string, name: string): string {
-  const flat = `${namespace}__${name}`
-  if (flat.length <= 64) return flat
-  const suffix = createHash("sha256")
-    .update(`${namespace}\0${name}`)
-    .digest("hex")
-    .slice(0, 8)
-  return `${flat.slice(0, 55)}_${suffix}`
-}
-
-function decodeContent(value: unknown): Array<IRPart> {
+function decodeContent(
+  value: unknown,
+  losses: Array<DecodeLoss>,
+  path: string,
+): Array<IRPart> {
   if (typeof value === "string") return [{ type: "text", text: value }]
   if (!Array.isArray(value)) return []
   const parts: Array<IRPart> = []
-  for (const valuePart of value) {
+  for (const [index, valuePart] of value.entries()) {
     const part = asRecord(valuePart)
     if (!part)
       throw new LocalPayloadUnsupportedError("Malformed Responses content part")
@@ -102,9 +109,20 @@ function decodeContent(value: unknown): Array<IRPart> {
           "Responses input_file has no usable source",
         )
     } else {
-      throw new LocalPayloadUnsupportedError(
-        `Unsupported Responses content type: ${String(part.type)}`,
+      if (
+        ["input_text", "output_text", "text", "refusal"].includes(
+          String(part.type),
+        )
       )
+        throw new LocalPayloadUnsupportedError(
+          "Malformed Responses text content",
+        )
+      losses.push({
+        path: `${path}[${index}]`,
+        feature: asString(part.type) ?? "unknown",
+        action: "drop",
+        reason: "content block has no equivalent on the target wire",
+      })
     }
   }
   return parts
@@ -112,18 +130,47 @@ function decodeContent(value: unknown): Array<IRPart> {
 
 function decodeToolResultContent(
   value: unknown,
+  losses: Array<DecodeLoss>,
+  path: string,
 ): Array<IRTextPart | Extract<IRPart, { type: "image" | "file" }>> {
-  return decodeContent(value).filter(
+  return decodeContent(value, losses, path).filter(
     (part): part is IRTextPart | Extract<IRPart, { type: "image" | "file" }> =>
       part.type === "text" || part.type === "image" || part.type === "file",
   )
 }
 
-function decodeTools(value: unknown): Array<IRTool> {
-  if (!Array.isArray(value)) return []
+function irTool(tool: RecordValue, name: string): IRTool {
+  if (tool.type === "custom")
+    return {
+      name,
+      description: customToolDescription(tool),
+      parameters: customToolParameters(),
+      responsesType: "custom",
+    }
+  return {
+    name,
+    description: asString(tool.description),
+    parameters: asRecord(tool.parameters) ?? {},
+    ...(typeof tool.strict === "boolean" ? { strict: tool.strict } : {}),
+    ...(tool.type === "tool_search" ? { responsesType: "tool_search" } : {}),
+  }
+}
+
+/**
+ * Decodes the tools a request offers: those it sent, then those its input
+ * carries (`lifted`: Responses Lite's additional_tools, what a tool search
+ * found), which Codex does not send again. A lifted tool already offered is
+ * offered once. Hosted tools a translated target cannot run are dropped with
+ * a loss record, as is a server-run tool search.
+ */
+function decodeTools(
+  sent: unknown,
+  lifted: Array<RecordValue>,
+  losses: Array<DecodeLoss>,
+): Array<IRTool> {
   const tools: Array<IRTool> = []
   const used = new Set<string>()
-  const add = (tool: RecordValue, namespace?: string): void => {
+  const add = (tool: RecordValue, liftedTool: boolean, namespace?: string) => {
     const originalName = asString(tool.name)
     if (!originalName)
       throw new LocalPayloadUnsupportedError(
@@ -131,58 +178,88 @@ function decodeTools(value: unknown): Array<IRTool> {
       )
     const name =
       namespace ? flatToolName(namespace, originalName) : originalName
-    if (used.has(name))
+    if (used.has(name)) {
+      if (liftedTool) return
       throw new LocalPayloadUnsupportedError(
         `Responses tool name collision: ${name}`,
       )
+    }
     used.add(name)
     tools.push({
-      name,
-      description: asString(tool.description),
-      parameters: asRecord(tool.parameters) ?? {},
-      ...(typeof tool.strict === "boolean" ? { strict: tool.strict } : {}),
+      ...irTool(tool, name),
       ...(namespace ? { namespace, originalName } : {}),
     })
   }
-  for (const valueTool of value) {
+  const dropHosted = (type: string, path: string): void => {
+    losses.push({
+      path,
+      feature: `${type}_tool`,
+      action: "drop",
+      reason: "hosted tool cannot be offered to a translated target",
+    })
+  }
+  const all = [
+    ...(Array.isArray(sent) ? sent : []).map((tool) => ({
+      tool,
+      liftedTool: false,
+    })),
+    ...lifted.map((tool) => ({ tool, liftedTool: true })),
+  ]
+  all.forEach(({ tool: valueTool, liftedTool }, index) => {
     const tool = asRecord(valueTool)
     if (!tool)
       throw new LocalPayloadUnsupportedError("Malformed Responses tool")
-    if (tool.type === "namespace") {
+    const type = asString(tool.type) ?? ""
+    const path = `tools[${index}]`
+    if (type === "namespace") {
       const namespace = asString(tool.name)
       if (!namespace || !Array.isArray(tool.tools))
         throw new LocalPayloadUnsupportedError(
           "Malformed Responses namespace tool",
         )
-      for (const nested of tool.tools) {
+      tool.tools.forEach((nested: unknown, nestedIndex) => {
         const nestedTool = asRecord(nested)
-        if (!nestedTool || nestedTool.type !== "function")
+        if (!nestedTool)
           throw new LocalPayloadUnsupportedError(
-            "Unsupported Responses namespace member",
+            "Malformed Responses namespace member",
           )
-        add(nestedTool, namespace)
-      }
-    } else if (tool.type === "function") {
-      add(tool)
-    } else if (
-      typeof tool.type !== "string"
-      || !tool.type.startsWith("web_search")
-    ) {
-      throw new LocalPayloadUnsupportedError(
-        `Unsupported Responses tool type: ${String(tool.type)}`,
-      )
+        if (nestedTool.type === "function" || nestedTool.type === "custom")
+          add(nestedTool, liftedTool, namespace)
+        else
+          dropHosted(
+            asString(nestedTool.type) ?? "unknown",
+            `${path}.tools[${nestedIndex}]`,
+          )
+      })
+    } else if (type === "function" || type === "custom") {
+      add(tool, liftedTool)
+    } else if (type === TOOL_SEARCH_NAME && tool.execution === "client") {
+      // Codex runs its tool search itself: offered as the function it is.
+      add({ ...tool, name: TOOL_SEARCH_NAME }, liftedTool)
+    } else if (!type.startsWith("web_search")) {
+      // Search intent is read from the tools by decodeGeneration.
+      dropHosted(type || "unknown", path)
     }
-  }
+  })
   return tools
 }
 
-function decodeToolChoice(value: unknown): IRToolChoice | undefined {
+function decodeToolChoice(
+  value: unknown,
+  lite: boolean,
+): IRToolChoice | undefined {
   if (value === "auto" || value === "none" || value === "required")
     return { type: value }
   const choice = asRecord(value)
   if (!choice)
     throw new LocalPayloadUnsupportedError("Unsupported Responses tool_choice")
-  if (choice.type === "function") {
+  if (choice.type === TOOL_SEARCH_NAME)
+    return { type: "tool", name: TOOL_SEARCH_NAME }
+  const toolName = (name: string, namespace: string | undefined) =>
+    namespace && !(lite && namespace === LITE_NAMESPACE) ?
+      flatToolName(namespace, name)
+    : name
+  if (choice.type === "function" || choice.type === "custom") {
     const name = asString(choice.name)
     const namespace = asString(choice.namespace)
     if (!name)
@@ -191,7 +268,7 @@ function decodeToolChoice(value: unknown): IRToolChoice | undefined {
       )
     return {
       type: "tool",
-      name: namespace ? flatToolName(namespace, name) : name,
+      name: toolName(name, namespace),
     }
   }
   if (choice.type !== "allowed_tools")
@@ -206,17 +283,21 @@ function decodeToolChoice(value: unknown): IRToolChoice | undefined {
   const allowed = new Set<string>()
   for (const raw of Array.isArray(choice.tools) ? choice.tools : []) {
     const item = asRecord(raw)
-    if (!item || item.type !== "function")
+    if (
+      !item
+      || !["function", "custom", TOOL_SEARCH_NAME].includes(String(item.type))
+    )
       throw new LocalPayloadUnsupportedError(
         "Unsupported Responses allowed_tools member",
       )
-    const name = asString(item.name)
+    const name =
+      item.type === TOOL_SEARCH_NAME ? TOOL_SEARCH_NAME : asString(item.name)
     const namespace = asString(item.namespace)
     if (!name)
       throw new LocalPayloadUnsupportedError(
         "Responses allowed_tools member has no name",
       )
-    allowed.add(namespace ? flatToolName(namespace, name) : name)
+    allowed.add(toolName(name, namespace))
   }
   // Unknown names remain visible to preflight, which rejects an invalid
   // restriction instead of silently widening or narrowing it.
@@ -272,24 +353,17 @@ function decodeGeneration(payload: ResponsesPayload): IRGenerationOptions {
     }
   }
   const reasoning = asRecord(p.reasoning)
-  if (typeof reasoning?.effort === "string") {
-    const effort = reasoning.effort
-    if (
-      effort === "none"
-      || effort === "low"
-      || effort === "medium"
-      || effort === "high"
-    ) {
-      generation.reasoning = {
-        effort,
-        ...((
-          reasoning.summary === "auto"
-          || reasoning.summary === "concise"
-          || reasoning.summary === "detailed"
-        ) ?
-          { summary: reasoning.summary }
-        : {}),
-      }
+  const effort = responsesEffort(reasoning?.effort)
+  if (effort && reasoning) {
+    generation.reasoning = {
+      effort,
+      ...((
+        reasoning.summary === "auto"
+        || reasoning.summary === "concise"
+        || reasoning.summary === "detailed"
+      ) ?
+        { summary: reasoning.summary }
+      : {}),
     }
   }
   return generation
@@ -309,6 +383,7 @@ export function decodeResponsesRequest(payload: ResponsesPayload): RequestIR {
       ]
     : []
   const turns: Array<IRTurn> = []
+  const losses: Array<DecodeLoss> = []
   let pendingReasoning: Extract<IRPart, { type: "thinking" }> | undefined
   const takeReasoning = (): Array<IRPart> => {
     const part = pendingReasoning
@@ -319,7 +394,26 @@ export function decodeResponsesRequest(payload: ResponsesPayload): RequestIR {
     typeof payload.input === "string" ?
       [{ role: "user", content: payload.input }]
     : payload.input
-  for (const valueItem of input) {
+  const codex: CodexInputState = {
+    source,
+    turns,
+    takeReasoning,
+    clearReasoning: () => {
+      pendingReasoning = undefined
+    },
+    decodeContent: (value, path) => decodeContent(value, losses, path),
+    liftedTools: [],
+    losses,
+  }
+  // Lite groups Codex's own tools in the `functions` namespace, which Codex
+  // reads as no namespace; they are offered plain (codex-input.ts), so a
+  // call to one is the plain call it now is.
+  const lite = isLiteInput(input)
+  const callNamespace = (item: RecordValue): string | undefined => {
+    const namespace = asString(item.namespace)
+    return lite && namespace === LITE_NAMESPACE ? undefined : namespace
+  }
+  for (const [index, valueItem] of input.entries()) {
     const item = asRecord(valueItem)
     if (!item)
       throw new LocalPayloadUnsupportedError("Malformed Responses input item")
@@ -337,12 +431,9 @@ export function decodeResponsesRequest(payload: ResponsesPayload): RequestIR {
       continue
     }
     if (item.type === "reasoning") {
+      // The summary, else the reasoning itself when the item carries it.
       const summary =
-        Array.isArray(item.summary) ?
-          item.summary
-            .map((raw) => asString(asRecord(raw)?.text) ?? "")
-            .join("")
-        : ""
+        joinedText(item.summary) || joinedText(item.content, "reasoning_text")
       pendingReasoning =
         summary || asString(item.encrypted_content) ?
           {
@@ -364,7 +455,7 @@ export function decodeResponsesRequest(payload: ResponsesPayload): RequestIR {
           "Malformed Responses function_call",
         )
       if (name && callId) {
-        const namespace = asString(item.namespace)
+        const namespace = callNamespace(item)
         turns.push({
           role: "assistant",
           source,
@@ -382,7 +473,35 @@ export function decodeResponsesRequest(payload: ResponsesPayload): RequestIR {
       }
       continue
     }
-    if (item.type === "function_call_output") {
+    if (item.type === "custom_tool_call") {
+      const name = asString(item.name)
+      const callId = asString(item.call_id)
+      if (!name || !callId || typeof item.input !== "string")
+        throw new LocalPayloadUnsupportedError(
+          "Malformed Responses custom_tool_call",
+        )
+      const namespace = callNamespace(item)
+      turns.push({
+        role: "assistant",
+        source,
+        parts: [
+          ...takeReasoning(),
+          {
+            type: "tool_call",
+            id: callId,
+            name: namespace ? flatToolName(namespace, name) : name,
+            arguments: customToolArguments(item.input),
+            responsesType: "custom",
+            ...(namespace ? { namespace, originalName: name } : {}),
+          },
+        ],
+      })
+      continue
+    }
+    if (
+      item.type === "function_call_output"
+      || item.type === "custom_tool_call_output"
+    ) {
       pendingReasoning = undefined
       const callId = asString(item.call_id)
       if (
@@ -400,7 +519,11 @@ export function decodeResponsesRequest(payload: ResponsesPayload): RequestIR {
             {
               type: "tool_result",
               callId,
-              content: decodeToolResultContent(item.output),
+              content: decodeToolResultContent(
+                item.output,
+                losses,
+                `input[${index}].output`,
+              ),
             },
           ],
         })
@@ -424,49 +547,143 @@ export function decodeResponsesRequest(payload: ResponsesPayload): RequestIR {
         })
       continue
     }
-    if (item.role === "system" || item.role === "developer") {
-      const parts = decodeContent(item.content)
+    const message = item.type === undefined || item.type === "message"
+    if (message && (item.role === "system" || item.role === "developer")) {
+      const parts = decodeContent(
+        item.content,
+        losses,
+        `input[${index}].content`,
+      )
       if (parts.some((part) => part.type !== "text"))
         throw new LocalPayloadUnsupportedError(
           "Responses instruction contains non-text content",
         )
+      pendingReasoning = undefined
+      if (turns.length > 0) {
+        // Codex adds a developer message where its context changed (world
+        // state, settings, a model switch) and keeps it there. Lifted into
+        // the instructions it would change the prompt's very start, and every
+        // later request would rewrite the whole conversation to the vendor's
+        // prompt cache; it stays in place, told as the system's words.
+        const text = (parts as Array<IRTextPart>)
+          .map((part) => part.text)
+          .join("\n")
+        if (text)
+          turns.push({
+            role: "user",
+            source,
+            parts: [
+              {
+                type: "text",
+                text: `<system-reminder>\n${text}\n</system-reminder>`,
+              },
+            ],
+          })
+        codex.losses.push({
+          path: `input[${index}]`,
+          feature: `${item.role}_message`,
+          action: "transform",
+          reason:
+            "mid-conversation instruction kept in place as a user reminder",
+        })
+        continue
+      }
       instructions.push({
         role: item.role,
         source,
         parts: parts as Array<IRTextPart>,
       })
-      pendingReasoning = undefined
       continue
     }
-    if (item.role === "user" || item.role === "assistant") {
+    if (message && (item.role === "user" || item.role === "assistant")) {
       const isAssistant = item.role === "assistant"
       turns.push({
         role: item.role,
         source,
         parts: [
           ...(isAssistant ? takeReasoning() : []),
-          ...decodeContent(item.content),
+          ...decodeContent(item.content, losses, `input[${index}].content`),
         ],
       })
       if (!isAssistant) pendingReasoning = undefined
       continue
     }
+    if (decodeCodexInputItem(item, `input[${index}]`, codex)) continue
     throw new LocalPayloadUnsupportedError(
       `Unsupported Responses input item: ${String(item.type)}`,
     )
   }
-  const tools = decodeTools(payload.tools)
+  const tools = decodeTools(payload.tools, codex.liftedTools, codex.losses)
+  const generation = decodeGeneration(payload)
+  const toolChoice =
+    payload.tool_choice ?
+      decodeToolChoice(payload.tool_choice, lite)
+    : undefined
+  assertHostedToolChoice(losses, tools, toolChoice, generation)
+  const effort = responsesEffort(codex.effort)
+  if (effort) generation.reasoning = { ...generation.reasoning, effort }
   return {
     model: payload.model,
     source,
     instructions,
     turns,
     ...(tools.length ? { tools } : {}),
-    ...(payload.tool_choice ?
-      { toolChoice: decodeToolChoice(payload.tool_choice) }
-    : {}),
-    generation: decodeGeneration(payload),
+    ...(toolChoice ? { toolChoice } : {}),
+    generation,
+    ...(codex.losses.length ? { decodeLosses: codex.losses } : {}),
   }
+}
+
+/** Dropping a hosted declaration must not weaken an explicit execution contract. */
+function assertHostedToolChoice(
+  losses: Array<DecodeLoss>,
+  tools: Array<IRTool>,
+  toolChoice: IRToolChoice | undefined,
+  generation: IRGenerationOptions,
+): void {
+  if (
+    losses.some(
+      (loss) =>
+        loss.reason === "hosted tool cannot be offered to a translated target",
+    )
+    && ((toolChoice?.type === "required"
+      && tools.length === 0
+      && !generation.webSearch)
+      || (toolChoice?.type === "tool"
+        && !tools.some((tool) => tool.name === toolChoice.name)))
+  )
+    throw new LocalPayloadUnsupportedError(
+      "Required Responses hosted tool cannot be offered to a translated target",
+    )
+}
+
+/** A Responses reasoning effort the IR carries. */
+function responsesEffort(
+  value: unknown,
+): NonNullable<IRGenerationOptions["reasoning"]>["effort"] {
+  return (
+      value === "none"
+        || value === "minimal"
+        || value === "low"
+        || value === "medium"
+        || value === "high"
+        || value === "xhigh"
+        || value === "max"
+        || value === "auto"
+    ) ?
+      value
+    : undefined
+}
+
+/** Concatenated `text` of the parts in `value`, optionally of one type only. */
+function joinedText(value: unknown, type?: string): string {
+  if (!Array.isArray(value)) return ""
+  return value
+    .map((raw) => {
+      const part = asRecord(raw)
+      return !type || part?.type === type ? (asString(part?.text) ?? "") : ""
+    })
+    .join("")
 }
 
 function encodeContent(parts: Array<IRPart>): Array<RecordValue> {
@@ -596,10 +813,34 @@ function encodeToolChoice(
   return { type: "allowed_tools", mode: choice.mode, tools: allowed }
 }
 
+/** Messages puts tool results inside user turns; Responses needs separate items. */
+function* splitToolResultTurns(turns: Array<IRTurn>): Iterable<IRTurn> {
+  for (const turn of turns) {
+    if (
+      turn.role !== "user"
+      || !turn.parts.some((part) => part.type === "tool_result")
+    ) {
+      yield turn
+      continue
+    }
+    let parts: Array<IRPart> = []
+    for (const part of turn.parts) {
+      if (part.type !== "tool_result") {
+        parts.push(part)
+        continue
+      }
+      if (parts.length) yield { ...turn, parts }
+      parts = []
+      yield { ...turn, role: "tool", parts: [part] }
+    }
+    if (parts.length) yield { ...turn, parts }
+  }
+}
+
 /** Opaque replay material stays on its originating wire. */
 function encodeResponsesTurns(turns: Array<IRTurn>): Array<RecordValue> {
   const items: Array<RecordValue> = []
-  for (const turn of turns) {
+  for (const turn of splitToolResultTurns(turns)) {
     if (turn.role === "tool") {
       for (const part of turn.parts) {
         if (part.type !== "tool_result") continue

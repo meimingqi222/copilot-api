@@ -16,6 +16,7 @@ import {
   responsesImageCall,
 } from "~/services/ir/image-generation"
 import { mergeUsage } from "~/services/ir/usage"
+import { customToolInputPrefix } from "~/services/ir/codecs/responses/custom-tool"
 import {
   decodeResponsesResult,
   encodeResponsesResult,
@@ -430,12 +431,50 @@ function updatePart(
   return part
 }
 
-/** Encode IR events incrementally, retaining only the result needed for the final Responses object. */
+/** The initial Responses item, before content or argument deltas arrive. */
+function addedItem(part: IRPart, partId: string): WireRecord | undefined {
+  switch (part.type) {
+    case "text":
+      return { type: "message", id: partId, role: "assistant", content: [] }
+    case "image":
+      return {
+        ...responsesImageCall(part, part.id ?? partId),
+        result: null,
+        status: "in_progress",
+      }
+    case "thinking":
+      return { type: "reasoning", id: partId, summary: [] }
+    case "tool_call": {
+      const call = { id: partId, call_id: part.id }
+      if (part.responsesType === "tool_search")
+        return {
+          ...call,
+          type: "tool_search_call",
+          execution: "client",
+          status: "in_progress",
+          arguments: {},
+        }
+      const named = {
+        ...call,
+        name: part.originalName ?? part.name,
+        ...(part.namespace ? { namespace: part.namespace } : {}),
+      }
+      return part.responsesType === "custom" ?
+          { ...named, type: "custom_tool_call", input: "" }
+        : { ...named, type: "function_call", arguments: part.arguments }
+    }
+    default:
+      return undefined
+  }
+}
+
+/** Encode IR events incrementally, retaining the final Responses snapshot. */
 export async function* encodeResponsesStream(
   stream: AsyncIterable<StreamEvent>,
   request?: RequestIR | ResponsesPayload,
 ): AsyncIterable<CopilotStreamEventLike> {
   const parts = new Map<number, IRPart>()
+  const customInputs = new Map<number, string>()
   let responseId = "resp_unknown"
   let model = request?.model ?? "unknown"
   let source: ResultIR["source"] = { wire: "responses" }
@@ -443,6 +482,23 @@ export async function* encodeResponsesStream(
   let usage: IRUsage | undefined
   let started = false
   let pendingSearchCall: { index: number; partId: string } | undefined
+  const customInputDelta = (
+    index: number,
+    partId: string,
+    input: string,
+  ): CopilotStreamEventLike | undefined => {
+    const sent = customInputs.get(index) ?? ""
+    if (!input.startsWith(sent))
+      throw new Error("Custom tool input changed after being streamed")
+    customInputs.set(index, input)
+    if (input.length === sent.length) return undefined
+    return event("response.custom_tool_call_input.delta", {
+      response_id: responseId,
+      output_index: index,
+      item_id: partId,
+      delta: input.slice(sent.length),
+    })
+  }
   /** Emits the deferred `output_item.done` for a search call, if one is held. */
   const flushPendingSearchCall = (): CopilotStreamEventLike | undefined => {
     if (!pendingSearchCall) return undefined
@@ -554,47 +610,13 @@ export async function* encodeResponsesStream(
           }
           continue
         }
-        if (part.type === "text") {
+        const item = addedItem(part, current.partId)
+        if (item)
           yield event("response.output_item.added", {
             response_id: responseId,
             output_index: current.index,
-            item: {
-              type: "message",
-              id: current.partId,
-              role: "assistant",
-              content: [],
-            },
+            item,
           })
-        } else if (part.type === "image") {
-          yield event("response.output_item.added", {
-            response_id: responseId,
-            output_index: current.index,
-            item: {
-              ...responsesImageCall(part, part.id ?? current.partId),
-              result: null,
-              status: "in_progress",
-            },
-          })
-        } else if (part.type === "tool_call") {
-          yield event("response.output_item.added", {
-            response_id: responseId,
-            output_index: current.index,
-            item: {
-              type: "function_call",
-              id: current.partId,
-              call_id: part.id,
-              name: part.originalName ?? part.name,
-              ...(part.namespace ? { namespace: part.namespace } : {}),
-              arguments: part.arguments,
-            },
-          })
-        } else if (part.type === "thinking") {
-          yield event("response.output_item.added", {
-            response_id: responseId,
-            output_index: current.index,
-            item: { type: "reasoning", id: current.partId, summary: [] },
-          })
-        }
         continue
       }
       if (current.type === "part_delta") {
@@ -612,7 +634,25 @@ export async function* encodeResponsesStream(
             output_index: current.index,
             delta: current.delta.text,
           })
-        else if (current.delta.type === "tool_arguments")
+        else if (
+          current.delta.type === "tool_arguments"
+          && part?.type === "tool_call"
+          && part.responsesType === "custom"
+        ) {
+          const updated = parts.get(current.index)
+          const input =
+            updated?.type === "tool_call" ?
+              customToolInputPrefix(updated.arguments)
+            : undefined
+          if (input !== undefined) {
+            const delta = customInputDelta(current.index, current.partId, input)
+            if (delta) yield delta
+          }
+        } else if (
+          current.delta.type === "tool_arguments"
+          // Tool search has no argument delta event; its object goes in done.
+          && !(part?.type === "tool_call" && part.responsesType)
+        )
           yield event("response.function_call_arguments.delta", {
             response_id: responseId,
             output_index: current.index,
@@ -635,6 +675,21 @@ export async function* encodeResponsesStream(
               parts: [part],
             }).output?.[0]
           : undefined
+        if (item?.type === "custom_tool_call") {
+          const delta = customInputDelta(
+            current.index,
+            current.partId,
+            item.input ?? "",
+          )
+          if (delta) yield delta
+          yield event("response.custom_tool_call_input.done", {
+            response_id: responseId,
+            output_index: current.index,
+            item_id: current.partId,
+            input: item.input,
+          })
+          customInputs.delete(current.index)
+        }
         if (item)
           yield event("response.output_item.done", {
             response_id: responseId,

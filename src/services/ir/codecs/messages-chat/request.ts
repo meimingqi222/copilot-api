@@ -11,11 +11,13 @@ import type {
 import type {
   IRImagePart,
   IRPart,
-  IRToolResultContent,
+  DecodeLoss,
   IRTurn,
   IRWebSearchResultPart,
   RequestIR,
 } from "~/services/ir/types"
+
+import { decodeMessagesContent } from "~/services/ir/codecs/messages-chat/messages-content"
 
 import { sanitizeId } from "~/lib/id-sanitizer"
 import { readAnthropicServiceTier } from "~/lib/service-tier"
@@ -42,19 +44,6 @@ const IMAGE_MEDIA_TYPES = new Set([
   "image/gif",
   "image/webp",
 ])
-
-function imageFromMessages(block: AnthropicImageBlock): IRImagePart {
-  return block.source.type === "url" ?
-      { type: "image", source: { type: "url", url: block.source.url } }
-    : {
-        type: "image",
-        source: {
-          type: "base64",
-          mediaType: block.source.media_type,
-          data: block.source.data,
-        },
-      }
-}
 
 /**
  * Encodes an IR image as an Anthropic image block, or `undefined` when the
@@ -84,54 +73,6 @@ function imageToMessages(part: IRImagePart): AnthropicImageBlock | undefined {
   }
 }
 
-function messagesContentParts(
-  content: string | Array<AnthropicUserContentBlock>,
-): Array<IRPart> {
-  if (typeof content === "string") return [{ type: "text", text: content }]
-  return content.map((block): IRPart => {
-    if (block.type === "text")
-      return {
-        type: "text",
-        text: block.text,
-        ...(block.cache_control && { cacheControl: block.cache_control }),
-      }
-    if (block.type === "image") return imageFromMessages(block)
-    if (block.type === "web_search_tool_result")
-      return {
-        type: "web_search_result",
-        toolUseId: block.tool_use_id,
-        results: block.content.map((result) => ({
-          url: result.url,
-          ...(result.title && { title: result.title }),
-          ...(result.page_age && { pageAge: result.page_age }),
-          ...(result.encrypted_content && {
-            encryptedContent: result.encrypted_content,
-          }),
-        })),
-      }
-    return {
-      type: "tool_result",
-      callId: block.tool_use_id,
-      content:
-        typeof block.content === "string" ?
-          [{ type: "text", text: block.content }]
-        : block.content.map(
-            (item): IRToolResultContent =>
-              item.type === "text" ?
-                {
-                  type: "text",
-                  text: item.text,
-                  ...(item.cache_control && {
-                    cacheControl: item.cache_control,
-                  }),
-                }
-              : imageFromMessages(item),
-          ),
-      ...(block.is_error && { isError: true }),
-    }
-  })
-}
-
 export function decodeMessagesRequest(
   payload: AnthropicMessagesPayload,
 ): RequestIR {
@@ -151,44 +92,14 @@ export function decodeMessagesRequest(
               })),
         },
       ]
-  const turns: Array<IRTurn> = payload.messages.map((message) => ({
+  const losses: Array<DecodeLoss> = []
+  const turns: Array<IRTurn> = payload.messages.map((message, index) => ({
     role: message.role,
-    parts:
-      message.role === "user" ? messagesContentParts(message.content)
-      : typeof message.content === "string" ?
-        [{ type: "text" as const, text: message.content }]
-      : message.content.map((block): IRPart => {
-          if (block.type === "text")
-            return {
-              type: "text",
-              text: block.text,
-              ...(block.cache_control && { cacheControl: block.cache_control }),
-            }
-          if (block.type === "thinking")
-            return {
-              type: "thinking",
-              text: block.thinking,
-              ...(block.signature && {
-                signature: block.signature,
-                signedText: block.thinking,
-              }),
-              source: { wire: "messages" },
-            }
-          if (block.type === "server_tool_use")
-            return {
-              type: "server_tool_use",
-              id: block.id,
-              name: block.name,
-              input: JSON.stringify(block.input ?? {}),
-            }
-          if (block.type === "image") return imageFromMessages(block)
-          return {
-            type: "tool_call",
-            id: block.id,
-            name: block.name,
-            arguments: JSON.stringify(block.input),
-          }
-        }),
+    parts: decodeMessagesContent(message.content, {
+      role: message.role,
+      path: `messages[${index}].content`,
+      losses,
+    }),
     source: { wire: "messages" },
   }))
   const thinking = payload.thinking
@@ -204,6 +115,7 @@ export function decodeMessagesRequest(
     source: { wire: "messages" },
     instructions,
     turns,
+    ...(losses.length ? { decodeLosses: losses } : {}),
     ...(functionTools.length > 0 && {
       tools: functionTools.map((tool) => ({
         name: tool.name,

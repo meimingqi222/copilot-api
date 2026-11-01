@@ -61,6 +61,15 @@ export const LOSS_REASONS = {
     "service_tier_unsupported",
   "target wire codec cannot encode the requested structured output format":
     "structured_output_unsupported",
+  // Decode-stage losses (`RequestIR.decodeLosses`): the source decoder drops
+  // or reshapes these before any target is known.
+  "opaque compaction summary cannot be replayed to another issuer":
+    "compaction_dropped",
+  "hosted tool cannot be offered to a translated target": "hosted_tool_dropped",
+  "input item has no equivalent on the target wire": "input_item_dropped",
+  "content block has no equivalent on the target wire": "content_block_dropped",
+  "mid-conversation instruction kept in place as a user reminder":
+    "instruction_inlined",
 } as const satisfies Readonly<Record<string, string>>
 
 /** A reason the planner may record. */

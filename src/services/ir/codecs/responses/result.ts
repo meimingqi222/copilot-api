@@ -18,6 +18,7 @@ import {
 } from "~/services/ir/image-generation"
 
 import { asRecord, asString } from "~/lib/json-shape"
+import { customToolInput } from "~/services/ir/codecs/responses/custom-tool"
 
 type WireRecord = Record<string, unknown>
 
@@ -220,6 +221,27 @@ function responseItem(
       : {}),
     }
   }
+  if (part.type === "tool_call" && part.responsesType === "tool_search") {
+    // Codex runs its tool search itself, from the item it knows it by.
+    return {
+      type: "tool_search_call",
+      id: `tsc_${responseId}_${index}`,
+      call_id: part.id,
+      execution: "client",
+      status: "completed",
+      arguments: toolSearchArguments(part.arguments),
+    }
+  }
+  if (part.type === "tool_call" && part.responsesType === "custom") {
+    return {
+      type: "custom_tool_call",
+      id: `ctc_${responseId}_${index}`,
+      call_id: part.id,
+      name: part.originalName ?? part.name,
+      ...(part.namespace ? { namespace: part.namespace } : {}),
+      input: customToolInput(part.arguments),
+    }
+  }
   if (part.type === "tool_call") {
     return {
       type: "function_call",
@@ -234,6 +256,15 @@ function responseItem(
   if (part.type === "image")
     return responsesImageCall(part, part.id ?? `img_${responseId}_${index}`)
   return undefined
+}
+
+/** A tool search call's arguments as the object Codex reads them as. */
+function toolSearchArguments(args: string): Record<string, unknown> {
+  try {
+    return asRecord(JSON.parse(args)) ?? {}
+  } catch {
+    return {}
+  }
 }
 
 /**
@@ -291,21 +322,26 @@ function mergeSearchResults(parts: Array<IRPart>): Array<IRPart> {
   })
 }
 
-/** Restore the namespace after a Chat model called its flattened tool name. */
+/**
+ * Restore what a Chat/Messages model's call lost of the Responses tool it
+ * called: the namespace of a flattened name, and that the tool is a custom
+ * (free-form) one, to be answered as a `custom_tool_call`.
+ */
 export function restoreResponsesToolNamespace(
   part: IRPart,
   request?: RequestIR | ResponsesPayload,
 ): IRPart {
-  if (
-    part.type !== "tool_call"
-    || part.namespace
-    || !request
-    || !("turns" in request)
-  )
+  if (part.type !== "tool_call" || !request || !("turns" in request))
     return part
   const tool = request.tools?.find((candidate) => candidate.name === part.name)
-  if (!tool?.namespace || !tool.originalName) return part
-  return { ...part, namespace: tool.namespace, originalName: tool.originalName }
+  if (!tool) return part
+  return {
+    ...part,
+    ...(!part.namespace && tool.namespace && tool.originalName ?
+      { namespace: tool.namespace, originalName: tool.originalName }
+    : {}),
+    ...(tool.responsesType ? { responsesType: tool.responsesType } : {}),
+  }
 }
 
 /** Encode a normalized result without inventing encrypted reasoning content. */

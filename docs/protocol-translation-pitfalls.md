@@ -303,6 +303,26 @@ Windsurf 只有一个 `system_prompt` 字段，必须合并 Chat 的 system 和 
 
 ---
 
+### 3.13 Coding 客户端扩展与文件边界
+
+Responses 的 `custom` 工具通过单个 `input` 字符串参数映射为函数，返回时恢复
+`custom_tool_call`，流式逐段解码 JSON 字符串，不能把包装 JSON 发给客户端。
+客户端执行的 `tool_search` 映射为函数，返回 `tool_search_call`；搜索发现的工具
+以及 Lite `additional_tools` 中的工具补入声明。Lite 项常带 `role: developer`，
+必须先识别类型，不能误当普通指令。展开 `functions` namespace 时，工具声明、
+历史调用和 tool_choice 必须使用相同名字。
+
+配置更新应用到当前 effort；agent 消息按 user 输入保留。中途 developer 指令
+保留位置，转换为 user 的 system-reminder。不可解密的压缩摘要、redacted thinking
+和未知可选块通过 decode loss 记录；压缩触发请求与必选工具不能静默降级。
+
+Messages 的 PDF `document`（包括 tool_result 内）进入 IR 文件类型，不能误当图片。
+支持文件的 Responses 目标保留内容；不支持文件的 Chat 目标在预检阶段拒绝。
+user 消息中的工具结果转换为独立 Responses 项，周围文字的顺序保持不变。
+
+回归：`tests/ir-responses.test.ts`、`tests/ir-messages-chat.test.ts`。
+决策：`.agents/notes/implemented/architecture/2026-11-01-coding-client-ir-compatibility.md`。
+
 ## 4. messages ↔ responses（已开放）
 
 IR 不经 Chat 枢纽，两个方向各自直连，没有专属行为，因此不设 wrapper：

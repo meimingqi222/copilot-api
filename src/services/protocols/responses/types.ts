@@ -63,6 +63,26 @@ interface ResponsesFunctionCallItem {
   arguments?: string
 }
 
+/** A call to a custom (free-form) tool such as Codex's `apply_patch`. */
+interface ResponsesCustomToolCallItem {
+  type: "custom_tool_call"
+  id?: string
+  call_id?: string
+  name?: string
+  namespace?: string
+  input?: string
+}
+
+/** A call to Codex's client-run tool search. */
+interface ResponsesToolSearchCallItem {
+  type: "tool_search_call"
+  id?: string
+  call_id?: string
+  execution?: "client"
+  status?: string
+  arguments?: Record<string, unknown>
+}
+
 /**
  * An upstream-executed search the model decided to run. Replayed verbatim by
  * Responses clients, so it is modelled on both the input and output sides.
@@ -252,6 +272,8 @@ export interface ResponsesResponse {
   output?: Array<
     | ResponsesMessageItem
     | ResponsesFunctionCallItem
+    | ResponsesCustomToolCallItem
+    | ResponsesToolSearchCallItem
     | ResponsesReasoningItem
     | ResponsesWebSearchCallItem
     | ResponsesImageGenerationCallItem

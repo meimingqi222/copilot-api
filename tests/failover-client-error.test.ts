@@ -104,6 +104,22 @@ function httpError(status: number, body: string): HTTPError {
 }
 
 describe("executeWithFailover client-error cooldown", () => {
+  test("only local translation refusals still return 422 without cooling credentials", async () => {
+    await setupResponsesConnection("first")
+    await setupResponsesConnection("second")
+    await expect(
+      executeWithFailover({
+        payload: { model: "Atria-Dawn-Preview" },
+        admission: buildResponsesAdmission(),
+        routeKind: "responses",
+        execute: () => {
+          throw new LocalPayloadUnsupportedError("unsupported file contract")
+        },
+      }),
+    ).rejects.toBeInstanceOf(LocalPayloadUnsupportedError)
+    for (const id of ["first", "second"])
+      expect(getProviderConnection(id)?.credentials[0]?.status).toBe("ready")
+  })
   test("local payload incompatibility tries another target without cooldown", async () => {
     await setupResponsesConnection("first")
     await setupResponsesConnection("second")
@@ -127,6 +143,44 @@ describe("executeWithFailover client-error cooldown", () => {
     expect(
       getProviderConnection(rejectedId)?.credentials[0]?.cooldownUntil,
     ).toBeUndefined()
+  })
+
+  test("a local payload refusal on the last target keeps the earlier upstream 429", async () => {
+    await setupResponsesConnection("first")
+    await setupResponsesConnection("second")
+    const admission = buildResponsesAdmission()
+    const exhaustedId = admission.connection.id
+    const error = await executeWithFailover({
+      payload: { model: "Atria-Dawn-Preview" },
+      admission,
+      routeKind: "responses",
+      execute: (_adapter, _target, current) => {
+        if (current.connection.id === exhaustedId)
+          throw httpError(
+            429,
+            JSON.stringify({
+              error: {
+                type: "usage_limit_reached",
+                message: "The usage limit has been reached",
+              },
+            }),
+          )
+        throw new LocalPayloadUnsupportedError(
+          "Unsupported Responses input item: custom_tool_call",
+        )
+      },
+    }).catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(HTTPError)
+    expect(error).not.toBeInstanceOf(LocalPayloadUnsupportedError)
+    expect((error as HTTPError).response.status).toBe(429)
+    expect((error as HTTPError).responseBody).toContain("usage_limit_reached")
+    expect(
+      Number((error as HTTPError).response.headers.get("Retry-After")),
+    ).toBeGreaterThan(0)
+    const skippedId = exhaustedId === "first" ? "second" : "first"
+    expect(getProviderConnection(skippedId)?.credentials[0]?.status).toBe(
+      "ready",
+    )
   })
 
   test("400 upstream_error does not cool down the credential", async () => {

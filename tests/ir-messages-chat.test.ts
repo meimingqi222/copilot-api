@@ -23,8 +23,181 @@ import {
   encodeMessagesResponse,
   encodeMessagesStream,
 } from "~/services/ir/codecs/messages-chat"
+import { planTranslation } from "~/services/ir"
+import { encodeResponsesRequest } from "~/services/ir/codecs/responses/request"
+import { createMessagesViaChat } from "~/services/protocols/messages-via-chat"
+import { LocalPayloadUnsupportedError } from "~/lib/error"
 
 describe("Messages and Chat IR codecs", () => {
+  test("a PDF never reaches a Chat executor as a malformed image", async () => {
+    let called = false
+    await expect(
+      createMessagesViaChat({
+        target: {
+          upstreamModelId: "test-model",
+          protocol: "openai-chat-compatible",
+        },
+        connection: { id: "chat", protocol: "openai-chat-compatible" },
+        credential: { id: "cred" },
+        payload: {
+          model: "test-model",
+          max_tokens: 100,
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "document",
+                  source: {
+                    type: "base64",
+                    media_type: "application/pdf",
+                    data: "JVBERi0=",
+                  },
+                },
+              ],
+            },
+          ],
+        },
+        executor: async () => {
+          called = true
+          throw new Error("must not dispatch")
+        },
+      } as unknown as Parameters<typeof createMessagesViaChat>[0]),
+    ).rejects.toBeInstanceOf(LocalPayloadUnsupportedError)
+    expect(called).toBe(false)
+  })
+  test("Responses retains mixed text and tool-result order from a Messages user turn", () => {
+    const request = decodeMessagesRequest({
+      model: "test",
+      max_tokens: 100,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "before" },
+            { type: "tool_result", tool_use_id: "a", content: "first" },
+            { type: "text", text: "middle" },
+            { type: "tool_result", tool_use_id: "b", content: "second" },
+            { type: "text", text: "after" },
+          ],
+        },
+      ],
+    })
+    expect(encodeResponsesRequest(request).input).toEqual([
+      { role: "user", content: [{ type: "input_text", text: "before" }] },
+      { type: "function_call_output", call_id: "a", output: "first" },
+      { role: "user", content: [{ type: "input_text", text: "middle" }] },
+      { type: "function_call_output", call_id: "b", output: "second" },
+      { role: "user", content: [{ type: "input_text", text: "after" }] },
+    ])
+  })
+  test.each(["user", "tool"])(
+    "PDF %s content remains a file and Chat rejects it before upstream",
+    (where) => {
+      const document = {
+        type: "document",
+        source: {
+          type: "base64",
+          media_type: "application/pdf",
+          data: "JVBERi0=",
+        },
+      }
+      const request = decodeMessagesRequest({
+        model: "test",
+        max_tokens: 100,
+        messages: [
+          {
+            role: "user",
+            content:
+              where === "user" ?
+                [document]
+              : [
+                  {
+                    type: "tool_result",
+                    tool_use_id: "read",
+                    content: [document],
+                  },
+                ],
+          },
+        ],
+      } as unknown as AnthropicMessagesPayload)
+      const chat = planTranslation(request, { wire: "chat" })
+      expect(chat.accepted).toBe(false)
+      expect(chat.losses.records).toContainEqual(
+        expect.objectContaining({ feature: "file", action: "reject" }),
+      )
+      expect(planTranslation(request, { wire: "responses" }).accepted).toBe(
+        true,
+      )
+      const wire = encodeResponsesRequest(request)
+      expect(JSON.stringify(wire.input)).toContain('"type":"input_file"')
+      expect(JSON.stringify(wire.input)).toContain(
+        "data:application/pdf;base64,JVBERi0=",
+      )
+      expect(JSON.stringify(wire.input)).not.toContain("input_image")
+    },
+  )
+
+  test("opaque thinking and unknown content never become empty tool calls or results", () => {
+    const request = decodeMessagesRequest({
+      model: "test",
+      max_tokens: 100,
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            { type: "redacted_thinking", data: "private-ciphertext" },
+            { type: "text", text: "answer" },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            { type: "future_optional", data: "private-content" },
+            { type: "text", text: "continue" },
+          ],
+        },
+      ],
+    } as unknown as AnthropicMessagesPayload)
+    const chat = encodeChatRequest(request)
+    expect(chat.messages.map((m) => m.content)).toEqual(["answer", "continue"])
+    expect(JSON.stringify(chat)).not.toContain("tool_calls")
+    expect(planTranslation(request, { wire: "chat" }).losses.records).toEqual([
+      expect.objectContaining({
+        stage: "decode",
+        feature: "redacted_thinking",
+        action: "drop",
+      }),
+      expect.objectContaining({
+        stage: "decode",
+        feature: "future_optional",
+        action: "drop",
+      }),
+    ])
+    expect(JSON.stringify(request.decodeLosses)).not.toContain("private-")
+  })
+
+  test("document text and URLs decode, malformed documents are a local rejection", () => {
+    const decode = (source: unknown) =>
+      decodeMessagesRequest({
+        model: "test",
+        max_tokens: 100,
+        messages: [{ role: "user", content: [{ type: "document", source }] }],
+      } as unknown as AnthropicMessagesPayload)
+    expect(
+      decode({ type: "text", data: "document words" }).turns[0]?.parts,
+    ).toEqual([{ type: "text", text: "document words" }])
+    expect(
+      decode({ type: "url", url: "https://example.com/file.pdf" }).turns[0]
+        ?.parts,
+    ).toEqual([
+      {
+        type: "file",
+        source: { type: "url", url: "https://example.com/file.pdf" },
+      },
+    ])
+    expect(() => decode({ type: "base64" })).toThrow("document")
+  })
   test("preserves each signed thinking block independently", () => {
     const payload: AnthropicMessagesPayload = {
       model: "claude-sonnet-4",

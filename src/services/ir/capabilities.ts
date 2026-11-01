@@ -321,7 +321,9 @@ export function planTranslation(
   target: TargetCapabilities,
 ): ConversionPlan {
   const capabilities = { ...WIRE_CAPABILITIES[target.wire], ...target.supports }
-  const records: Array<LossRecord> = []
+  const records: Array<LossRecord> = (request.decodeLosses ?? []).map(
+    (loss) => ({ ...loss, target: target.wire, stage: "decode" }),
+  )
   const features = inspectRequestFeatures(request)
   const allowedError = validateAllowedTools(request.toolChoice, request)
   if (allowedError) {

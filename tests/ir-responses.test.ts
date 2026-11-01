@@ -24,6 +24,10 @@ import {
   encodeResponsesStream,
 } from "~/services/ir/codecs/responses/stream"
 import { createResponsesViaChat } from "~/services/protocols/responses-via-chat"
+import { customToolInputPrefix } from "~/services/ir/codecs/responses/custom-tool"
+import { createTranslatedCall } from "~/services/protocols/wire-pairs"
+import { encodeMessagesResponse } from "~/services/ir/codecs/messages-chat/response"
+import { encodeMessagesStream } from "~/services/ir/codecs/messages-chat/stream"
 
 function payload(
   input: unknown,
@@ -33,6 +37,267 @@ function payload(
 }
 
 describe("Responses IR request codec", () => {
+  test("hosted tool dropping cannot weaken a required or named tool contract", () => {
+    for (const choice of ["required", { type: "function", name: "hosted" }])
+      expect(() =>
+        decodeResponsesRequest(
+          payload("hello", {
+            tools: [{ type: "mcp", name: "hosted" }],
+            tool_choice: choice,
+          }),
+        ),
+      ).toThrow("tool")
+  })
+  test("lifts developer-role Lite tools and unwraps functions namespace consistently", () => {
+    const request = decodeResponsesRequest(
+      payload(
+        [
+          {
+            type: "additional_tools",
+            role: "developer",
+            tools: [
+              {
+                type: "namespace",
+                name: "functions",
+                tools: [{ type: "custom", name: "apply_patch" }],
+              },
+            ],
+          },
+          { role: "user", content: "edit" },
+          {
+            type: "custom_tool_call",
+            call_id: "patch",
+            namespace: "functions",
+            name: "apply_patch",
+            input: "patch text",
+          },
+          { type: "custom_tool_call_output", call_id: "patch", output: "ok" },
+        ],
+        {
+          tool_choice: {
+            type: "custom",
+            namespace: "functions",
+            name: "apply_patch",
+          },
+        },
+      ),
+    )
+    expect(request.tools?.map((tool) => tool.name)).toEqual(["apply_patch"])
+    expect(request.instructions).toEqual([])
+    expect(request.toolChoice).toEqual({ type: "tool", name: "apply_patch" })
+    expect(request.turns[1]?.parts[0]).toMatchObject({
+      type: "tool_call",
+      name: "apply_patch",
+    })
+    expect(encodeChatRequest(request).tool_choice).toEqual({
+      type: "function",
+      function: { name: "apply_patch" },
+    })
+  })
+
+  test("client tool search restores discovered tools, history and response kinds", async () => {
+    const request = decodeResponsesRequest(
+      payload(
+        [
+          {
+            type: "tool_search_call",
+            call_id: "search",
+            arguments: { query: "repo" },
+          },
+          {
+            type: "tool_search_output",
+            call_id: "search",
+            tools: [
+              {
+                type: "namespace",
+                name: "repo",
+                tools: [
+                  {
+                    type: "function",
+                    name: "read",
+                    parameters: { type: "object" },
+                  },
+                ],
+              },
+            ],
+          },
+          { role: "user", content: "read now" },
+        ],
+        {
+          tools: [
+            {
+              type: "tool_search",
+              execution: "client",
+              parameters: {
+                type: "object",
+                properties: { query: { type: "string" } },
+              },
+            },
+          ],
+          tool_choice: { type: "tool_search" },
+        },
+      ),
+    )
+    expect(request.tools?.map((tool) => tool.name)).toEqual([
+      "tool_search",
+      "repo__read",
+    ])
+    expect(request.turns[1]?.parts[0]).toMatchObject({
+      type: "tool_result",
+      callId: "search",
+      content: [
+        {
+          type: "text",
+          text: "These tools are now available to call: repo__read",
+        },
+      ],
+    })
+    const part = {
+      type: "tool_call" as const,
+      id: "search2",
+      name: "tool_search",
+      arguments: '{"query":"next"}',
+    }
+    const result = encodeResponsesResult(
+      {
+        id: "search-response",
+        model: "test-model",
+        source: { wire: "chat" },
+        parts: [part],
+      },
+      request,
+    )
+    expect(result.output?.[0]).toMatchObject({
+      type: "tool_search_call",
+      execution: "client",
+      call_id: "search2",
+      arguments: { query: "next" },
+    })
+    const wire = []
+    for await (const event of encodeResponsesStream(
+      (async function* (): AsyncIterable<StreamEvent> {
+        yield {
+          type: "message_start",
+          id: "r",
+          model: "test-model",
+          source: { wire: "chat" },
+        }
+        yield {
+          type: "part_start",
+          partId: "s",
+          index: 0,
+          part: { ...part, arguments: "" },
+        }
+        yield {
+          type: "part_delta",
+          partId: "s",
+          index: 0,
+          delta: { type: "tool_arguments", text: part.arguments },
+        }
+        yield { type: "part_end", partId: "s", index: 0 }
+        yield {
+          type: "message_end",
+          stop: { reason: "tool_calls" },
+          status: "completed",
+        }
+      })(),
+      request,
+    ))
+      wire.push(JSON.parse(String(event.data)) as Record<string, unknown>)
+    expect(wire.map((e) => e.type)).not.toContain(
+      "response.function_call_arguments.delta",
+    )
+    expect(wire).toContainEqual(
+      expect.objectContaining({
+        type: "response.output_item.done",
+        item: expect.objectContaining({
+          type: "tool_search_call",
+          id: "s",
+          arguments: { query: "next" },
+        }),
+      }),
+    )
+  })
+
+  test("Codex compatibility keeps effort, agent messages and late instructions in order", () => {
+    const request = decodeResponsesRequest(
+      payload(
+        [
+          { role: "developer", content: "initial" },
+          { role: "user", content: "first" },
+          { role: "developer", content: "changed world" },
+          { type: "configuration_update", reasoning: { effort: "xhigh" } },
+          {
+            type: "reasoning",
+            summary: [],
+            content: [{ type: "reasoning_text", text: "thought" }],
+          },
+          { role: "assistant", content: "answer" },
+          { type: "agent_message", content: "task" },
+        ],
+        { reasoning: { effort: "low", summary: "auto" } },
+      ),
+    )
+    expect(request.generation?.reasoning).toMatchObject({
+      effort: "xhigh",
+      summary: "auto",
+    })
+    expect(request.instructions).toHaveLength(1)
+    expect(request.turns.map((turn) => turn.role)).toEqual([
+      "user",
+      "user",
+      "assistant",
+      "user",
+    ])
+    expect(request.turns[1]?.parts[0]).toEqual({
+      type: "text",
+      text: "<system-reminder>\nchanged world\n</system-reminder>",
+    })
+    expect(request.turns[2]?.parts[0]).toMatchObject({
+      type: "thinking",
+      text: "thought",
+    })
+  })
+
+  test("decode losses report dropped Codex history and hosted tools without their contents", () => {
+    const request = decodeResponsesRequest(
+      payload(
+        [
+          { type: "compaction", encrypted_content: "private-ciphertext" },
+          { type: "item_reference", id: "private-id" },
+          {
+            role: "user",
+            content: [
+              { type: "input_text", text: "hi" },
+              { type: "future_optional", data: "private-data" },
+            ],
+          },
+        ],
+        {
+          tools: [{ type: "file_search", vector_store_ids: ["private-store"] }],
+        },
+      ),
+    )
+    const plan = planTranslation(request, { wire: "chat" })
+    expect(plan.accepted).toBe(true)
+    expect(
+      plan.losses.records
+        .filter((r) => r.stage === "decode")
+        .map((r) => r.feature),
+    ).toEqual([
+      "compaction",
+      "item_reference",
+      "future_optional",
+      "file_search_tool",
+    ])
+    expect(JSON.stringify(plan.losses)).not.toContain("private-")
+    expect(() =>
+      decodeResponsesRequest(payload([{ type: "compaction_trigger" }])),
+    ).toThrow("compaction_trigger")
+    expect(() =>
+      decodeResponsesRequest(payload([{ type: "function_call" }])),
+    ).toThrow("Malformed")
+  })
   test("encodes boolean search intent and respects explicit opt-out", () => {
     const request = decodeResponsesRequest(payload("hello"))
     request.generation = { webSearch: true }
@@ -222,6 +487,135 @@ describe("Responses IR request codec", () => {
 })
 
 describe("Responses IR result and stream codec", () => {
+  test.each([false, true])(
+    "Messages upstream restores custom and search calls (stream=%s)",
+    async (stream) => {
+      const upstream = {
+        id: "m",
+        model: "test-model",
+        source: { wire: "messages" as const },
+        parts: [
+          {
+            type: "tool_call" as const,
+            id: "patch",
+            name: "apply_patch",
+            arguments: '{"input":"patch text"}',
+          },
+          {
+            type: "tool_call" as const,
+            id: "search",
+            name: "tool_search",
+            arguments: '{"query":"repo"}',
+          },
+        ],
+        stop: { reason: "tool_calls" as const },
+      }
+      let sent: unknown
+      const result = await createTranslatedCall({
+        source: "responses",
+        target: "messages",
+        connection: { id: "messages", protocol: "anthropic-compatible" },
+        credential: { id: "cred" },
+        routeTarget: {
+          protocol: "anthropic-compatible",
+          upstreamModelId: "test-model",
+        },
+        targetPayload: payload("hello", {
+          stream,
+          tools: [
+            { type: "custom", name: "apply_patch" },
+            {
+              type: "tool_search",
+              execution: "client",
+              parameters: { type: "object" },
+            },
+          ],
+        }),
+        executor: async ({ payload: value }: { payload: unknown }) => {
+          sent = value
+          if (!stream)
+            return {
+              credentialId: "cred",
+              response: encodeMessagesResponse(upstream),
+            }
+          return {
+            credentialId: "cred",
+            response: (async function* () {
+              const events = (async function* (): AsyncIterable<StreamEvent> {
+                yield {
+                  type: "message_start",
+                  id: "m",
+                  model: "test-model",
+                  source: { wire: "messages" },
+                }
+                for (const [index, part] of upstream.parts.entries()) {
+                  yield {
+                    type: "part_start",
+                    partId: String(index),
+                    index,
+                    part: { ...part, arguments: "" },
+                  }
+                  yield {
+                    type: "part_delta",
+                    partId: String(index),
+                    index,
+                    delta: { type: "tool_arguments", text: part.arguments },
+                  }
+                  yield { type: "part_end", partId: String(index), index }
+                }
+                yield {
+                  type: "message_end",
+                  stop: upstream.stop,
+                  status: "completed",
+                }
+              })()
+              for await (const event of encodeMessagesStream(events, 0))
+                yield { data: JSON.stringify(event) }
+            })(),
+          }
+        },
+      } as unknown as Parameters<typeof createTranslatedCall>[0])
+      expect(sent).toMatchObject({
+        tools: [
+          expect.objectContaining({ name: "apply_patch" }),
+          expect.objectContaining({ name: "tool_search" }),
+        ],
+      })
+      let response = result.response as ResponsesResponse
+      if (stream)
+        for await (const frame of result.response as AsyncIterable<{
+          data: string
+        }>) {
+          const value = JSON.parse(frame.data) as {
+            type: string
+            response?: ResponsesResponse
+          }
+          if (value.type === "response.completed" && value.response)
+            response = value.response
+        }
+      expect(response.output).toEqual([
+        expect.objectContaining({
+          type: "custom_tool_call",
+          call_id: "patch",
+          input: "patch text",
+        }),
+        expect.objectContaining({
+          type: "tool_search_call",
+          call_id: "search",
+          arguments: { query: "repo" },
+        }),
+      ])
+    },
+  )
+  test("custom input prefixes decode fragmented escapes without exposing JSON wrappers", () => {
+    for (const [args, input] of [
+      ['{"input":"a\\', "a"],
+      ['{"input":"a\\n\\uD83D', "a\n"],
+      ['{"input":"a\\n\\uD83D\\uDE00\\\"b"}', 'a\n😀"b'],
+      ['{"other":1', undefined],
+    ] as const)
+      expect(customToolInputPrefix(args)).toBe(input)
+  })
   const refusalResponse = {
     id: "refused",
     model: "test-model",
@@ -373,6 +767,257 @@ describe("Responses IR result and stream codec", () => {
       name: "search",
       namespace: "repo",
       call_id: "c1",
+    })
+  })
+
+  // Codex's apply_patch is a custom tool. A Codex request that fails over to a
+  // Chat-only account (Windsurf serving the same GPT model) used to be refused
+  // with "Unsupported Responses input item: custom_tool_call".
+  const codexCustomTool = {
+    type: "custom",
+    name: "apply_patch",
+    description: "Edit files.",
+    format: {
+      type: "grammar",
+      syntax: "lark",
+      definition: "start: begin_patch",
+    },
+  }
+
+  test("offers a custom tool and its history to Chat as a function", () => {
+    const request = decodeResponsesRequest(
+      payload(
+        [
+          { role: "user", content: "fix it" },
+          {
+            type: "custom_tool_call",
+            call_id: "call_1",
+            name: "apply_patch",
+            input: "*** Begin Patch\n*** End Patch",
+          },
+          { type: "custom_tool_call_output", call_id: "call_1", output: "ok" },
+        ],
+        {
+          tools: [codexCustomTool],
+          tool_choice: { type: "custom", name: "apply_patch" },
+        },
+      ),
+    )
+    const chat = encodeChatRequest(request)
+    const tool = chat.tools?.[0]
+    expect(tool?.function.name).toBe("apply_patch")
+    expect(tool?.function.parameters).toMatchObject({
+      required: ["input"],
+      properties: { input: { type: "string" } },
+    })
+    expect(tool?.function.description).toContain("Edit files.")
+    expect(tool?.function.description).toContain("start: begin_patch")
+    expect(chat.tool_choice).toMatchObject({
+      type: "function",
+      function: { name: "apply_patch" },
+    })
+    expect(chat.messages).toContainEqual(
+      expect.objectContaining({
+        role: "assistant",
+        tool_calls: [
+          expect.objectContaining({
+            id: "call_1",
+            function: {
+              name: "apply_patch",
+              arguments: JSON.stringify({
+                input: "*** Begin Patch\n*** End Patch",
+              }),
+            },
+          }),
+        ],
+      }),
+    )
+    expect(chat.messages).toContainEqual(
+      expect.objectContaining({
+        role: "tool",
+        tool_call_id: "call_1",
+        content: "ok",
+      }),
+    )
+  })
+
+  test("serves a Codex custom-tool request through a Chat-only upstream", async () => {
+    let sent: Record<string, unknown> | undefined
+    const result = (await createResponsesViaChat({
+      target: {
+        upstreamModelId: "test-model",
+        protocol: "openai-chat-compatible",
+      },
+      connection: { id: "conn" },
+      credential: { id: "cred" },
+      payload: payload(
+        [
+          { role: "user", content: "fix it" },
+          {
+            type: "custom_tool_call",
+            call_id: "call_0",
+            name: "apply_patch",
+            input: "*** Begin Patch\n*** End Patch",
+          },
+          { type: "custom_tool_call_output", call_id: "call_0", output: "ok" },
+        ],
+        { tools: [codexCustomTool], stream: false },
+      ),
+      executor: async ({ payload: chatPayload }: { payload: unknown }) => {
+        sent = chatPayload as Record<string, unknown>
+        return {
+          credentialId: "cred",
+          response: {
+            id: "chat-1",
+            object: "chat.completion",
+            created: 1,
+            model: "test-model",
+            choices: [
+              {
+                index: 0,
+                finish_reason: "tool_calls",
+                message: {
+                  role: "assistant",
+                  content: null,
+                  tool_calls: [
+                    {
+                      id: "call_1",
+                      type: "function",
+                      function: {
+                        name: "apply_patch",
+                        arguments: JSON.stringify({ input: "*** Begin Patch" }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        }
+      },
+    } as unknown as Parameters<typeof createResponsesViaChat>[0])) as {
+      response: ResponsesResponse
+    }
+    expect(sent?.tools).toHaveLength(1)
+    expect(result.response.output).toContainEqual(
+      expect.objectContaining({
+        type: "custom_tool_call",
+        call_id: "call_1",
+        name: "apply_patch",
+        input: "*** Begin Patch",
+      }),
+    )
+  })
+
+  test("answers a Chat call to a custom tool as a custom_tool_call", () => {
+    const request = decodeResponsesRequest(
+      payload("hello", { tools: [codexCustomTool] }),
+    )
+    const result = {
+      id: "r-custom",
+      model: "test-model",
+      source: { wire: "chat" as const },
+      parts: [
+        {
+          type: "tool_call" as const,
+          id: "c1",
+          name: "apply_patch",
+          arguments: JSON.stringify({ input: "*** Begin Patch" }),
+        },
+      ],
+    }
+    expect(encodeResponsesResult(result, request).output?.[0]).toEqual({
+      type: "custom_tool_call",
+      id: "ctc_r-custom_0",
+      call_id: "c1",
+      name: "apply_patch",
+      input: "*** Begin Patch",
+    })
+  })
+
+  test("streams a Chat call to a custom tool as custom_tool_call events", async () => {
+    const request = decodeResponsesRequest(
+      payload("hello", { tools: [codexCustomTool] }),
+    )
+    const out: Array<Record<string, unknown>> = []
+    async function* events(): AsyncIterable<StreamEvent> {
+      yield {
+        type: "message_start",
+        id: "r-cs",
+        model: "test-model",
+        source: { wire: "chat" },
+      }
+      yield {
+        type: "part_start",
+        partId: "call",
+        index: 0,
+        part: {
+          type: "tool_call",
+          id: "c1",
+          name: "apply_patch",
+          arguments: "",
+        },
+      }
+      for (const text of ['{"input":"*** Begin', ' Patch"}']) {
+        yield {
+          type: "part_delta",
+          partId: "call",
+          index: 0,
+          delta: { type: "tool_arguments", text },
+        }
+        expect(
+          out.some((e) => e.type === "response.custom_tool_call_input.delta"),
+        ).toBe(true)
+      }
+      yield { type: "part_end", partId: "call", index: 0 }
+      yield {
+        type: "message_end",
+        stop: { reason: "tool_calls" },
+        status: "completed",
+      }
+    }
+    for await (const item of encodeResponsesStream(events(), request))
+      out.push(JSON.parse(String(item.data)) as Record<string, unknown>)
+    expect(out.map((e) => e.type)).not.toContain(
+      "response.function_call_arguments.delta",
+    )
+    expect(
+      out
+        .filter((e) => e.type === "response.custom_tool_call_input.delta")
+        .map((e) => e.delta)
+        .join(""),
+    ).toBe("*** Begin Patch")
+    expect(out).toContainEqual(
+      expect.objectContaining({
+        type: "response.output_item.added",
+        item: expect.objectContaining({
+          type: "custom_tool_call",
+          call_id: "c1",
+          name: "apply_patch",
+        }),
+      }),
+    )
+    expect(out).toContainEqual(
+      expect.objectContaining({
+        type: "response.custom_tool_call_input.done",
+        item_id: "call",
+        input: "*** Begin Patch",
+      }),
+    )
+    expect(out).toContainEqual(
+      expect.objectContaining({
+        type: "response.output_item.done",
+        item: expect.objectContaining({
+          type: "custom_tool_call",
+          id: "call",
+          input: "*** Begin Patch",
+        }),
+      }),
+    )
+    const completed = out.at(-1)?.response as ResponsesResponse
+    expect(completed.output?.[0]).toMatchObject({
+      type: "custom_tool_call",
+      input: "*** Begin Patch",
     })
   })
 

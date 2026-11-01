@@ -1,3 +1,4 @@
+import type { LossReason } from "~/services/ir/loss-reasons"
 import type {
   AnthropicServiceTier,
   OpenAIServiceTier,
@@ -71,6 +72,8 @@ export interface IRToolCallPart {
   arguments: string
   namespace?: string
   originalName?: string
+  /** The Responses item the call goes back to the client as (see {@link IRTool.responsesType}). */
+  responsesType?: IRResponsesToolType
 }
 
 export type IRToolResultContent = IRTextPart | IRImagePart | IRFilePart
@@ -140,7 +143,16 @@ export interface IRTool {
   strict?: boolean
   namespace?: string
   originalName?: string
+  /**
+   * A Responses client tool other wires only know as a function: `custom`
+   * (free-form text, offered as one `input` string argument) or Codex's
+   * client-run `tool_search`. A call to it goes back to a Responses client as
+   * a `custom_tool_call` / `tool_search_call`, not a `function_call`.
+   */
+  responsesType?: IRResponsesToolType
 }
+
+export type IRResponsesToolType = "custom" | "tool_search"
 
 export type IRToolChoice =
   | { type: "auto" | "none" | "required" }
@@ -210,6 +222,20 @@ export interface RequestIR {
   tools?: Array<IRTool>
   toolChoice?: IRToolChoice
   generation?: IRGenerationOptions
+  /**
+   * What the source decoder could not carry into the IR (a hosted tool, an
+   * opaque compaction item, an unknown content block). The planner reports
+   * them with the target it plans for, alongside its own losses.
+   */
+  decodeLosses?: Array<DecodeLoss>
+}
+
+/** A decode-stage loss; the planner adds the target wire and the stage. */
+export interface DecodeLoss {
+  path: string
+  feature: string
+  action: "drop" | "transform"
+  reason: LossReason
 }
 
 export interface IRUsage {
