@@ -7,6 +7,8 @@
  * 只负责把它自己的上游 /models 响应转成这些类型。
  */
 
+import { effortRank } from "~/lib/effort-levels"
+
 interface ModelVision {
   max_prompt_image_size?: number
   max_prompt_images?: number
@@ -73,7 +75,36 @@ export function getPublicModelData(model: Model): Model & {
   display_name: string
   owned_by: string
   type: "model"
+  context_length?: number
+  default_reasoning_level?: string
+  limits?: { max_input_tokens?: number; max_output_tokens?: number }
+  reasoning?: boolean
+  supported_reasoning_levels?: Array<string>
 } {
+  const efforts = model.capabilities.supports.reasoning_effort
+  // 对外按强度升序：上游声明顺序不保证单调，omp 的
+  // `default_reasoning_level` 取首元素。未知档位（rank -1）排最后，
+  // 保持相对顺序。
+  const ranked = efforts?.slice().sort((a, b) => {
+    const ra = effortRank(a)
+    const rb = effortRank(b)
+    if (ra === rb) return 0
+    if (ra < 0) return 1
+    if (rb < 0) return -1
+    return ra - rb
+  })
+  const limits = model.capabilities.limits
+  const tokenLimits =
+    limits?.max_prompt_tokens || limits?.max_output_tokens ?
+      {
+        ...(limits.max_prompt_tokens ?
+          { max_input_tokens: limits.max_prompt_tokens }
+        : {}),
+        ...(limits.max_output_tokens ?
+          { max_output_tokens: limits.max_output_tokens }
+        : {}),
+      }
+    : undefined
   return {
     ...model,
     object: "model",
@@ -82,5 +113,18 @@ export function getPublicModelData(model: Model): Model & {
     created_at: new Date(0).toISOString(),
     owned_by: model.vendor,
     display_name: model.name,
+    // omp/LiteLLM 类 discovery 客户端读顶层字段而不认识
+    // capabilities.supports/limits：把同一信息拍平成它们声明的位置。
+    ...(ranked && ranked.length > 0 ?
+      {
+        reasoning: true,
+        supported_reasoning_levels: ranked,
+        default_reasoning_level: ranked[0],
+      }
+    : {}),
+    ...(limits?.max_context_window_tokens ?
+      { context_length: limits.max_context_window_tokens }
+    : {}),
+    ...(tokenLimits ? { limits: tokenLimits } : {}),
   }
 }
