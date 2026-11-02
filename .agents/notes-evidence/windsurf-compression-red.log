@@ -1,0 +1,61 @@
+bun test v1.4.2 (744846f84)
+
+tests/windsurf-proto-compare.test.ts:
+80 |   }
+81 |
+82 |   test("small requests use a plain Connect envelope", async () => {
+83 |     const built = await buildRequest({ payload: basePayload, apiKey: "test-key",
+84 |       requestModel: "MODEL_TEST", cascadeId: "small", turnIndex: 0 })
+85 |     expect(built[0]).toBe(0)
+                          ^
+error: expect(received).toBe(expected)
+
+Expected: 0
+Received: 1
+
+      at <anonymous> (<repo>/tests/windsurf-proto-compare.test.ts:85:22)
+(fail) Windsurf proto — buildRequest fingerprint > small requests use a plain Connect envelope [7.07ms]
+91 |     const sync = spyOn(Bun, "gzipSync")
+92 |     let built: Uint8Array
+93 |     try {
+94 |       built = await buildRequest({ payload: { ...basePayload, messages: [{ role: "user", content }] },
+95 |         apiKey: "test-key", requestModel: "MODEL_TEST", cascadeId: "large", turnIndex: 0 })
+96 |       expect(sync).not.toHaveBeenCalled()
+                            ^
+error: expect(received).not.toHaveBeenCalled()
+
+Expected number of calls: 0
+Received number of calls: 1
+
+      at <anonymous> (<repo>/tests/windsurf-proto-compare.test.ts:96:24)
+(fail) Windsurf proto — buildRequest fingerprint > large requests compress without calling the blocking gzip codec [1.36ms]
+(pass) Windsurf proto — buildRequest fingerprint > produces oh-my-pi aligned top-level and metadata fields [3.05ms]
+(pass) Windsurf proto — buildRequest fingerprint > omits prompt_id field when not provided [0.40ms]
+(pass) Windsurf proto — buildRequest fingerprint > never writes field 22 (random session_id would break KV cache) [0.55ms]
+(pass) Windsurf proto — buildRequest fingerprint > omits tools when no tools are provided [0.23ms]
+(pass) Windsurf proto — buildRequest fingerprint > forwards historical reasoning_content as reasoning_text [0.32ms]
+(pass) Windsurf proto — buildRequest fingerprint > keeps reasoning-only assistant history [0.40ms]
+(pass) Windsurf proto — buildRequest fingerprint > forwards historical reasoning signatures in the correct field [0.15ms]
+(pass) Windsurf proto — buildRequest fingerprint > extracts signatures from reasoning content parts [0.35ms]
+(pass) Windsurf proto — buildRequest fingerprint > round-trips its own reply: reasoning_opaque returns as field 12 [0.12ms]
+(pass) Windsurf proto — buildRequest fingerprint > an empty top-level alias does not shadow reasoning content parts [0.07ms]
+(pass) Windsurf proto — buildRequest fingerprint > forwards top-level `reasoning` (OpenRouter spelling) [0.07ms]
+(pass) Windsurf proto — buildRequest fingerprint > drops the signature when it cannot cover the merged reasoning [0.12ms]
+(pass) Windsurf proto — buildRequest fingerprint > drops a reasoning_details signature that only signs a fragment [0.14ms]
+(pass) Windsurf proto — buildRequest fingerprint > drops a top-level signature that cannot cover merged reasoning [0.17ms]
+(pass) Windsurf proto — buildRequest fingerprint > round-trips interleaved reasoning via reasoning_opaque [0.12ms]
+(pass) Windsurf proto — buildRequest fingerprint > skips an assistant turn carrying only a signature [0.28ms]
+(pass) Windsurf proto — buildRequest fingerprint > normalizes bare apiKey to devin-session-token$ prefix [0.17ms]
+(pass) Windsurf proto — buildRequest fingerprint > keeps apiKey unchanged when prefix already present [0.11ms]
+(pass) Windsurf proto — buildRequest fingerprint > counts multiple messages and tools [0.13ms]
+(pass) Windsurf proto — buildRequest fingerprint > resolveSystemPrompt falls back to default when no system message [0.01ms]
+(pass) Windsurf proto — buildRequest fingerprint > resolveSystemPrompt joins multiple system messages [0.01ms]
+
+2 tests failed:
+(fail) Windsurf proto — buildRequest fingerprint > small requests use a plain Connect envelope [7.07ms]
+(fail) Windsurf proto — buildRequest fingerprint > large requests compress without calling the blocking gzip codec [1.36ms]
+
+ 21 pass
+ 2 fail
+ 53 expect() calls
+Ran 23 tests across 1 file. [134.00ms]

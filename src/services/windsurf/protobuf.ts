@@ -1,4 +1,9 @@
-import { gunzipSync } from "node:zlib"
+import { promisify } from "node:util"
+import { gunzipSync, gzip } from "node:zlib"
+
+const gzipAsync = promisify(gzip)
+const MIN_COMPRESSED_REQUEST_BYTES = 1024
+const ASYNC_COMPRESSION_BYTES = 64 * 1024
 
 const textEncoder = new TextEncoder()
 /**
@@ -185,6 +190,30 @@ export function encodeConnectFrame(
         ),
       ) as unknown as Uint8Array)
     : payload
+  return frameConnectPayload(bytes, compressed)
+}
+
+/** Large histories must not block every other connection while compressing. */
+export async function encodeConnectRequest(
+  payload: Uint8Array,
+  signal?: AbortSignal,
+): Promise<Uint8Array> {
+  signal?.throwIfAborted()
+  if (payload.byteLength < ASYNC_COMPRESSION_BYTES) {
+    return encodeConnectFrame(
+      payload,
+      payload.byteLength >= MIN_COMPRESSED_REQUEST_BYTES,
+    )
+  }
+  const bytes = await gzipAsync(payload)
+  signal?.throwIfAborted()
+  return frameConnectPayload(bytes, true)
+}
+
+function frameConnectPayload(
+  bytes: Uint8Array,
+  compressed: boolean,
+): Uint8Array {
   const header = new Uint8Array(5)
   header[0] = compressed ? 1 : 0
   new DataView(header.buffer).setUint32(1, bytes.length, false)

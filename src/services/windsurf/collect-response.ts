@@ -42,6 +42,7 @@ function readResponseLimitBytes(): number {
 }
 
 const MAX_COLLECTED_RESPONSE_BYTES = readResponseLimitBytes()
+const MAX_COLLECTED_TOOL_CALLS = 8192
 const MAX_ORDERED_PARTS = 8192
 const MAX_ORDERED_RESPONSE_BYTES = Math.min(
   4 * 1024 * 1024,
@@ -105,8 +106,17 @@ interface CollectedToolCall {
   id: string
   name: string
   arguments: string
-  /** Running UTF-8 size of `arguments`, to avoid re-measuring it per delta. */
-  argumentBytes: number
+}
+
+class ResponseBudget {
+  bytes = 0
+
+  add(bytes: number): void {
+    if (bytes > MAX_COLLECTED_RESPONSE_BYTES - this.bytes) {
+      throw new Error("Windsurf response exceeds the maximum size")
+    }
+    this.bytes += bytes
+  }
 }
 
 function updateToolCalls(
@@ -116,30 +126,33 @@ function updateToolCalls(
     id?: string
     function?: { name?: string; arguments?: string }
   }>,
+  budget: ResponseBudget,
 ): void {
   for (const tc of deltaToolCalls) {
     if (tc.id && tc.function?.name !== undefined) {
       const args = tc.function.arguments ?? ""
-      const argumentBytes = Buffer.byteLength(args)
-      if (argumentBytes > MAX_COLLECTED_RESPONSE_BYTES) {
-        throw new Error("Windsurf tool arguments exceed the maximum size")
+      // One budget for every tool and text block, checked before retaining data.
+      budget.add(
+        Buffer.byteLength(args)
+          + Buffer.byteLength(tc.id)
+          + Buffer.byteLength(tc.function.name),
+      )
+      if (
+        !toolCallMap.has(tc.index)
+        && toolCallMap.size >= MAX_COLLECTED_TOOL_CALLS
+      ) {
+        throw new Error("Windsurf response exceeds the maximum tool count")
       }
       toolCallMap.set(tc.index, {
         id: tc.id,
         name: tc.function.name ?? "",
         arguments: args,
-        argumentBytes,
       })
     } else if (tc.function?.arguments !== undefined) {
       const existing = toolCallMap.get(tc.index)
       if (existing) {
-        const nextBytes =
-          existing.argumentBytes + Buffer.byteLength(tc.function.arguments)
-        if (nextBytes > MAX_COLLECTED_RESPONSE_BYTES) {
-          throw new Error("Windsurf tool arguments exceed the maximum size")
-        }
+        budget.add(Buffer.byteLength(tc.function.arguments))
         existing.arguments += tc.function.arguments
-        existing.argumentBytes = nextBytes
       }
     }
   }
@@ -202,10 +215,9 @@ export async function collectChatCompletion(
   let text = ""
   let reasoningText = ""
   let reasoningOpaque = ""
-  // Running total of the three accumulators above. Calling Buffer.byteLength on
-  // them once per chunk flattens each rope, which turns a long reasoning stream
-  // into O(n^2) allocation.
-  let collectedBytes = 0
+  // Count every incoming text/tool delta once, never re-measure accumulated
+  // strings: doing so would flatten ropes and reintroduce quadratic allocation.
+  const budget = new ResponseBudget()
   let sawContentPart = false
   let hasReasoningAfterContent = false
   let orderedPartsComplete = true
@@ -224,10 +236,16 @@ export async function collectChatCompletion(
 
     const contentDelta = chunk.content ?? ""
     const reasoningDelta = chunk.reasoningText ?? ""
+    const signatureDelta = chunk.reasoningOpaque ?? ""
+    const signatureDeltaBytes = Buffer.byteLength(signatureDelta)
+    budget.add(
+      Buffer.byteLength(contentDelta)
+        + Buffer.byteLength(reasoningDelta)
+        + signatureDeltaBytes,
+    )
+    updateToolCalls(toolCallMap, chunk.toolCalls ?? [], budget)
     text += contentDelta
     reasoningText += reasoningDelta
-    collectedBytes +=
-      Buffer.byteLength(contentDelta) + Buffer.byteLength(reasoningDelta)
     if (contentDelta) {
       sawContentPart = true
     }
@@ -254,11 +272,7 @@ export async function collectChatCompletion(
       if (nextBytes === undefined) orderedPartsComplete = false
       else orderedPartsBytes = nextBytes
     }
-    const signatureDelta = chunk.reasoningOpaque ?? ""
     reasoningOpaque += signatureDelta
-    const signatureDeltaBytes =
-      signatureDelta ? Buffer.byteLength(signatureDelta) : 0
-    collectedBytes += signatureDeltaBytes
     if (signatureDelta && orderedPartsComplete) {
       const previous = orderedParts.at(-1)
       if (
@@ -268,9 +282,6 @@ export async function collectChatCompletion(
         previous.signature = `${previous.signature ?? ""}${signatureDelta}`
         orderedPartsBytes += signatureDeltaBytes
       }
-    }
-    if (collectedBytes > MAX_COLLECTED_RESPONSE_BYTES) {
-      throw new Error("Windsurf response exceeds the maximum size")
     }
     usage = chunk.usage ?? usage
 
@@ -296,8 +307,6 @@ export async function collectChatCompletion(
         break
       }
     }
-
-    updateToolCalls(toolCallMap, chunk.toolCalls ?? [])
   }
 
   const toolCalls: Array<ToolCall> =
@@ -326,7 +335,7 @@ export async function collectChatCompletion(
     `[windsurf] collect result for ${model}: textLen=${textLen} toolCalls=${toolCallsLen} finishReason=${finishReason} usage=${JSON.stringify(usage)}`,
   )
   updateMemoryTrace(memoryTraceId, "windsurf_collect_complete", {
-    collectedBytes,
+    collectedBytes: budget.bytes,
     orderedPartsBytes,
     orderedParts: orderedParts.length,
     toolCalls: toolCallsLen,

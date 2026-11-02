@@ -177,7 +177,7 @@ export async function createWindsurfAttempt(
     updateMemoryTrace(ctx?.memoryTraceId, "windsurf_protobuf_build_start")
     let protobufBytes = 0
     let usedTurnIndex = turnIndex ?? 0
-    const requestBody = buildRequest({
+    const requestBody = await buildRequest({
       payload: maskUpstream({ ...payload, model }),
       apiKey,
       requestModel,
@@ -185,6 +185,7 @@ export async function createWindsurfAttempt(
       promptId: cloudIds.promptId,
       turnIndex,
       userJwt: auth.userJwt,
+      signal: upstreamSignal,
       onEncoded: (metrics) => {
         protobufBytes = metrics.protobufBytes
         usedTurnIndex = metrics.turnIndex
@@ -235,7 +236,7 @@ export async function createWindsurfAttempt(
         "Content-Type": "application/connect+proto",
         "Connect-Protocol-Version": "1",
         "Connect-Accept-Encoding": "gzip",
-        "Connect-Content-Encoding": "gzip",
+        ...(requestBody[0] === 1 ? { "Connect-Content-Encoding": "gzip" } : {}),
         "Connect-Timeout-Ms": "600000",
         "User-Agent": WINDSURF_CONNECT_USER_AGENT,
         "Accept-Encoding": "identity",

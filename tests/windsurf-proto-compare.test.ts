@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 
 import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
 
@@ -79,8 +79,70 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     stream: true,
   }
 
-  test("produces oh-my-pi aligned top-level and metadata fields", () => {
-    const built = buildRequest({
+  test("small requests use a plain Connect envelope", async () => {
+    const built = await buildRequest({
+      payload: basePayload,
+      apiKey: "test-key",
+      requestModel: "MODEL_TEST",
+      cascadeId: "small",
+      turnIndex: 0,
+    })
+    expect(built[0]).toBe(0)
+    expect(fingerprintWindsurfRequest(built).model).toBe("MODEL_TEST")
+  })
+
+  test("large requests compress without calling the blocking gzip codec", async () => {
+    const content = "long history ".repeat(10000)
+    const sync = spyOn(Bun, "gzipSync")
+    let built: Uint8Array
+    try {
+      built = await buildRequest({
+        payload: { ...basePayload, messages: [{ role: "user", content }] },
+        apiKey: "test-key",
+        requestModel: "MODEL_TEST",
+        cascadeId: "large",
+        turnIndex: 0,
+      })
+      expect(sync).not.toHaveBeenCalled()
+    } finally {
+      sync.mockRestore()
+    }
+    expect(built[0]).toBe(1)
+    const message = parseMessage(decodeFramedPayload(built), 0, 0).find(
+      (n) => n.field === 3,
+    )
+    const text = parseMessage(message!.raw!, 0, 0).find((n) => n.field === 3)
+    expect(new TextDecoder().decode(text!.raw)).toBe(content)
+  })
+
+  test.each(["before", "during"])(
+    "request compression honours cancellation %s encoding",
+    async (when) => {
+      const controller = new AbortController()
+      if (when === "before") controller.abort(new Error("cancelled"))
+      let encoded = false
+      const pending = buildRequest({
+        payload: {
+          ...basePayload,
+          messages: [{ role: "user", content: "large history ".repeat(10000) }],
+        },
+        apiKey: "test-key",
+        requestModel: "MODEL_TEST",
+        cascadeId: "cancel",
+        turnIndex: 0,
+        signal: controller.signal,
+        onEncoded: () => {
+          encoded = true
+        },
+      })
+      if (when === "during") controller.abort(new Error("cancelled"))
+      await expect(pending).rejects.toThrow("cancelled")
+      expect(encoded).toBe(false)
+    },
+  )
+
+  test("produces oh-my-pi aligned top-level and metadata fields", async () => {
+    const built = await buildRequest({
       payload: basePayload,
       apiKey: "test-key",
       requestModel: "MODEL_PRIVATE_11",
@@ -120,8 +182,8 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(fp.metadata.f31).toBeUndefined()
   })
 
-  test("omits prompt_id field when not provided", () => {
-    const built = buildRequest({
+  test("omits prompt_id field when not provided", async () => {
+    const built = await buildRequest({
       payload: basePayload,
       apiKey: "test-key",
       requestModel: "MODEL_PRIVATE_11",
@@ -132,15 +194,15 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(top).not.toContain(17)
   })
 
-  test("never writes field 22 (random session_id would break KV cache)", () => {
-    const first = buildRequest({
+  test("never writes field 22 (random session_id would break KV cache)", async () => {
+    const first = await buildRequest({
       payload: basePayload,
       apiKey: "test-key",
       requestModel: "MODEL_PRIVATE_11",
       cascadeId: "cc232f62-2495-407a-bd78-502af5ece433",
       promptId: "b0f93684-49e4-4b6a-b5ed-02242d37b9ba",
     })
-    const second = buildRequest({
+    const second = await buildRequest({
       payload: basePayload,
       apiKey: "test-key",
       requestModel: "MODEL_PRIVATE_11",
@@ -154,14 +216,14 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(fingerprintWindsurfRequest(second).executionId).toBeUndefined()
   })
 
-  test("omits tools when no tools are provided", () => {
+  test("omits tools when no tools are provided", async () => {
     const payload: ChatCompletionsPayload = {
       model: "swe-1-6",
       messages: [{ role: "user", content: "hello" }],
       stream: true,
     }
 
-    const built = buildRequest({
+    const built = await buildRequest({
       payload,
       apiKey: "test-key",
       requestModel: "MODEL_PRIVATE_11",
@@ -172,7 +234,7 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(fp.toolCount).toBe(0)
   })
 
-  test("forwards historical reasoning_content as reasoning_text", () => {
+  test("forwards historical reasoning_content as reasoning_text", async () => {
     const payload: ChatCompletionsPayload = {
       ...basePayload,
       messages: [
@@ -184,7 +246,7 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
       ],
     }
 
-    const built = buildRequest({
+    const built = await buildRequest({
       payload,
       apiKey: "test-key",
       requestModel: "MODEL_PRIVATE_11",
@@ -195,8 +257,8 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(assistantMessageId(decodeFramedPayload(built))).toMatch(/^bot-/)
   })
 
-  test("keeps reasoning-only assistant history", () => {
-    const built = buildRequest({
+  test("keeps reasoning-only assistant history", async () => {
+    const built = await buildRequest({
       payload: {
         ...basePayload,
         messages: [
@@ -215,8 +277,8 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(assistantMessageFields(decodeFramedPayload(built))).toContain(11)
   })
 
-  test("forwards historical reasoning signatures in the correct field", () => {
-    const built = buildRequest({
+  test("forwards historical reasoning signatures in the correct field", async () => {
+    const built = await buildRequest({
       payload: {
         ...basePayload,
         messages: [
@@ -238,8 +300,8 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     ])
   })
 
-  test("extracts signatures from reasoning content parts", () => {
-    const built = buildRequest({
+  test("extracts signatures from reasoning content parts", async () => {
+    const built = await buildRequest({
       payload: {
         ...basePayload,
         messages: [
@@ -264,12 +326,12 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(assistantMessageFields(decodeFramedPayload(built))).toContain(12)
   })
 
-  test("round-trips its own reply: reasoning_opaque returns as field 12", () => {
+  test("round-trips its own reply: reasoning_opaque returns as field 12", async () => {
     // The exact assistant message shape `collect-response.ts` hands back, fed
     // straight into the next request. Windsurf emits the signature as
     // `reasoning_opaque`, so the request side has to accept that spelling or
     // every multi-turn conversation loses its signatures.
-    const built = buildRequest({
+    const built = await buildRequest({
       payload: {
         ...basePayload,
         messages: [
@@ -291,12 +353,12 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(assistantMessageString(decoded, 12)).toBe("sig-from-windsurf")
   })
 
-  test("an empty top-level alias does not shadow reasoning content parts", () => {
+  test("an empty top-level alias does not shadow reasoning content parts", async () => {
     // Upstreams routinely emit `reasoning_content: ""` on turns without
     // thinking, and a client replaying such a turn sends the empty string back
     // alongside the real reasoning it carries as parts. `??` would stop at the
     // empty string and drop the chain of thought.
-    const built = buildRequest({
+    const built = await buildRequest({
       payload: {
         ...basePayload,
         messages: [
@@ -320,8 +382,8 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     )
   })
 
-  test("forwards top-level `reasoning` (OpenRouter spelling)", () => {
-    const built = buildRequest({
+  test("forwards top-level `reasoning` (OpenRouter spelling)", async () => {
+    const built = await buildRequest({
       payload: {
         ...basePayload,
         messages: [
@@ -338,12 +400,12 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     )
   })
 
-  test("drops the signature when it cannot cover the merged reasoning", () => {
+  test("drops the signature when it cannot cover the merged reasoning", async () => {
     // Two separately signed thinking blocks — what an Anthropic client sends
     // back after interleaved reasoning. Field 11 is their concatenation, which
     // neither signature signs, so field 12 must be omitted rather than carry
     // the first block's signature.
-    const built = buildRequest({
+    const built = await buildRequest({
       payload: {
         ...basePayload,
         messages: [
@@ -367,8 +429,8 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(assistantMessageFields(decoded)).not.toContain(12)
   })
 
-  test("drops a reasoning_details signature that only signs a fragment", () => {
-    const built = buildRequest({
+  test("drops a reasoning_details signature that only signs a fragment", async () => {
+    const built = await buildRequest({
       payload: {
         ...basePayload,
         messages: [
@@ -391,12 +453,12 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(assistantMessageFields(decodeFramedPayload(built))).not.toContain(12)
   })
 
-  test("drops a top-level signature that cannot cover merged reasoning", () => {
+  test("drops a top-level signature that cannot cover merged reasoning", async () => {
     // `reasoning_content` concatenates several signed blocks (the shape
     // `messages-to-chat.ts` emits), and the client re-attaches only the first
     // block's signature at the top level. Field 11 is the concatenation, which
     // that signature does not cover, so field 12 must be omitted.
-    const built = buildRequest({
+    const built = await buildRequest({
       payload: {
         ...basePayload,
         messages: [
@@ -422,11 +484,11 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(assistantMessageFields(decoded)).not.toContain(12)
   })
 
-  test("round-trips interleaved reasoning via reasoning_opaque", () => {
+  test("round-trips interleaved reasoning via reasoning_opaque", async () => {
     // An interleaved Windsurf reply carries both per-part signatures and the
     // accumulated `reasoning_opaque`. Only the latter covers the whole
     // reasoning text, so it — not the part signature — must be field 12.
-    const built = buildRequest({
+    const built = await buildRequest({
       payload: {
         ...basePayload,
         messages: [
@@ -451,8 +513,8 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(assistantMessageString(decoded, 12)).toBe("full-stream-sig")
   })
 
-  test("skips an assistant turn carrying only a signature", () => {
-    const built = buildRequest({
+  test("skips an assistant turn carrying only a signature", async () => {
+    const built = await buildRequest({
       payload: {
         ...basePayload,
         messages: [
@@ -470,8 +532,8 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(assistantMessageFields(decoded)).not.toContain(12)
   })
 
-  test("normalizes bare apiKey to devin-session-token$ prefix", () => {
-    const built = buildRequest({
+  test("normalizes bare apiKey to devin-session-token$ prefix", async () => {
+    const built = await buildRequest({
       payload: basePayload,
       apiKey: "bare-token",
       requestModel: "MODEL_PRIVATE_11",
@@ -482,8 +544,8 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(fp.metadata.f3).toMatch(/^devin-session-token\$bare/)
   })
 
-  test("keeps apiKey unchanged when prefix already present", () => {
-    const built = buildRequest({
+  test("keeps apiKey unchanged when prefix already present", async () => {
+    const built = await buildRequest({
       payload: basePayload,
       apiKey: "devin-session-token$jwt",
       requestModel: "MODEL_PRIVATE_11",
@@ -494,7 +556,7 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(fp.metadata.f3).toMatch(/^devin-session-token\$jwt/)
   })
 
-  test("counts multiple messages and tools", () => {
+  test("counts multiple messages and tools", async () => {
     const payload: ChatCompletionsPayload = {
       model: "swe-1-6",
       messages: [
@@ -524,7 +586,7 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
       stream: true,
     }
 
-    const built = buildRequest({
+    const built = await buildRequest({
       payload,
       apiKey: "test-key",
       requestModel: "MODEL_PRIVATE_11",
@@ -536,7 +598,7 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(fp.toolCount).toBe(2)
   })
 
-  test("resolveSystemPrompt falls back to default when no system message", () => {
+  test("resolveSystemPrompt falls back to default when no system message", async () => {
     const payload: ChatCompletionsPayload = {
       model: "swe-1-6",
       messages: [{ role: "user", content: "hello" }],
@@ -548,7 +610,7 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     )
   })
 
-  test("resolveSystemPrompt joins multiple system messages", () => {
+  test("resolveSystemPrompt joins multiple system messages", async () => {
     const payload: ChatCompletionsPayload = {
       model: "swe-1-6",
       messages: [

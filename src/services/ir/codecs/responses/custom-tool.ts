@@ -11,6 +11,8 @@
  * custom_tool_call".
  */
 
+import { CustomToolInputDecoder } from "~/services/ir/codecs/responses/custom-tool-input"
+
 import { asRecord, asString } from "~/lib/json-shape"
 
 /** The arguments a custom tool is offered as taking. */
@@ -67,25 +69,5 @@ export function customToolInput(args: string): string {
 
 /** Decode a growing JSON input string, withholding incomplete escapes/surrogates. */
 export function customToolInputPrefix(args: string): string | undefined {
-  const match = /^\s*\{\s*"input"\s*:\s*"/.exec(args)
-  if (!match) return undefined
-  let end = match[0].length
-  for (; end < args.length; end++) {
-    const char = args[end]
-    if (char === '"') break
-    if (char !== "\\") continue
-    if (end + 1 >= args.length) break
-    if (args[end + 1] === "u") {
-      if (end + 6 > args.length) break
-      end += 5
-    } else end++
-  }
-  try {
-    const text = JSON.parse(`"${args.slice(match[0].length, end)}"`) as string
-    // A unicode escape may be split between a surrogate pair's two halves.
-    const last = text.charCodeAt(text.length - 1)
-    return last >= 0xd800 && last <= 0xdbff ? text.slice(0, -1) : text
-  } catch {
-    return undefined
-  }
+  return new CustomToolInputDecoder().push(args)
 }

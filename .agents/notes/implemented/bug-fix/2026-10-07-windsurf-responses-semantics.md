@@ -62,3 +62,10 @@ present as a conversation prompt instead of system_prompt. Before the
 continuation guard, the HTTP chain test received 200 instead of 400 and the
 WebSocket chain received response.completed instead of the replay error.
 All four cases pass after the fixes. A fifth case verifies that shared role normalization preserves the original caller payload while encoding both instruction roles into system_prompt.
+
+
+The request builder now returns a Promise because large Connect bodies compress
+asynchronously. The same route regressions await it and verify that the HTTP
+Connect-Content-Encoding header matches the actual frame flag; instruction,
+history and continuation semantics above remain unchanged. Compression policy
+is owned by `2026-11-02-windsurf-request-compression.md`.

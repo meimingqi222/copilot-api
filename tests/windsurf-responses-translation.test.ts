@@ -45,7 +45,7 @@ function fieldText(
   return raw ? new TextDecoder().decode(raw) : undefined
 }
 
-test("Windsurf shares developer-to-system normalization without mutating caller history", () => {
+test("Windsurf shares developer-to-system normalization without mutating caller history", async () => {
   const payload: ChatCompletionsPayload = {
     model: "deepseek-v4-1-flash",
     messages: [
@@ -55,7 +55,7 @@ test("Windsurf shares developer-to-system normalization without mutating caller 
     ],
   }
   const original = structuredClone(payload)
-  const framed = buildRequest({
+  const framed = await buildRequest({
     payload,
     apiKey: "test-key",
     requestModel: "deepseek-v4-1-flash-high",
@@ -63,7 +63,9 @@ test("Windsurf shares developer-to-system normalization without mutating caller 
     turnIndex: 0,
   })
   const packet = parseMessage(
-    Bun.gunzipSync(Buffer.from(framed.subarray(5))),
+    framed[0] === 1 ?
+      Bun.gunzipSync(Buffer.from(framed.subarray(5)))
+    : framed.subarray(5),
     0,
     6,
   )
@@ -138,6 +140,9 @@ beforeEach(async () => {
       "application/connect+proto",
     )
     const framed = init!.body as Uint8Array
+    expect(new Headers(init?.headers).get("connect-content-encoding")).toBe(
+      framed[0] === 1 ? "gzip" : null,
+    )
     const bytes =
       framed[0] === 1 ?
         Bun.gunzipSync(Buffer.from(framed.subarray(5)))

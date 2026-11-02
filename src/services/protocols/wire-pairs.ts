@@ -314,6 +314,7 @@ function defaultDirectionHooks(
   if (source === "responses" && target === "chat") {
     const responsesPayload = targetPayload as ResponsesPayload | undefined
     return {
+      decorateExecutorContext: (c) => ({ ...c, collectChatStreamTwin: true }),
       onPhase: (phase, details) => {
         if (phase === "request_decoded")
           updateMemoryTrace(ctx?.memoryTraceId, "responses_to_chat_start", {

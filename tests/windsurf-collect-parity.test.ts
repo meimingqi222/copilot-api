@@ -163,4 +163,67 @@ describe("windsurf non-streaming collector", () => {
       prompt_tokens_details: { cached_tokens: 90 },
     })
   })
+  test.each(["tools", "mixed"])(
+    "enforces one response budget across %s",
+    async (mode) => {
+      const chunk = "x".repeat(64 * 1024)
+      async function* events(): AsyncIterable<WindsurfStreamEvent> {
+        for (let index = 0; index < 2; index++) {
+          yield {
+            data: "{}",
+            collected: {
+              toolCalls: [
+                {
+                  index,
+                  id: `call_${index}`,
+                  function: { name: "write", arguments: "" },
+                },
+              ],
+            },
+          }
+          for (let i = 0; i < 257; i++) {
+            yield {
+              data: "{}",
+              collected:
+                mode === "mixed" && index === 0 ?
+                  { content: chunk }
+                : { toolCalls: [{ index, function: { arguments: chunk } }] },
+            }
+          }
+        }
+      }
+      const outcome = await collectChatCompletion(events(), MODEL).then(
+        () => "accepted",
+        (error: unknown) =>
+          error instanceof Error ? error.message : String(error),
+      )
+      expect(outcome).toBe("Windsurf response exceeds the maximum size")
+    },
+  )
+  test("bounds empty tool calls as well as their byte budget", async () => {
+    let closed = false
+    async function* events(): AsyncIterable<WindsurfStreamEvent> {
+      try {
+        for (let index = 0; index <= 8192; index++)
+          yield {
+            data: "{}",
+            collected: {
+              toolCalls: [
+                {
+                  index,
+                  id: `c${index}`,
+                  function: { name: "t", arguments: "" },
+                },
+              ],
+            },
+          }
+      } finally {
+        closed = true
+      }
+    }
+    await expect(collectChatCompletion(events(), MODEL)).rejects.toThrow(
+      "maximum tool count",
+    )
+    expect(closed).toBe(true)
+  })
 })

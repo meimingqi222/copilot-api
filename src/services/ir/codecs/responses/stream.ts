@@ -16,7 +16,7 @@ import {
   responsesImageCall,
 } from "~/services/ir/image-generation"
 import { mergeUsage } from "~/services/ir/usage"
-import { customToolInputPrefix } from "~/services/ir/codecs/responses/custom-tool"
+import { CustomToolInputDecoder } from "~/services/ir/codecs/responses/custom-tool-input"
 import {
   decodeResponsesResult,
   encodeResponsesResult,
@@ -474,7 +474,7 @@ export async function* encodeResponsesStream(
   request?: RequestIR | ResponsesPayload,
 ): AsyncIterable<CopilotStreamEventLike> {
   const parts = new Map<number, IRPart>()
-  const customInputs = new Map<number, string>()
+  const customInputs = new Map<number, CustomToolInputDecoder>()
   let responseId = "resp_unknown"
   let model = request?.model ?? "unknown"
   let source: ResultIR["source"] = { wire: "responses" }
@@ -487,10 +487,9 @@ export async function* encodeResponsesStream(
     partId: string,
     input: string,
   ): CopilotStreamEventLike | undefined => {
-    const sent = customInputs.get(index) ?? ""
+    const sent = customInputs.get(index)?.value ?? ""
     if (!input.startsWith(sent))
       throw new Error("Custom tool input changed after being streamed")
-    customInputs.set(index, input)
     if (input.length === sent.length) return undefined
     return event("response.custom_tool_call_input.delta", {
       response_id: responseId,
@@ -639,15 +638,21 @@ export async function* encodeResponsesStream(
           && part?.type === "tool_call"
           && part.responsesType === "custom"
         ) {
-          const updated = parts.get(current.index)
-          const input =
-            updated?.type === "tool_call" ?
-              customToolInputPrefix(updated.arguments)
-            : undefined
-          if (input !== undefined) {
-            const delta = customInputDelta(current.index, current.partId, input)
-            if (delta) yield delta
+          let decoder = customInputs.get(current.index)
+          let incoming = current.delta.text
+          if (!decoder) {
+            decoder = new CustomToolInputDecoder()
+            customInputs.set(current.index, decoder)
+            incoming = part.arguments + incoming
           }
+          const delta = decoder.push(incoming)
+          if (delta)
+            yield event("response.custom_tool_call_input.delta", {
+              response_id: responseId,
+              output_index: current.index,
+              item_id: current.partId,
+              delta,
+            })
         } else if (
           current.delta.type === "tool_arguments"
           // Tool search has no argument delta event; its object goes in done.

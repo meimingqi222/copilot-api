@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 
 import type { ChatCompletionChunk } from "~/services/protocols/chat/types"
 import type {
@@ -6,6 +6,9 @@ import type {
   ResponsesPayload,
   ResponsesResponse,
 } from "~/services/protocols/responses/types"
+import type { RequestExecutionContext } from "~/services/providers/runtime"
+import { chunkFromText, doneChunk } from "~/services/windsurf/chunk-builders"
+import type { WindsurfStreamEvent } from "~/services/windsurf/collect-response"
 import type { RequestIR, StreamEvent } from "~/services/ir/types"
 
 import { planTranslation } from "~/services/ir"
@@ -24,6 +27,7 @@ import {
   encodeResponsesStream,
 } from "~/services/ir/codecs/responses/stream"
 import { createResponsesViaChat } from "~/services/protocols/responses-via-chat"
+import { CustomToolInputDecoder } from "~/services/ir/codecs/responses/custom-tool-input"
 import { customToolInputPrefix } from "~/services/ir/codecs/responses/custom-tool"
 import { createTranslatedCall } from "~/services/protocols/wire-pairs"
 import { encodeMessagesResponse } from "~/services/ir/codecs/messages-chat/response"
@@ -616,6 +620,42 @@ describe("Responses IR result and stream codec", () => {
     ] as const)
       expect(customToolInputPrefix(args)).toBe(input)
   })
+  test("incremental custom input preserves every escape and surrogate split", () => {
+    const args =
+      " \n"
+      + String.raw`{ "input" : "a\\b\n\t\r\b\f\/\"\u0000\uD83D\uDE00`
+      + "😀"
+      + 'z" }'
+    const input = (JSON.parse(args) as { input: string }).input
+    for (let split = 0; split <= args.length; split++) {
+      const decoder = new CustomToolInputDecoder()
+      const first = decoder.push(args.slice(0, split)) ?? ""
+      const last = first.charCodeAt(first.length - 1)
+      expect(last >= 0xd800 && last <= 0xdbff).toBe(false)
+      const second = decoder.push(args.slice(split)) ?? ""
+      expect(first + second).toBe(input)
+    }
+    const decoder = new CustomToolInputDecoder()
+    let streamed = ""
+    // UTF-16 code units deliberately split even a literal surrogate pair.
+    for (let i = 0; i < args.length; i++)
+      streamed += decoder.push(args[i]) ?? ""
+    expect(streamed).toBe(input)
+  })
+
+  test("incremental custom input withholds incomplete and invalid strings", () => {
+    const decoder = new CustomToolInputDecoder()
+    expect(decoder.push('{"input":"a\\')).toBe("a")
+    expect(decoder.push("uD83")).toBe("")
+    expect(decoder.push("D\\uDE00")).toBe("😀")
+    expect(decoder.push("\\q")).toBeUndefined()
+    expect(decoder.push('ignored"}')).toBeUndefined()
+    expect(new CustomToolInputDecoder().push('{"other":"x"}')).toBeUndefined()
+    expect(
+      new CustomToolInputDecoder().push('{"input":"bad\ntext'),
+    ).toBeUndefined()
+  })
+
   const refusalResponse = {
     id: "refused",
     model: "test-model",
@@ -909,6 +949,67 @@ describe("Responses IR result and stream codec", () => {
     )
   })
 
+  test("Responses translation uses structured Chat deltas after the first frame", async () => {
+    const output: Array<string> = []
+    let parsedChunks = 0
+    const parse = spyOn(JSON, "parse")
+    try {
+      const result = await createResponsesViaChat({
+        target: { upstreamModelId: "test-model", protocol: "windsurf-native" },
+        connection: { id: "conn", protocol: "windsurf-native" },
+        credential: { id: "cred" },
+        payload: payload("hello", { stream: true }),
+        executor: async ({ ctx }: { ctx?: RequestExecutionContext }) => {
+          async function* frames(): AsyncIterable<WindsurfStreamEvent> {
+            for (const text of ["hello", " 世界", "!"])
+              yield {
+                data: chunkFromText({
+                  requestId: "twin",
+                  model: "test-model",
+                  text,
+                  field: "content",
+                }),
+                ...(ctx?.collectChatStreamTwin ?
+                  { collected: { content: text } }
+                : {}),
+              }
+            yield {
+              data: doneChunk({
+                requestId: "twin",
+                model: "test-model",
+                finishReason: "stop",
+              }),
+              ...(ctx?.collectChatStreamTwin ?
+                { collected: { finishReason: "stop" as const } }
+              : {}),
+            }
+          }
+          return { credentialId: "cred", response: frames() }
+        },
+      } as unknown as Parameters<typeof createResponsesViaChat>[0])
+      for await (const frame of result.response as AsyncIterable<{
+        data: string
+      }>)
+        output.push(frame.data)
+      parsedChunks = parse.mock.calls.filter(([data]) =>
+        String(data).includes('"object":"chat.completion.chunk"'),
+      ).length
+    } finally {
+      parse.mockRestore()
+    }
+    const events = output.map(
+      (data) => JSON.parse(data) as { type: string; delta?: string },
+    )
+    expect(
+      events
+        .filter((e) => e.type === "response.output_text.delta")
+        .map((e) => e.delta)
+        .join(""),
+    ).toBe("hello 世界!")
+    expect(events.at(-1)?.type).toBe("response.completed")
+    expect(parsedChunks).toBe(1)
+  })
+
   test("answers a Chat call to a custom tool as a custom_tool_call", () => {
     const request = decodeResponsesRequest(
       payload("hello", { tools: [codexCustomTool] }),
@@ -1019,6 +1120,124 @@ describe("Responses IR result and stream codec", () => {
       type: "custom_tool_call",
       input: "*** Begin Patch",
     })
+  })
+
+  test("custom tool streams isolate interleaved calls with initial argument prefixes", async () => {
+    const request = decodeResponsesRequest(
+      payload("edit", { tools: [codexCustomTool] }),
+    )
+    async function* events(): AsyncIterable<StreamEvent> {
+      yield {
+        type: "message_start",
+        id: "interleaved",
+        model: "test-model",
+        source: { wire: "chat" },
+      }
+      for (let index = 0; index < 2; index++)
+        yield {
+          type: "part_start",
+          index,
+          partId: `p${index}`,
+          part: {
+            type: "tool_call",
+            id: `c${index}`,
+            name: "apply_patch",
+            arguments: '{"input":"',
+          },
+        }
+      for (const [index, text] of [
+        [0, "a\\uD83D"],
+        [1, 'other"}'],
+        [0, '\\uDE00"}'],
+      ] as const)
+        yield {
+          type: "part_delta",
+          index,
+          partId: `p${index}`,
+          delta: { type: "tool_arguments", text },
+        }
+      for (let index = 0; index < 2; index++)
+        yield { type: "part_end", index, partId: `p${index}` }
+      yield {
+        type: "message_end",
+        stop: { reason: "tool_calls" },
+        status: "completed",
+      }
+    }
+    const inputs = ["", ""]
+    for await (const raw of encodeResponsesStream(events(), request)) {
+      const event = JSON.parse(raw.data!) as {
+        type: string
+        output_index: number
+        delta: string
+      }
+      expect(event.type).not.toBe("error")
+      if (event.type === "response.custom_tool_call_input.delta")
+        inputs[event.output_index] += event.delta
+    }
+    expect(inputs).toEqual(["a😀", "other"])
+  })
+
+  test("custom tool streaming keeps JSON parse work proportional to input size", async () => {
+    const input = "patch line\n".repeat(3000)
+    const args = JSON.stringify({ input })
+    const request = decodeResponsesRequest(
+      payload("edit", { tools: [codexCustomTool] }),
+    )
+    async function* events(): AsyncIterable<StreamEvent> {
+      yield {
+        type: "message_start",
+        id: "r-perf",
+        model: "test-model",
+        source: { wire: "chat" },
+      }
+      yield {
+        type: "part_start",
+        partId: "call",
+        index: 0,
+        part: {
+          type: "tool_call",
+          id: "c1",
+          name: "apply_patch",
+          arguments: "",
+        },
+      }
+      for (let i = 0; i < args.length; i += 64)
+        yield {
+          type: "part_delta",
+          partId: "call",
+          index: 0,
+          delta: {
+            type: "tool_arguments",
+            text: args.slice(i, i + 64),
+          },
+        }
+      yield { type: "part_end", partId: "call", index: 0 }
+      yield {
+        type: "message_end",
+        stop: { reason: "tool_calls" },
+        status: "completed",
+      }
+    }
+    const output: Array<string> = []
+    let parsedChars = 0
+    const parse = spyOn(JSON, "parse")
+    try {
+      for await (const event of encodeResponsesStream(events(), request))
+        output.push(event.data ?? "")
+      parsedChars = parse.mock.calls.reduce(
+        (sum, call) => sum + String(call[0]).length,
+        0,
+      )
+    } finally {
+      parse.mockRestore()
+    }
+    const deltas = output
+      .map((data) => JSON.parse(data) as { type: string; delta?: string })
+      .filter((event) => event.type === "response.custom_tool_call_input.delta")
+    expect(deltas.map((event) => event.delta).join("")).toBe(input)
+    // Final snapshots may parse once each; per-delta prefix reparsing is quadratic.
+    expect(parsedChars).toBeLessThan(args.length * 4)
   })
 
   test("streams reasoning, text, usage and completion incrementally", async () => {

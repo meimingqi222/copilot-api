@@ -25,6 +25,15 @@ Custom tools become one-string-input functions; output restores free text and
 streams decoded input prefixes, withholding incomplete JSON escapes. Client
 tool search restores its object arguments on the completed item.
 
+`src/services/ir/codecs/responses/custom-tool-input.ts` keeps one incremental
+JSON-string decoder per custom call. Only new argument bytes are scanned; a
+trailing high surrogate is withheld until its continuation arrives. The full
+argument JSON and emitted input prefix are validated once at completion. Do not
+reparse or compare the complete prefix on each delta: large patches otherwise
+cause quadratic CPU and temporary-string allocation. Initial argument prefixes
+and interleaved calls retain separate decoder state. Structured Chat twins are
+requested for Responses translation to avoid per-frame JSON reparsing.
+
 `src/services/ir/codecs/messages-chat/messages-content.ts` switches explicitly on
 runtime block types. PDF documents become IR files, including within tool
 results. Responses preserves them; Chat and other targets without file support
@@ -58,3 +67,14 @@ Coverage: `tests/ir-responses.test.ts`, `tests/ir-messages-chat.test.ts`, includ
 custom/search calls through a Messages executor in both response modes, Lite
 developer-role items, ordered PDF tool results, loss metadata and preflight
 rejection before a Chat executor is called.
+
+
+Performance regression: `tests/ir-responses.test.ts::custom tool streaming keeps JSON parse work proportional to input size`
+checks emitted input and bounds total bytes passed to JSON.parse, without timing
+thresholds. The fragmented-escape and interleaved-call tests cover incremental
+state; the structured-Chat-delta test preserves output while allowing only the
+first frame's JSON parse.
+
+Proved: The pre-fix parse-work assertion failed with repeated full-prefix parses;
+`.agents/notes-evidence/custom-tool-parse-work-red.log` retains that run. The
+same test passes with incremental decoding.

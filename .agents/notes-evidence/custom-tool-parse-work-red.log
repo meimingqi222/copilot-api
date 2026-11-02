@@ -1,0 +1,96 @@
+bun test v1.4.2 (744846f84)
+
+tests/ir-responses.test.ts:
+(pass) Responses IR request codec > hosted tool dropping cannot weaken a required or named tool contract [1.24ms]
+(pass) Responses IR request codec > lifts developer-role Lite tools and unwraps functions namespace consistently [1.90ms]
+(pass) Responses IR request codec > client tool search restores discovered tools, history and response kinds [2.50ms]
+(pass) Responses IR request codec > Codex compatibility keeps effort, agent messages and late instructions in order [0.20ms]
+(pass) Responses IR request codec > decode losses report dropped Codex history and hosted tools without their contents [0.52ms]
+(pass) Responses IR request codec > encodes boolean search intent and respects explicit opt-out [0.48ms]
+(pass) Responses IR request codec > retains namespace mapping and rejects unknown allowed tool names [0.20ms]
+(pass) Responses IR request codec > flattens long namespace tool names within the Chat limit [1.48ms]
+(pass) Responses IR request codec > allowed_tools filters Chat tools before required mode is applied [0.27ms]
+(pass) Responses IR request codec > reasoning does not cross a user or tool-result boundary [0.05ms]
+(pass) Responses IR request codec > encodes image tool results and namespace calls as structured Responses items [0.07ms]
+(pass) Responses IR request codec > rejects non-portable file URLs before calling a Chat upstream [0.65ms]
+(pass) Responses IR result and stream codec > Messages upstream restores custom and search calls (stream=%s) [1.32ms]
+(pass) Responses IR result and stream codec > Messages upstream restores custom and search calls (stream=%s) [1.83ms]
+(pass) Responses IR result and stream codec > custom input prefixes decode fragmented escapes without exposing JSON wrappers [0.04ms]
+(pass) Responses IR result and stream codec > preserves refusal text in results and replayed history [0.26ms]
+(pass) Responses IR result and stream codec > preserves refusal text and stop without duplicating snapshots after prefix "" [1.74ms]
+(pass) Responses IR result and stream codec > preserves refusal text and stop without duplicating snapshots after prefix "Cannot " [0.06ms]
+(pass) Responses IR result and stream codec > preserves refusal text and stop without duplicating snapshots after prefix "Cannot comply" [0.04ms]
+(pass) Responses IR result and stream codec > keeps reasoning order and reported usage without inventing ciphertext [0.10ms]
+(pass) Responses IR result and stream codec > restores namespace on a flattened Chat tool call [0.05ms]
+(pass) Responses IR result and stream codec > offers a custom tool and its history to Chat as a function [0.10ms]
+(pass) Responses IR result and stream codec > serves a Codex custom-tool request through a Chat-only upstream [0.37ms]
+(pass) Responses IR result and stream codec > answers a Chat call to a custom tool as a custom_tool_call [0.04ms]
+(pass) Responses IR result and stream codec > streams a Chat call to a custom tool as custom_tool_call events [0.27ms]
+1051 |     }
+1052 |     const deltas = output.map((data) => JSON.parse(data) as { type: string; delta?: string })
+1053 |       .filter((event) => event.type === "response.custom_tool_call_input.delta")
+1054 |     expect(deltas.map((event) => event.delta).join("")).toBe(input)
+1055 |     // Final snapshots may parse once each; per-delta prefix reparsing is quadratic.
+1056 |     expect(parsedChars).toBeLessThan(args.length * 4)
+                               ^
+error: expect(received).toBeLessThan(expected)
+
+Expected: < 144048
+Received: 10228522
+
+      at <anonymous> (<repo>/tests/ir-responses.test.ts:1056:25)
+(fail) Responses IR result and stream codec > custom tool streaming keeps JSON parse work proportional to input size [45.18ms]
+(pass) Responses IR result and stream codec > streams reasoning, text, usage and completion incrementally [0.65ms]
+(pass) Responses IR result and stream codec > turns image_generation_call into an image the client can render [0.23ms]
+(pass) Responses IR result and stream codec > recovers an image that arrives only on output_item.done [0.45ms]
+(pass) Responses IR result and stream codec > emits final image bytes once across added, repeated done and completed events [0.18ms]
+(pass) Responses IR result and stream codec > recovers tool arguments from arguments.done without duplicating streamed prefixes [1.11ms]
+(pass) Responses IR result and stream codec > recovers tool arguments from output_item.done without duplicating streamed prefixes [0.15ms]
+(pass) Responses IR result and stream codec > recovers tool arguments from response.completed without duplicating streamed prefixes [0.14ms]
+(pass) Responses IR result and stream codec > recovers tool arguments from empty_output_item.done without duplicating streamed prefixes [0.15ms]
+(pass) Responses IR result and stream codec > rejects a final tool snapshot that contradicts emitted arguments [1.45ms]
+(pass) Responses IR result and stream codec > uses a terminal-only response without losing content [0.28ms]
+(pass) Responses IR result and stream codec > terminal response only fills items absent from earlier deltas [0.15ms]
+(pass) Responses IR result and stream codec > DONE without completion marks the response incomplete [0.08ms]
+(pass) Responses IR result and stream codec > emits content before the upstream stream finishes [0.12ms]
+
+tests/windsurf-collect-parity.test.ts:
+(pass) windsurf non-streaming collector > structured `collected` path matches the JSON fallback exactly [1.28ms]
+177 |     }
+178 |     const outcome = await collectChatCompletion(events(), MODEL).then(
+179 |       () => "accepted",
+180 |       (error: unknown) => error instanceof Error ? error.message : String(error),
+181 |     )
+182 |     expect(outcome).toBe("Windsurf response exceeds the maximum size")
+                          ^
+error: expect(received).toBe(expected)
+
+Expected: "Windsurf response exceeds the maximum size"
+Received: "accepted"
+
+      at <anonymous> (<repo>/tests/windsurf-collect-parity.test.ts:182:21)
+(fail) windsurf non-streaming collector > enforces one response budget across tools [3.42ms]
+177 |     }
+178 |     const outcome = await collectChatCompletion(events(), MODEL).then(
+179 |       () => "accepted",
+180 |       (error: unknown) => error instanceof Error ? error.message : String(error),
+181 |     )
+182 |     expect(outcome).toBe("Windsurf response exceeds the maximum size")
+                          ^
+error: expect(received).toBe(expected)
+
+Expected: "Windsurf response exceeds the maximum size"
+Received: "accepted"
+
+      at <anonymous> (<repo>/tests/windsurf-collect-parity.test.ts:182:21)
+(fail) windsurf non-streaming collector > enforces one response budget across mixed [2.84ms]
+
+3 tests failed:
+(fail) Responses IR result and stream codec > custom tool streaming keeps JSON parse work proportional to input size [45.18ms]
+(fail) windsurf non-streaming collector > enforces one response budget across tools [3.42ms]
+(fail) windsurf non-streaming collector > enforces one response budget across mixed [2.84ms]
+
+ 39 pass
+ 3 fail
+ 145 expect() calls
+Ran 42 tests across 2 files. [394.00ms]

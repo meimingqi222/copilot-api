@@ -19,7 +19,7 @@ import {
   sanitizeWindsurfToolDescription,
 } from "./content-policy-sanitizer"
 import { buildWindsurfClientMetadata } from "./metadata"
-import { ProtobufEncoder, encodeConnectFrame } from "./protobuf"
+import { ProtobufEncoder, encodeConnectRequest } from "./protobuf"
 import { nextWindsurfSessionTurnIndex } from "./session-turn"
 
 // ── Enum constants (aligned with oh-my-pi generated protobuf) ──────────────────
@@ -540,7 +540,7 @@ function isUserTurnBoundary(
 
 // ── Full request builder ───────────────────────────────────────────────────────
 
-export function buildRequest(opts: {
+export async function buildRequest(opts: {
   payload: ChatCompletionsPayload
   apiKey: string
   requestModel: string
@@ -560,12 +560,14 @@ export function buildRequest(opts: {
    * request (oh-my-pi devin.ts line 514); omitting it is detectable.
    */
   userJwt?: string
+  signal?: AbortSignal
   onEncoded?: (metrics: {
     protobufBytes: number
     wireBytes: number
     turnIndex: number
   }) => void
-}): Uint8Array {
+}): Promise<Uint8Array> {
+  opts.signal?.throwIfAborted()
   const {
     payload: originalPayload,
     apiKey,
@@ -624,9 +626,9 @@ export function buildRequest(opts: {
   // rides on stable f15.1 (session) + f16 (cascade). A per-request random
   // UUID here overrode that affinity upstream and zeroed prompt-cache hits.
 
-  // Connect frame is gzip-compressed to match oh-my-pi.
+  // Small bodies stay plain; large histories compress off the event loop.
   const protobuf = request.toUint8Array()
-  const framed = encodeConnectFrame(protobuf, true)
+  const framed = await encodeConnectRequest(protobuf, opts.signal)
   opts.onEncoded?.({
     protobufBytes: protobuf.byteLength,
     wireBytes: framed.byteLength,
