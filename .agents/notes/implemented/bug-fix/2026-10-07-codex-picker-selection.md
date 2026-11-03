@@ -57,3 +57,7 @@ endpoint returns IDs and names, never connection credentials or native prompts.
 Proved: Before implementation, both custom picker tests failed with an
 unrecognized codexModelIds setting while the existing nine catalog tests passed.
 After implementation the same tests pass, including the 100-entry page case.
+
+2026-11-03 capacity discovery assertions extend the same test file without
+changing picker behavior. Its selected-order, empty/null selection, hidden
+reviewer and 100-entry page cases still pass.

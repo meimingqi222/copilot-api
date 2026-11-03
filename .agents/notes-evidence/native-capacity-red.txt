@@ -1,0 +1,21 @@
+Natural red runs, Bun 1.4.4, 2026-11-03. Paths sanitized; assertions unchanged.
+
+bun test tests/public-model-catalog.test.ts -t 'public discovery retains native'
+expect(rows.get("shared-window")).toMatchObject({
+  context_length: 200000,
+  max_context_length: 500000,
+  supported_context_lengths: [500000],
+  limits: { max_output_tokens: 32000 },
+})
+Received ordinary model row without any capacity fields.
+0 pass, 1 fail (missing native metadata projection).
+
+bun test tests/trae-cn-models.test.ts -t 'TRAE agent metadata wins'
+expect(models).toEqual([...])
+Expected maxContext: 1000000; received model omitted maxContext.
+0 pass, 1 fail.
+
+bun test tests/trae-cn-models.test.ts -t 'different upstream IDs'
+expect(models.at(-1)?.context).toBeUndefined()
+Received: 168000 (fixture supplied only prompt_max_tokens).
+0 pass, 1 fail.

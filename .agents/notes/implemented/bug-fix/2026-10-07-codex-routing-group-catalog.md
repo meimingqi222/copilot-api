@@ -40,3 +40,7 @@ not contain group/codex-pool (0 passed, 1 failed). The red output is retained in
 ignored temp/codex-group-red.log. After the fix the same test passes, covering
 administrator discovery, default and selected Codex catalogs, permitted and
 denied callers, unexposed groups and ordinary model catalogs.
+
+2026-11-03 native capacity enrichment extends the bound catalog test file;
+the exposed-group discovery and permission cases still pass. Public capacity
+fallback explicitly leaves routing-group windows unknown.

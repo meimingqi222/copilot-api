@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import path from "node:path"
 
-import type { ModelsDevCatalog } from "~/lib/models-dev/types"
+import type { ModelsDevCatalog, ModelsDevModel } from "~/lib/models-dev/types"
 
 import { everyMs, runJob } from "~/lib/jobs"
 import { logger } from "~/lib/logger"
@@ -24,11 +24,16 @@ let indexes: ModelsDevPriceIndexes | null = null
 let contextIndexes: ModelsDevContextIndexes | null = null
 let effortsIndexes: ModelsDevEffortsIndexes | null = null
 let catalog: ModelsDevCatalog | null = null
+let labs: Record<string, ModelsDevModel> = {}
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 let refreshInFlight: Promise<void> | null = null
 
 function cachePath(): string {
   return PATHS.MODELS_DEV_CACHE_PATH
+}
+
+function labsCachePath(): string {
+  return path.join(path.dirname(cachePath()), "models-dev-labs.json")
 }
 
 function ensureCacheDir(): void {
@@ -65,7 +70,7 @@ function parseCatalog(text: string): ModelsDevCatalog {
 
 function setCatalog(nextCatalog: ModelsDevCatalog): void {
   const nextIndexes = buildModelsDevPriceIndexes(nextCatalog)
-  const nextContextIndexes = buildModelsDevContextIndexes(nextCatalog)
+  const nextContextIndexes = buildModelsDevContextIndexes(nextCatalog, labs)
   const nextEffortsIndexes = buildModelsDevEffortsIndexes(nextCatalog)
   catalog = nextCatalog
   indexes = nextIndexes
@@ -101,6 +106,61 @@ function loadCatalogFromDisk(): ModelsDevCatalog | null {
   }
 }
 
+function parseLabs(text: string): Record<string, ModelsDevModel> {
+  const parsed: unknown = JSON.parse(text)
+  if (
+    !parsed
+    || typeof parsed !== "object"
+    || Array.isArray(parsed)
+    || Object.values(parsed).some(
+      (model) => !model || typeof model.id !== "string",
+    )
+  ) {
+    throw new Error("models.dev lab catalog payload was invalid")
+  }
+  return parsed as Record<string, ModelsDevModel>
+}
+
+function loadLabsFromDisk(): Record<string, ModelsDevModel> | null {
+  try {
+    return parseLabs(readFileSync(labsCachePath(), "utf8"))
+  } catch {
+    return null
+  }
+}
+
+async function refreshLabs(force: boolean): Promise<void> {
+  if (!force && isCacheFresh(labsCachePath())) {
+    const cached = loadLabsFromDisk()
+    if (cached) {
+      labs = cached
+      return
+    }
+  }
+  try {
+    const response = await fetch(new URL("models.json", MODELS_DEV_API_URL), {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "copilot-api/models-dev",
+      },
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!response.ok)
+      throw new Error(`models.dev labs request failed (${response.status})`)
+    const text = await response.text()
+    const parsed = parseLabs(text)
+    ensureCacheDir()
+    writeFileSync(labsCachePath(), text, "utf8")
+    labs = parsed
+  } catch (error) {
+    labs = loadLabsFromDisk() ?? labs
+    logger.warn(
+      "models.dev labs fetch failed; keeping last good metadata",
+      error,
+    )
+  }
+}
+
 async function fetchCatalogFromNetwork(): Promise<ModelsDevCatalog> {
   const response = await fetch(MODELS_DEV_API_URL, {
     headers: {
@@ -127,7 +187,9 @@ export function getModelsDevIndexes(): ModelsDevPriceIndexes | null {
 
 export function setModelsDevCatalogForTest(
   nextCatalog: ModelsDevCatalog | null,
+  nextLabs: Record<string, ModelsDevModel> = {},
 ): void {
+  labs = nextLabs
   if (!nextCatalog) {
     catalog = null
     indexes = null
@@ -138,40 +200,49 @@ export function setModelsDevCatalogForTest(
   setCatalog(nextCatalog)
 }
 
+async function refreshProviderCatalog(force: boolean): Promise<void> {
+  const filePath = cachePath()
+  if (!force && isCacheFresh(filePath)) {
+    const cached = loadCatalogFromDisk()
+    if (cached) {
+      setCatalog(cached)
+      return
+    }
+  }
+
+  try {
+    const fetched = await fetchCatalogFromNetwork()
+    setCatalog(fetched)
+    logger.info(
+      `models.dev catalog refreshed (${Object.keys(fetched).length} providers)`,
+    )
+  } catch (error) {
+    const cached = loadCatalogFromDisk()
+    if (cached) {
+      setCatalog(cached)
+      logger.warn("models.dev fetch failed; using cached catalog", error)
+      return
+    }
+    logger.warn("models.dev fetch failed with no cache available", error)
+  }
+}
+
 export async function refreshModelsDevCatalog(force = false): Promise<void> {
   if (refreshInFlight) {
     await refreshInFlight
     return
   }
 
-  refreshInFlight = (async () => {
-    const filePath = cachePath()
-    if (!force && isCacheFresh(filePath)) {
-      const cached = loadCatalogFromDisk()
-      if (cached) {
-        setCatalog(cached)
-        return
-      }
-    }
-
-    try {
-      const fetched = await fetchCatalogFromNetwork()
-      setCatalog(fetched)
-      logger.info(
-        `models.dev catalog refreshed (${Object.keys(fetched).length} providers)`,
-      )
-    } catch (error) {
-      const cached = loadCatalogFromDisk()
-      if (cached) {
-        setCatalog(cached)
-        logger.warn("models.dev fetch failed; using cached catalog", error)
-        return
-      }
-      logger.warn("models.dev fetch failed with no cache available", error)
-    }
-  })().finally(() => {
-    refreshInFlight = null
-  })
+  refreshInFlight = Promise.all([
+    refreshProviderCatalog(force),
+    refreshLabs(force),
+  ])
+    .then(() => {
+      contextIndexes = buildModelsDevContextIndexes(catalog ?? {}, labs)
+    })
+    .finally(() => {
+      refreshInFlight = null
+    })
 
   await refreshInFlight
 }
@@ -179,9 +250,12 @@ export async function refreshModelsDevCatalog(force = false): Promise<void> {
 export function initModelsDevPricing(): void {
   initDevinPricing()
   ensureCacheDir()
+  labs = loadLabsFromDisk() ?? {}
   const cached = loadCatalogFromDisk()
   if (cached) {
     setCatalog(cached)
+  } else {
+    contextIndexes = buildModelsDevContextIndexes({}, labs)
   }
 
   const info = {
@@ -215,5 +289,6 @@ export function stopModelsDevPricingForTest(): void {
   indexes = null
   contextIndexes = null
   effortsIndexes = null
+  labs = {}
   refreshInFlight = null
 }

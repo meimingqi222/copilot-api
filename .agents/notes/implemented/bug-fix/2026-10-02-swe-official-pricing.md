@@ -30,3 +30,7 @@ Non-SWE pricing retains existing source selection. SWE defaults estimate publish
 - `tests/models-dev-pricing.test.ts`
 
 Proved: before adding the Devin resolver, `bun test tests/devin-pricing.test.ts` failed because SWE Fast's source was undefined instead of devin-official; after the fix it passes. Tests also cover tier filtering, zero prices, invalid and duplicate rates, exact products, manual reset, promotion expiry, cache reuse, failure backoff and dashboard official filters.
+
+2026-11-03 capacity-only catalog enrichment extends the bound resolver tests;
+price resolution remains unchanged. The full suite still passes the SWE and
+models.dev pricing cases, including separate variant products and zero rates.

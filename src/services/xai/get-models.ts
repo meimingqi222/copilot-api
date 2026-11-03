@@ -12,6 +12,33 @@ import { xaiChatBaseUrl, xaiUsesApi } from "~/services/xai/endpoint"
 import { getXaiCatalogHints } from "~/services/xai/model-metadata"
 import { buildXaiHeaders } from "~/services/xai/headers"
 
+function positiveFinite(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+}
+
+function capacityMetadata(entry: object) {
+  const metadata: Record<string, unknown> = {}
+  const context = "context_window" in entry ? entry.context_window : undefined
+  const windows =
+    "context_windows" in entry && Array.isArray(entry.context_windows) ?
+      [...new Set(entry.context_windows.filter(positiveFinite))].sort(
+        (left, right) => left - right,
+      )
+    : []
+  if (positiveFinite(context)) {
+    metadata.contextWindow = context
+    const maximum = windows.at(-1)
+    if (maximum !== undefined && maximum > context) {
+      metadata.maxContextWindow = maximum
+    }
+  }
+  if (windows.length > 0) metadata.contextWindows = windows
+  if ("max_output_tokens" in entry && positiveFinite(entry.max_output_tokens)) {
+    metadata.outputLimit = entry.max_output_tokens
+  }
+  return Object.keys(metadata).length > 0 ? { metadata } : {}
+}
+
 function parseXaiModels(payload: unknown): Array<ModelMapping> {
   if (
     !payload
@@ -59,6 +86,7 @@ function parseXaiModels(payload: unknown): Array<ModelMapping> {
       pickerEnabled: true,
       endpoints: endpointsById.get(publicId) ?? ["responses"],
       ...(levels && levels.length > 0 ? { efforts: [...levels] } : {}),
+      ...capacityMetadata(entry),
     })
   }
   if (models.length === 0) throw new Error("xAI listed no Responses models")

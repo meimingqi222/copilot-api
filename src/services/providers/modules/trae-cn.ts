@@ -166,6 +166,10 @@ async function discoverTraeCnModels(
     pickerEnabled: true,
     metadata: {
       ...(m.context ? { contextWindow: m.context } : {}),
+      ...(m.maxContext && (!m.context || m.maxContext > m.context) ?
+        { maxContextWindow: m.maxContext }
+      : {}),
+      ...(m.input ? { inputLimit: m.input } : {}),
       ...(m.output ? { outputLimit: m.output } : {}),
     },
   }))

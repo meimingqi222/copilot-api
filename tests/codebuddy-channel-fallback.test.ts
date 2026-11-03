@@ -374,11 +374,37 @@ describe("CodeBuddy model discovery", () => {
               config ?
                 {
                   models: [
-                    { id: "shared", name: "Config name" },
-                    { id: "config-only" },
+                    {
+                      id: "shared",
+                      name: "Config name",
+                      credits: "x0.5",
+                      maxInputTokens: 1000000,
+                      maxOutputTokens: 128000,
+                      maxAllowedSize: 2000000,
+                      contextWindow: {
+                        defaultLength: 300000,
+                        supportedLengths: [
+                          1000000,
+                          300000,
+                          1000000,
+                          0,
+                          -1,
+                          "500000",
+                          null,
+                        ],
+                      },
+                    },
+                    {
+                      id: "config-only",
+                      name: "Auto",
+                      maxInputTokens: 176000,
+                      maxOutputTokens: 24000,
+                      maxAllowedSize: 200000,
+                    },
                     { id: "default" },
                     { id: "disabled", disabled: true },
                   ],
+                  modelPromotions: [{ modelIds: ["shared"], label: "promo" }],
                 }
               : strings ? ["shared", "account-only", "account-only"]
               : {
@@ -401,7 +427,84 @@ describe("CodeBuddy model discovery", () => {
         "account-only",
       ])
       expect(models[0]?.name).toBe("Config name")
+      expect(models[0]?.metadata).toEqual({
+        codebuddyCredits: "x0.5",
+        codebuddyPromotions: [{ modelIds: ["shared"], label: "promo" }],
+        inputLimit: 1000000,
+        outputLimit: 128000,
+        contextWindow: 300000,
+        contextWindows: [300000, 1000000],
+        maxContextWindow: 1000000,
+      })
+      expect(models[1]?.metadata).toEqual({
+        inputLimit: 176000,
+        outputLimit: 24000,
+      })
       expect(models[2]?.upstreamId).toBe("account-only")
+      expect(models[2]?.metadata).toEqual({})
+    },
+  )
+
+  test.each([
+    {
+      maxInputTokens: 0,
+      maxOutputTokens: -1,
+      contextWindow: {
+        defaultLength: "300000",
+        supportedLengths: [0, -2, "1000000", null],
+      },
+      expected: {},
+    },
+    {
+      maxInputTokens: "176000",
+      maxOutputTokens: null,
+      contextWindow: {
+        defaultLength: 300000,
+        supportedLengths: [200000, 300000, 200000],
+      },
+      expected: { contextWindow: 300000, contextWindows: [200000, 300000] },
+    },
+    {
+      maxInputTokens: Infinity,
+      maxOutputTokens: NaN,
+      contextWindow: {
+        defaultLength: Infinity,
+        supportedLengths: [NaN, Infinity, 1000000, 300000],
+      },
+      expected: {
+        contextWindows: [300000, 1000000],
+        maxContextWindow: 1000000,
+      },
+    },
+    {
+      contextWindow: { defaultLength: -1, supportedLengths: "1000000" },
+      expected: {},
+    },
+  ])(
+    "discovery ignores invalid capacity values without inventing a default (%j)",
+    async ({ expected, ...limits }) => {
+      const credential = makeCredential()
+      const connection = makeConnection(credential)
+      globalThis.fetch = Object.assign(
+        async () =>
+          new Response(
+            JSON.stringify(
+              {
+                code: 0,
+                data: { models: [{ id: "capacity-model", ...limits }] },
+              },
+              (_key, value: unknown) =>
+                value === Infinity ? "overflow-number" : value,
+            ).replaceAll('"overflow-number"', "1e400"),
+          ),
+        { preconnect: originalFetch.preconnect },
+      ) as typeof fetch
+      const models = await codebuddyNativeAdapter.discoverModels!({
+        connection,
+        credential,
+      })
+      expect(models.map((model) => model.publicId)).toEqual(["capacity-model"])
+      expect(models[0]?.metadata).toEqual(expected)
     },
   )
 

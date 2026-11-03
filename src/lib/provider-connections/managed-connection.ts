@@ -57,6 +57,8 @@ export interface AccountModel {
    * admin API 的模型 JSON 形状保持冻结。
    */
   efforts?: Array<string>
+  /** Internal discovery metadata; never emitted by mappingToAccountModel. */
+  metadata?: Record<string, unknown>
 }
 
 /** 创建 account-managed connection 时的运行态最小子集。 */
@@ -179,6 +181,7 @@ export function accountModelsToMappings(
       ...(model.efforts && model.efforts.length > 0 ?
         { efforts: [...model.efforts] }
       : {}),
+      ...(model.metadata ? { metadata: { ...model.metadata } } : {}),
     }
   })
 }

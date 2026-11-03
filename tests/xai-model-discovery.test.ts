@@ -1,14 +1,25 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { Hono } from "hono"
 
 import type { ProviderConnection } from "~/lib/provider-connections"
+import {
+  __resetProviderConnectionsForTest,
+  upsertProviderConnection,
+} from "~/lib/provider-connections"
+import { state } from "~/lib/state"
+import { cacheModels } from "~/lib/utils"
+import { modelRoutes } from "~/routes/models/route"
 import { discoverOAuthModelsForConnection } from "~/services/oauth/discover-models"
 import { getXaiModule } from "~/services/providers/modules/xai"
 import { getXaiFallbackModels } from "~/services/providers/model-catalogs/xai"
 
 const originalFetch = globalThis.fetch
+const originalModels = state.models
 
 afterEach(() => {
   globalThis.fetch = originalFetch
+  __resetProviderConnectionsForTest()
+  state.models = originalModels
 })
 
 function connection(
@@ -45,7 +56,12 @@ describe("xAI live model discovery", () => {
         return Response.json({
           data: [
             { id: "grok-4.7", name: "Grok 4.7", api_backend: "responses" },
-            { id: "grok-4.7-build-fast", api_backend: "responses" },
+            {
+              id: "grok-4.7-build-fast",
+              api_backend: "responses",
+              context_window: 256000,
+              context_windows: [500000, 256000, 500000, 0, -1, "900000", null],
+            },
             { id: "grok-future" },
             { id: "old-chat", api_backend: "chat_completions" },
             { id: "", api_backend: "responses" },
@@ -72,11 +88,33 @@ describe("xAI live model discovery", () => {
         .map((model) => model.publicId),
     ).toEqual(["grok-4.7", "grok-4.7-build-fast", "grok-future"])
     expect(models[1]?.name).toBe("grok-4.7-build-fast")
+    expect(models[1]?.metadata).toEqual({
+      contextWindow: 256000,
+      maxContextWindow: 500000,
+      contextWindows: [256000, 500000],
+    })
+    expect(models[2]?.metadata).toBeUndefined()
     expect(models.some((model) => model.endpoints.includes("images"))).toBe(
       true,
     )
     expect(models.some((model) => model.endpoints.includes("videos"))).toBe(
       true,
+    )
+    const conn = connection()
+    conn.models = models
+    upsertProviderConnection(conn)
+    cacheModels()
+    const response = await new Hono()
+      .route("/models", modelRoutes)
+      .request("/models")
+    const ordinary = (await response.json()) as {
+      data: Array<Record<string, unknown>>
+    }
+    expect(ordinary.data).toContainEqual(
+      expect.objectContaining({
+        id: "grok-4.7-build-fast",
+        context_length: 256000,
+      }),
     )
   })
 
@@ -84,6 +122,38 @@ describe("xAI live model discovery", () => {
     expect(
       getXaiFallbackModels().find((model) => model.publicId === "grok-4.7"),
     ).toMatchObject({ upstreamId: "grok-4.7", endpoints: ["responses"] })
+  })
+
+  test("capacity metadata filters invalid values without inferring output or defaults", async () => {
+    globalThis.fetch = Object.assign(
+      async () =>
+        Response.json({
+          data: [
+            {
+              id: "equal",
+              context_window: 42,
+              context_windows: [42, 21, 42],
+              max_output_tokens: 7,
+            },
+            {
+              id: "invalid",
+              context_window: "42",
+              context_windows: [null, -1, 0, "42"],
+              max_output_tokens: -1,
+            },
+            { id: "missing-default", context_windows: [500000, 256000] },
+          ],
+        }),
+      { preconnect: originalFetch.preconnect },
+    ) as typeof fetch
+    const models = await discoverOAuthModelsForConnection(connection())
+    expect(models[0]?.metadata).toEqual({
+      contextWindow: 42,
+      contextWindows: [21, 42],
+      outputLimit: 7,
+    })
+    expect(models[1]?.metadata).toBeUndefined()
+    expect(models[2]?.metadata).toEqual({ contextWindows: [256000, 500000] })
   })
 })
 

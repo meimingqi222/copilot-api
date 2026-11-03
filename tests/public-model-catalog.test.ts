@@ -1,7 +1,51 @@
-import { expect, test } from "bun:test"
+import { afterEach, beforeEach, expect, test } from "bun:test"
 
 import { getPublicModelData } from "~/lib/model-catalog"
 import type { Model } from "~/lib/model-catalog"
+import {
+  getModelsDevCatalog,
+  setModelsDevCatalogForTest,
+} from "~/lib/models-dev"
+import {
+  __resetProviderConnectionsForTest,
+  managedConnectionFromInput,
+  upsertProviderConnection,
+} from "~/lib/provider-connections"
+import { state } from "~/lib/state"
+import { cacheModels } from "~/lib/utils"
+
+const originalCatalog = getModelsDevCatalog()
+const originalModels = state.models
+
+beforeEach(() => {
+  __resetProviderConnectionsForTest()
+  setModelsDevCatalogForTest({
+    deepseek: {
+      id: "deepseek",
+      models: {
+        "deepseek-v4.1-flash": {
+          id: "deepseek-v4.1-flash",
+          limit: { context: 1_000_000 },
+        },
+      },
+    },
+    openai: {
+      id: "openai",
+      models: {
+        "gpt-6-astra": {
+          id: "gpt-6-astra",
+          limit: { context: 900_000 },
+        },
+      },
+    },
+  })
+})
+
+afterEach(() => {
+  __resetProviderConnectionsForTest()
+  state.models = originalModels
+  setModelsDevCatalogForTest(originalCatalog)
+})
 
 const base: Model = {
   capabilities: {
@@ -76,6 +120,7 @@ test("declared effort order is normalized ascending for the public default", () 
 test("models without declared efforts or limits omit the flattened fields", () => {
   const row = getPublicModelData({
     ...base,
+    id: "unknown-model",
     capabilities: {
       ...base.capabilities,
       limits: undefined,
@@ -87,4 +132,113 @@ test("models without declared efforts or limits omit the flattened fields", () =
   expect(row.reasoning).toBeUndefined()
   expect(row.context_length).toBeUndefined()
   expect(row.limits).toBeUndefined()
+})
+
+test("public model context falls back to the catalog without mutating upstream metadata", () => {
+  const model: Model = {
+    ...base,
+    id: "deepseek-v4.1-flash",
+    capabilities: {
+      ...base.capabilities,
+      family: "codebuddy-cn",
+      limits: { max_output_tokens: 64_000 },
+    },
+  }
+  const row = getPublicModelData(model)
+  expect(row.context_length).toBe(1_000_000)
+  expect(row.capabilities.limits).toEqual({
+    max_context_window_tokens: 1_000_000,
+    max_output_tokens: 64_000,
+  })
+  expect(row.limits).toEqual({ max_output_tokens: 64_000 })
+  expect(model.capabilities.limits).toEqual({ max_output_tokens: 64_000 })
+  expect(
+    getPublicModelData({ ...model, vendor: "routing-group" }).context_length,
+  ).toBeUndefined()
+})
+
+test("public discovery retains native default windows and input-only limits conservatively", () => {
+  const first = managedConnectionFromInput({
+    id: "native-limits-first",
+    name: "Native limits",
+    provider: "trae-cn",
+    enabled: true,
+    credentials: { accessToken: "test-token" },
+  })
+  first.models = [
+    {
+      publicId: "shared-window",
+      upstreamId: "shared-window",
+      endpoints: ["chat"],
+      enabled: true,
+      metadata: {
+        contextWindow: 272_000,
+        maxContextWindow: 872_000,
+        contextWindows: [272_000, 500_000, 872_000],
+        outputLimit: 64_000,
+      },
+    },
+    {
+      publicId: "deepseek-v4.1-flash",
+      upstreamId: "deepseek-v4.1-flash",
+      endpoints: ["chat"],
+      enabled: true,
+      metadata: { inputLimit: 96_000, outputLimit: 32_000 },
+    },
+  ]
+  const second = managedConnectionFromInput({
+    id: "native-limits-second",
+    name: "Lower limits",
+    provider: "trae-cn",
+    enabled: true,
+    credentials: { accessToken: "test-token" },
+  })
+  second.models = [
+    {
+      ...first.models[0]!,
+      metadata: {
+        contextWindow: 200_000,
+        maxContextWindow: 500_000,
+        contextWindows: [200_000, 500_000],
+        outputLimit: 32_000,
+      },
+    },
+  ]
+  const qoder = managedConnectionFromInput({
+    id: "qoder-input-limits",
+    name: "Qoder",
+    provider: "qoder-cn",
+    enabled: true,
+    credentials: { accessToken: "test-token" },
+  })
+  qoder.models = [
+    {
+      publicId: "ultimate",
+      upstreamId: "ultimate",
+      endpoints: ["chat"],
+      enabled: true,
+      metadata: { contextWindow: 1_000_000 },
+    },
+  ]
+  for (const connection of [first, second, qoder])
+    upsertProviderConnection(connection)
+  cacheModels()
+  const rows = new Map(
+    state.models!.data.map((model) => [model.id, getPublicModelData(model)]),
+  )
+  expect(rows.get("shared-window")).toMatchObject({
+    context_length: 200_000,
+    max_context_length: 500_000,
+    supported_context_lengths: [500_000],
+    limits: { max_output_tokens: 32_000 },
+  })
+  expect(rows.get("deepseek-v4.1-flash")?.context_length).toBeUndefined()
+  expect(rows.get("deepseek-v4.1-flash")?.limits).toEqual({
+    max_input_tokens: 96_000,
+    max_output_tokens: 32_000,
+  })
+  expect(rows.get("ultimate")?.context_length).toBeUndefined()
+  expect(rows.get("ultimate")?.limits).toEqual({
+    max_input_tokens: 1_000_000,
+  })
 })

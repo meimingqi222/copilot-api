@@ -15,7 +15,7 @@ import {
 
 export const modelRoutes = new Hono()
 
-modelRoutes.get("/", async (c) => {
+modelRoutes.on("GET", ["/", "/:model{.+}"], async (c) => {
   try {
     if (!state.models) {
       await refreshModelsForAllAccounts()
@@ -31,6 +31,25 @@ modelRoutes.get("/", async (c) => {
     const filtered = [...catalog.values()].filter(
       (model) => !user || isUserAllowedModel(user, model.id),
     )
+
+    const modelId = c.req.param("model")
+    if (modelId !== undefined) {
+      const model = filtered.find((entry) => entry.id === modelId)
+      if (!model) {
+        return c.json(
+          {
+            error: {
+              message: `Model '${modelId}' does not exist or you do not have access to it.`,
+              type: "invalid_request_error",
+              param: "model",
+              code: "model_not_found",
+            },
+          },
+          404,
+        )
+      }
+      return c.json(getPublicModelData(model))
+    }
 
     const clientVersion = c.req.query("client_version")
     if (clientVersion !== undefined) {

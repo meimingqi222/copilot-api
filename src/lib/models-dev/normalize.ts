@@ -144,6 +144,58 @@ export function buildPricingLookupCandidates(
   return Array.from(candidates)
 }
 
+/** Capacity aliases are not billing identities; never use these for prices. */
+export function buildContextLookupCandidates(
+  modelId: string,
+  provider?: ProviderId,
+): Array<string> {
+  if (provider === "windsurf" && /^(swe-|model_private_)/i.test(modelId))
+    return []
+  const candidates = new Set<string>()
+  const spelling = modelId
+    .trim()
+    .toLowerCase()
+    .replaceAll(/[\s_]+/g, "-")
+  const forms = [modelId.trim().toLowerCase(), spelling]
+  const decoded = decodeOpaqueModelToken(modelId)
+  if (decoded) forms.push(decoded)
+  const date = /[-@](20\d{6}|\d{6})$/.exec(spelling)
+  if (date) {
+    const stamp = date[1].length === 6 ? `20${date[1]}` : date[1]
+    const year = Number(stamp.slice(0, 4))
+    const month = Number(stamp.slice(4, 6))
+    const day = Number(stamp.slice(6, 8))
+    const parsed = new Date(Date.UTC(year, month - 1, day))
+    if (
+      parsed.getUTCFullYear() === year
+      && parsed.getUTCMonth() === month - 1
+      && parsed.getUTCDate() === day
+    ) {
+      forms.push(spelling.slice(0, date.index))
+    }
+  }
+  for (const form of forms) {
+    const base =
+      provider === "antigravity" ?
+        form.replace(
+          /-(extra-low|extra-high|minimal|low|medium|high|xhigh|tiered)$/,
+          "",
+        )
+      : provider === "windsurf" ?
+        form.replace(/-(low|medium|high|max|fast|priority)$/, "")
+      : form
+    for (const id of [form, base]) {
+      for (const alias of applyAliases(id)) {
+        for (const candidate of swapDotDashVariants(alias)) {
+          candidates.add(candidate)
+        }
+        candidates.add(alias.replaceAll(/(?<=\d)-(?=\d)/g, "."))
+      }
+    }
+  }
+  return [...candidates]
+}
+
 export function inferWindsurfVendorBucket(
   nativeModelId: string,
 ): Array<string> {

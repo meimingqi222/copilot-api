@@ -22,8 +22,32 @@ interface CodexModelPayload {
   name?: string
   display_name?: string
   displayName?: string
+  context_window?: unknown
+  max_context_window?: unknown
+  max_output_tokens?: unknown
   /** Codex 目录的思考档位：`[{ effort: "low" }, …]` 或裸字符串。 */
   supported_reasoning_levels?: Array<unknown>
+}
+
+function positiveFinite(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+}
+
+function capacityMetadata(entry: CodexModelPayload) {
+  const metadata: Record<string, unknown> = {}
+  if (positiveFinite(entry.context_window)) {
+    metadata.contextWindow = entry.context_window
+    if (
+      positiveFinite(entry.max_context_window)
+      && entry.max_context_window > entry.context_window
+    ) {
+      metadata.maxContextWindow = entry.max_context_window
+    }
+  }
+  if (positiveFinite(entry.max_output_tokens)) {
+    metadata.outputLimit = entry.max_output_tokens
+  }
+  return Object.keys(metadata).length > 0 ? { metadata } : {}
 }
 
 /**
@@ -103,6 +127,7 @@ function parseCodexModelsPayload(
       supportedEndpoints: endpointsForCodexModel(id),
       provider: "codex",
       ...(efforts ? { efforts } : {}),
+      ...capacityMetadata(entry),
     })
   }
 

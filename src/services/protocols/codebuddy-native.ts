@@ -717,6 +717,28 @@ function parseCodebuddyModels(
       )
         return []
     }
+    const positiveLimit = (value: unknown): value is number =>
+      typeof value === "number" && Number.isFinite(value) && value > 0
+    const inputLimit =
+      "maxInputTokens" in model ? model.maxInputTokens : undefined
+    const outputLimit =
+      "maxOutputTokens" in model ? model.maxOutputTokens : undefined
+    const context = "contextWindow" in model ? model.contextWindow : undefined
+    const contextWindow =
+      context && typeof context === "object" && "defaultLength" in context ?
+        context.defaultLength
+      : undefined
+    const supportedLengths =
+      context && typeof context === "object" && "supportedLengths" in context ?
+        context.supportedLengths
+      : undefined
+    const contextWindows =
+      Array.isArray(supportedLengths) ?
+        [...new Set(supportedLengths.filter(positiveLimit))].sort(
+          (a, b) => a - b,
+        )
+      : []
+    const maxContextWindow = contextWindows.at(-1)
     return [
       {
         publicId: model.id,
@@ -732,6 +754,14 @@ function parseCodebuddyModels(
         metadata: {
           ...("credits" in model && { codebuddyCredits: model.credits }),
           ...(promotions.length > 0 && { codebuddyPromotions: promotions }),
+          ...(positiveLimit(inputLimit) && { inputLimit }),
+          ...(positiveLimit(outputLimit) && { outputLimit }),
+          // Only an explicit default is the context window, never the input cap.
+          ...(positiveLimit(contextWindow) && { contextWindow }),
+          ...(contextWindows.length > 0 && { contextWindows }),
+          ...(maxContextWindow !== undefined
+            && (!positiveLimit(contextWindow)
+              || maxContextWindow > contextWindow) && { maxContextWindow }),
         },
       },
     ]

@@ -1,4 +1,7 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import os from "node:os"
+import path from "node:path"
 
 import type { TestAccount as Account } from "./helpers/set-accounts"
 import type { ModelsDevCatalog } from "~/lib/models-dev"
@@ -12,6 +15,8 @@ import {
   setModelsDevCatalogForTest,
   stopModelsDevPricingForTest,
 } from "~/lib/models-dev"
+import { refreshModelsDevCatalog } from "~/lib/models-dev/client"
+import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
@@ -431,6 +436,188 @@ describe("GET /admin/api/usage/pricing", () => {
 })
 
 describe("models.dev context resolver", () => {
+  test("lab metadata survives cache reload and failed refreshes without blocking provider updates", async () => {
+    const originalDir = PATHS.APP_DIR
+    const dir = mkdtempSync(path.join(os.tmpdir(), "models-dev-labs-"))
+    redirectPathsToDir(dir)
+    let phase = 0
+    const fetchMock = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        async (input: Parameters<typeof fetch>[0]) => {
+          if (String(input).endsWith("/models.json")) {
+            if (phase === 1) return new Response("unavailable", { status: 503 })
+            if (phase === 2) return Response.json({ invalid: null })
+            return Response.json({
+              "lab/only-model": {
+                id: "lab/only-model",
+                limit: { context: 700_000 },
+              },
+            })
+          }
+          return Response.json({
+            google: {
+              id: "google",
+              models: {
+                "listed-model": {
+                  id: "listed-model",
+                  limit: { context: 200_000 + phase * 100_000 },
+                },
+              },
+            },
+          })
+        },
+        { preconnect: fetch.preconnect },
+      ),
+    )
+    try {
+      await refreshModelsDevCatalog(true)
+      expect(resolveModelsDevContext("only-model")).toBe(700_000)
+      const cached = readFileSync(
+        path.join(dir, "models-dev-labs.json"),
+        "utf8",
+      )
+      setModelsDevCatalogForTest(null)
+      await refreshModelsDevCatalog()
+      expect(resolveModelsDevContext("only-model")).toBe(700_000)
+      for (phase = 1; phase <= 2; phase++) {
+        await refreshModelsDevCatalog(true)
+        expect(resolveModelsDevContext("only-model")).toBe(700_000)
+        expect(resolveModelsDevContext("listed-model")).toBe(
+          200_000 + phase * 100_000,
+        )
+        expect(
+          readFileSync(path.join(dir, "models-dev-labs.json"), "utf8"),
+        ).toBe(cached)
+      }
+    } finally {
+      fetchMock.mockRestore()
+      redirectPathsToDir(originalDir)
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("matches context-only spellings and provider variants without borrowing prices", () => {
+    setModelsDevCatalogForTest({
+      google: {
+        id: "google",
+        models: {
+          "gemini-3.8-flash": {
+            id: "gemini-3.8-flash",
+            limit: { context: 1_000_000 },
+            cost: { input: 1, output: 2 },
+          },
+          "gemini-3.8-flash-high": {
+            id: "gemini-3.8-flash-high",
+            limit: { context: 200_000 },
+          },
+        },
+      },
+      mirror: {
+        id: "mirror",
+        models: {
+          "gemini-3.8-flash-low": {
+            id: "gemini-3.8-flash-low",
+            limit: { context: 300_000 },
+          },
+          "gpt-6.1-sol-high": {
+            id: "gpt-6.1-sol-high",
+            limit: { context: 600_000 },
+          },
+        },
+      },
+      anthropic: {
+        id: "anthropic",
+        models: {
+          "claude-sonnet-5.5": {
+            id: "claude-sonnet-5.5",
+            limit: { context: 900_000 },
+          },
+        },
+      },
+      openai: {
+        id: "openai",
+        models: {
+          "gpt-6.1-sol": {
+            id: "gpt-6.1-sol",
+            limit: { context: 800_000 },
+          },
+        },
+      },
+    })
+    expect(
+      resolveModelsDevContext("gemini-3.8-flash-medium", "antigravity"),
+    ).toBe(1_000_000)
+    expect(
+      resolveModelsDevContext("gemini-3.8-flash-tiered", "antigravity"),
+    ).toBe(1_000_000)
+    expect(
+      resolveModelsDevContext("gemini-3.8-flash-high", "antigravity"),
+    ).toBe(200_000)
+    expect(resolveModelsDevContext("gemini-3.8-flash-low", "antigravity")).toBe(
+      300_000,
+    )
+    expect(resolveModelsDevContext("antigravity/gemini-3.8-flash-medium")).toBe(
+      1_000_000,
+    )
+    expect(
+      resolveModelsDevContext("claude-sonnet-5-5-low", "antigravity"),
+    ).toBe(900_000)
+    expect(resolveModelsDevContext("gpt-6-1-sol-priority", "windsurf")).toBe(
+      800_000,
+    )
+    expect(resolveModelsDevContext("gpt-6-1-sol-high", "windsurf")).toBe(
+      600_000,
+    )
+    expect(resolveModelsDevContext("Claude_Sonnet_5_5-261024")).toBe(900_000)
+    expect(resolveModelsDevContext("claude-sonnet-5-5-20261024")).toBe(900_000)
+    for (const id of [
+      "gemini-3.8-flash-mini",
+      "gemini-3.8-flash-pro",
+      "gemini-3.8-flash-261399",
+    ]) {
+      expect(resolveModelsDevContext(id, "antigravity")).toBeUndefined()
+    }
+    expect(
+      resolveModelsDevContext("gemini-3.8-flash-medium", "codex"),
+    ).toBeUndefined()
+    expect(
+      resolveModelsDevContext("gpt-6.1-sol-mini", "windsurf"),
+    ).toBeUndefined()
+    expect(
+      resolveModelsDevContext("gpt-6.1-sol-nano", "windsurf"),
+    ).toBeUndefined()
+    expect(
+      resolveModelsDevPriceDetailed("gemini-3.8-flash-medium", "antigravity"),
+    ).toBeNull()
+  })
+
+  test("lab-only context fills gaps without overriding providers or supplying prices", () => {
+    setModelsDevCatalogForTest(
+      {
+        google: {
+          id: "google",
+          models: {
+            "gemini-known": { id: "gemini-known", limit: { context: 200_000 } },
+          },
+        },
+      },
+      {
+        "google/gemini-lab-only": {
+          id: "google/gemini-lab-only",
+          limit: { context: 700_000 },
+          cost: { input: 9, output: 18 },
+        },
+        "google/gemini-known": {
+          id: "google/gemini-known",
+          limit: { context: 1_000_000 },
+        },
+      },
+    )
+    expect(resolveModelsDevContext("gemini-lab-only")).toBe(700_000)
+    expect(resolveModelsDevContext("gemini-known", "antigravity")).toBe(200_000)
+    expect(resolveModelsDevPriceDetailed("gemini-lab-only")).toBeNull()
+  })
+
   test("reads limit.context, provider-scoped and by model tail", () => {
     setModelsDevCatalogForTest({
       anthropic: {

@@ -64,3 +64,8 @@ failed because response.models was undefined; the ordinary OpenAI test
 passed. The same cases pass after adding the native response branch.
 Before adding the reviewer override, the default and renamed-reviewer tests
 failed (7 pass, 2 fail); both pass after advertising the allowed public reviewer ID.
+
+2026-11-03 native capacity retention extends the existing discovery fixture to
+assert ordinary default windows separately from optional maximum windows.
+The bound catalog tests still pass native envelopes, hidden reviewers, renamed
+models, permissions and unchanged Admin account JSON projection.

@@ -9,6 +9,7 @@ import {
   managedConnectionFromInput,
   getMutableProviderConnection,
   upsertProviderConnection,
+  connectionModelsToAccountModels,
 } from "~/lib/provider-connections"
 import {
   clearRoutingGroupsCacheForTest,
@@ -249,7 +250,7 @@ async function catalog(
   expect(response.status).toBe(200)
   return (await response.json()) as {
     object?: string
-    data?: Array<{ id: string }>
+    data?: Array<{ id: string; context_length?: number }>
     models?: Array<Record<string, unknown>>
   }
 }
@@ -315,7 +316,8 @@ test("model discovery preserves native policy and capability metadata after publ
         {
           slug: "gpt-5.6-sol",
           display_name: "Sol",
-          context_window: 321000,
+          context_window: 272000,
+          max_context_window: 872000,
           node_repl_auto_review_required: true,
           auto_review_model_override: "codex-auto-review",
           model_messages: { auto_review: policy },
@@ -324,20 +326,84 @@ test("model discovery preserves native policy and capability metadata after publ
       ],
     })) as unknown as typeof fetch
   const connection = getMutableProviderConnection("codex-test")!
-  await getCodexModelsForConnection(connection)
+  const discovered = await getCodexModelsForConnection(connection)
+  expect(discovered[0]).toMatchObject({
+    metadata: { contextWindow: 272000, maxContextWindow: 872000 },
+  })
+  connection.models = accountModelsToMappings(discovered)
   const mapping = connection.models!.find(
     (model) => model.upstreamId === "gpt-5.6-sol",
   )!
+  expect(mapping.metadata).toEqual({
+    contextWindow: 272000,
+    maxContextWindow: 872000,
+  })
   mapping.publicId = "my-sol"
   cacheModels()
   const response = await catalog()
   const model = response.models!.find((entry) => entry.slug === "my-sol")!
-  expect(model.context_window).toBe(321000)
+  expect(model.context_window).toBe(272000)
+  expect(model.max_context_window).toBe(872000)
   expect(model.node_repl_auto_review_required).toBe(true)
   expect(model.auto_review_model_override).toBe("codex-auto-review")
   expect((model.model_messages as Record<string, unknown>).auto_review).toEqual(
     policy,
   )
+  expect((await catalog("")).data).toContainEqual(
+    expect.objectContaining({ id: "my-sol", context_length: 272000 }),
+  )
+})
+
+test("Codex discovery retains only valid explicit capacity fields", async () => {
+  const entries = [
+    {
+      slug: "reserve",
+      context_window: 272000,
+      max_context_window: 872000,
+      max_output_tokens: 16000,
+    },
+    { slug: "equal", context_window: 42, max_context_window: 42 },
+    { slug: "smaller", context_window: 42, max_context_window: 21 },
+    {
+      slug: "invalid",
+      context_window: "42",
+      max_context_window: -1,
+      max_output_tokens: 0,
+    },
+    { slug: "missing-default", max_context_window: 872000 },
+  ]
+  globalThis.fetch = (async () =>
+    Response.json({ models: entries })) as unknown as typeof fetch
+  const models = await getCodexModelsForConnection(
+    getMutableProviderConnection("codex-test")!,
+  )
+  expect(models.map((model) => model.id)).toEqual(
+    entries.map((entry) => entry.slug),
+  )
+  expect(models[0]).toMatchObject({
+    metadata: {
+      contextWindow: 272000,
+      maxContextWindow: 872000,
+      outputLimit: 16000,
+    },
+  })
+  const mappings = accountModelsToMappings(models)
+  expect(mappings[0]?.metadata).toEqual({
+    contextWindow: 272000,
+    maxContextWindow: 872000,
+    outputLimit: 16000,
+  })
+  expect(mappings[1]?.metadata).toEqual({ contextWindow: 42 })
+  expect(mappings[2]?.metadata).toEqual({ contextWindow: 42 })
+  expect(mappings[3]?.metadata).toBeUndefined()
+  expect(mappings[4]?.metadata).toBeUndefined()
+  const connection = getMutableProviderConnection("codex-test")!
+  connection.models = mappings
+  expect(
+    connectionModelsToAccountModels(connection)!.every(
+      (model) => !("metadata" in model),
+    ),
+  ).toBe(true)
 })
 
 test("legacy reasoning filtering never mutates the modern catalog", async () => {

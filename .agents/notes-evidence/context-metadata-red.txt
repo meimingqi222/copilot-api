@@ -1,0 +1,37 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/models-dev-pricing.test.ts:
+464 |             limit: { context: 800_000 },
+465 |           },
+466 |         },
+467 |       },
+468 |     })
+469 |     expect(resolveModelsDevContext("gemini-3.8-flash-medium", "antigravity")).toBe(1_000_000)
+                                                                                    ^
+error: expect(received).toBe(expected)
+
+Expected: 1000000
+Received: undefined
+
+      at <anonymous> (tests/models-dev-pricing.test.ts:469:79)
+(fail) models.dev context resolver > matches context-only spellings and provider variants without borrowing prices [5.87ms]
+490 |       },
+491 |     }, {
+492 |       "google/gemini-lab-only": { id: "google/gemini-lab-only", limit: { context: 700_000 }, cost: { input: 9, output: 18 } },
+493 |       "google/gemini-known": { id: "google/gemini-known", limit: { context: 1_000_000 } },
+494 |     })
+495 |     expect(resolveModelsDevContext("gemini-lab-only")).toBe(700_000)
+                                                             ^
+error: expect(received).toBe(expected)
+
+Expected: 700000
+Received: undefined
+
+      at <anonymous> (tests/models-dev-pricing.test.ts:495:56)
+(fail) models.dev context resolver > lab-only context fills gaps without overriding providers or supplying prices [1.25ms]
+
+ 0 pass
+ 21 filtered out
+ 2 fail
+ 2 expect() calls
+Ran 2 tests across 1 file. [155.00ms]

@@ -6,6 +6,7 @@ import type { ChatCompletionResponse } from "~/services/protocols/chat/types"
 
 import { HTTPError, UpstreamModelUnavailableError } from "~/lib/error"
 import { createLogger } from "~/lib/logger"
+import type { ModelLimits } from "~/lib/model-catalog"
 import {
   accountManagedProvider,
   classifyUpstreamError,
@@ -16,7 +17,10 @@ import {
   upsertProviderConnection,
 } from "~/lib/provider-connections"
 import { hasEnabledCredential } from "~/lib/provider-connections/anonymous-credential"
-import type { ModelEndpoint } from "~/lib/provider-connections/types"
+import type {
+  ModelEndpoint,
+  ModelMapping,
+} from "~/lib/provider-connections/types"
 import {
   listExposedPublicModels,
   type ExposedPublicModel,
@@ -75,6 +79,7 @@ export function cacheModels(): void {
         model: (typeof connectionModels)[number]["model"]
         conn: (typeof connectionModels)[number]["conn"]
         publicId: string
+        limits?: ModelLimits
         /** 同一 publicId 各连接档位的交集;任一连接未知时按“未知”处理。 */
         efforts?: Array<string>
       }
@@ -88,21 +93,27 @@ export function cacheModels(): void {
       // 折叠变体的连接(历史上)只在 metadata 里记档位,没有 efforts 字段。
       const levels =
         entry.model.efforts ?? listWindsurfSupportedEfforts(entry.model)
+      const limits = mappingLimits(
+        entry.model,
+        accountManagedProvider(entry.conn),
+      )
       const existing = merged.get(publicId)
       if (!existing) {
         merged.set(publicId, {
           model: entry.model,
           conn: entry.conn,
           publicId,
+          limits,
           efforts: levels && levels.length > 0 ? [...levels] : undefined,
         })
         continue
       }
       existing.efforts = intersectEfforts(existing.efforts, levels)
+      existing.limits = mergeModelLimits(existing.limits, limits)
     }
 
     accountData = Array.from(merged.values()).map(
-      ({ model, conn, publicId, efforts }) =>
+      ({ model, conn, publicId, efforts, limits }) =>
         buildModelEntry({
           id: publicId,
           name: model.name ?? publicId,
@@ -111,7 +122,7 @@ export function cacheModels(): void {
           pickerEnabled: model.pickerEnabled ?? true,
           pickerCategory: model.pickerCategory,
           endpoints: model.endpoints ?? [],
-          contextWindow: windsurfContextWindow(model),
+          limits,
           efforts,
         }),
     )
@@ -128,6 +139,85 @@ export function cacheModels(): void {
 // 注册 models-stale 监听:persistProviderConnections 完成后
 // 自动触发 cacheModels() 重建缓存,消除调用方的手动 cacheModels() 调用。
 onStateChange("models-stale", cacheModels)
+
+function positiveLimit(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ?
+      value
+    : undefined
+}
+
+function mappingLimits(model: ModelMapping, provider: string): ModelLimits {
+  const metadata = model.metadata ?? {}
+  // Qoder's historical contextWindow stores max_input_tokens, not a total window.
+  const qoder = provider === "qoder" || provider === "qoder-cn"
+  const context =
+    windsurfContextWindow(model)
+    ?? (qoder ? undefined : positiveLimit(metadata.contextWindow))
+  const extended = positiveLimit(metadata.maxContextWindow)
+  const input =
+    positiveLimit(metadata.inputLimit)
+    ?? (qoder ? positiveLimit(metadata.contextWindow) : undefined)
+  const output = positiveLimit(metadata.outputLimit)
+  const windows =
+    Array.isArray(metadata.contextWindows) ?
+      [
+        ...new Set(
+          metadata.contextWindows.flatMap((value: unknown) => {
+            const limit = positiveLimit(value)
+            return limit === undefined ? [] : [limit]
+          }),
+        ),
+      ].sort((a, b) => a - b)
+    : []
+  return {
+    ...(context ? { max_context_window_tokens: context } : {}),
+    ...(extended && (!context || extended > context) ?
+      { max_context_window_tokens_extended: extended }
+    : {}),
+    ...(windows.length ? { supported_context_window_tokens: windows } : {}),
+    ...(input ? { max_prompt_tokens: input } : {}),
+    ...(output ? { max_output_tokens: output } : {}),
+  }
+}
+
+/** Publish the smallest known limit, never the first or largest channel's. */
+function mergeModelLimits(
+  current: ModelLimits = {},
+  next: ModelLimits = {},
+): ModelLimits {
+  const merged = { ...current }
+  for (const key of [
+    "max_context_window_tokens",
+    "max_prompt_tokens",
+    "max_output_tokens",
+  ] as const) {
+    const value = next[key]
+    if (value !== undefined)
+      merged[key] = Math.min(current[key] ?? value, value)
+  }
+  const maximums = [current, next].flatMap((limits) => {
+    const maximum =
+      limits.max_context_window_tokens_extended
+      ?? limits.max_context_window_tokens
+    return maximum === undefined ? [] : [maximum]
+  })
+  if (maximums.length) {
+    const maximum = Math.min(...maximums)
+    if (maximum > (merged.max_context_window_tokens ?? 0)) {
+      merged.max_context_window_tokens_extended = maximum
+    } else {
+      delete merged.max_context_window_tokens_extended
+    }
+  }
+  const windows = next.supported_context_window_tokens
+  if (windows) {
+    merged.supported_context_window_tokens =
+      current.supported_context_window_tokens?.filter((value) =>
+        windows.includes(value),
+      ) ?? [...windows]
+  }
+  return merged
+}
 
 /** `/v1/models` 的 `capabilities.supports`，档位未知时不写该字段。 */
 function modelSupports(efforts: Array<string> | undefined) {
@@ -185,8 +275,8 @@ function buildModelEntry(input: {
   pickerEnabled: boolean
   pickerCategory?: string
   endpoints: Array<ModelEndpoint>
-  /** 目录点名的上下文窗口（Windsurf 的 `1m` 档）；未知时不写 limits。 */
-  contextWindow?: number
+  /** Provider-declared windows and input/output limits; unknown fields stay absent. */
+  limits?: ModelLimits
   /** 该 publicId 背后所有连接都能接受的档位（provider 声明的交集）。 */
   efforts?: Array<string>
 }): NonNullable<typeof state.models>["data"][number] {
@@ -205,9 +295,9 @@ function buildModelEntry(input: {
     capabilities: {
       family: input.family,
       object: "capabilities",
-      ...(input.contextWindow === undefined ?
+      ...(input.limits === undefined || Object.keys(input.limits).length === 0 ?
         {}
-      : { limits: { max_context_window_tokens: input.contextWindow } }),
+      : { limits: input.limits }),
       supports: modelSupports(input.efforts),
       tokenizer: "unknown",
       type: "chat",

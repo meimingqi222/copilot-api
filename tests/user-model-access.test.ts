@@ -43,6 +43,29 @@ test("GET /v1/models only returns models enabled for the API key user", async ()
   expect(body.data.map((model) => model.id)).toEqual(["gpt-allowed"])
 })
 
+test("model details match the visible catalog and hide forbidden or unknown models", async () => {
+  const headers = { authorization: `Bearer ${apiKey}` }
+  const list = await server.request("/v1/models", { headers })
+  const catalog = (await list.json()) as { data: Array<{ id: string }> }
+  const detail = await server.request("/v1/models/gpt-allowed", { headers })
+  expect(detail.status).toBe(200)
+  expect(await detail.json()).toEqual(catalog.data[0])
+  for (const id of ["gpt-blocked", "missing-model"]) {
+    const response = await server.request(`/v1/models/${id}`, { headers })
+    expect(response.status).toBe(404)
+    expect(await response.json()).toMatchObject({
+      error: { code: "model_not_found" },
+    })
+  }
+
+  state.models!.data.push(createModel("copilot/gpt-allowed"))
+  const prefixed = await server.request("/v1/models/copilot/gpt-allowed", {
+    headers,
+  })
+  expect(prefixed.status).toBe(200)
+  expect(await prefixed.json()).toMatchObject({ id: "copilot/gpt-allowed" })
+})
+
 test("chat completions reject models not enabled for the API key user", async () => {
   const response = await server.fetch(
     new Request("http://localhost/v1/chat/completions", {

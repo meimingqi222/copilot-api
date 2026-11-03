@@ -23,6 +23,7 @@ import {
   getModelsDevIndexes,
 } from "~/lib/models-dev/client"
 import {
+  buildContextLookupCandidates,
   buildPricingLookupCandidates,
   inferWindsurfVendorBucket,
 } from "~/lib/models-dev/normalize"
@@ -260,12 +261,24 @@ export function resolveModelsDevContext(
   const indexes = getModelsDevContextIndexes()
   const path = indexes ? catalogLookupPath(modelId, providerHint) : null
   if (!indexes || !path) return undefined
-  return walkCatalog(
-    path,
-    (providerIds, candidate) =>
-      lookupProviderModelContext(indexes, providerIds, candidate),
-    (candidate) => lookupGlobalModelContext(indexes, candidate),
-  )
+  // A listed variant's own limits win over aliases in every provider bucket.
+  for (const candidates of [
+    [path.nativeModelId],
+    buildContextLookupCandidates(path.nativeModelId),
+    buildContextLookupCandidates(
+      path.nativeModelId,
+      path.provider && isProviderId(path.provider) ? path.provider : undefined,
+    ),
+  ]) {
+    const context = walkCatalog(
+      { ...path, candidates },
+      (providerIds, candidate) =>
+        lookupProviderModelContext(indexes, providerIds, candidate),
+      (candidate) => lookupGlobalModelContext(indexes, candidate),
+    )
+    if (context !== undefined) return context
+  }
+  return undefined
 }
 
 /**

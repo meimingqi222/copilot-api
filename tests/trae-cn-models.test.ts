@@ -35,7 +35,7 @@ test("TRAE agent metadata wins when the same model has dev entries in multiple m
             config_info_list: [
               {
                 ...model(id, "DeepSeek-V4.1-Flash", 64000),
-                context_window_tokens: { dev: 200000 },
+                context_window_tokens: { dev: 200000, max: 1000000 },
               },
             ],
           },
@@ -51,7 +51,13 @@ test("TRAE agent metadata wins when the same model has dev entries in multiple m
   )
 
   expect(models).toEqual([
-    { id, name: "DeepSeek-V4.1-Flash", context: 200000, output: 64000 },
+    {
+      id,
+      name: "DeepSeek-V4.1-Flash",
+      context: 200000,
+      maxContext: 1000000,
+      output: 64000,
+    },
   ])
   expect(traeCnFunctionOrder("account", id)[0]).toEqual({
     fn: "solo_agent",
@@ -72,6 +78,10 @@ test("different upstream IDs remain separate even when their display names match
               model("deepseek-v4.1-flash", "DeepSeek-V4-Flash 正式版"),
               model("DeepSeek-V4-Flash-Official", "DeepSeek-V4-Flash 正式版"),
               model("DeepSeek-V4-Flash", "DeepSeek-V4-Flash"),
+              {
+                ...model("input-only", "Input budget"),
+                prompt_max_tokens: 168000,
+              },
             ],
           },
         ],
@@ -84,7 +94,10 @@ test("different upstream IDs remain separate even when their display names match
     "deepseek-v4.1-flash",
     "DeepSeek-V4-Flash-Official",
     "DeepSeek-V4-Flash",
+    "input-only",
   ])
+  expect(models.at(-1)?.context).toBeUndefined()
+  expect(models.at(-1)?.input).toBe(168000)
 })
 
 test("a usable dev configuration still wins over TRAE agent entries without dev", async () => {

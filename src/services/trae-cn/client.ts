@@ -826,6 +826,8 @@ interface TraeCnListedModel {
   id: string
   name: string
   context?: number
+  maxContext?: number
+  input?: number
   output?: number
 }
 
@@ -876,6 +878,11 @@ export async function traeCnListModels(
       cappedSet(devNameByModel, key, { fn, name: dev.model_name })
     } else devNameByModel.delete(key)
     const ctxMax = m.context_window_size?.max
+    const rawMax = m.context_window_tokens?.max ?? ctxMax
+    const maxima = (Array.isArray(rawMax) ? rawMax : [rawMax]).filter(
+      (value): value is number =>
+        typeof value === "number" && Number.isFinite(value) && value > 0,
+    )
     out.push({
       id,
       name: String(
@@ -888,9 +895,10 @@ export async function traeCnListModels(
         Number(
           m.context_window_tokens?.dev
             ?? (Array.isArray(ctxMax) ? ctxMax[0] : ctxMax)
-            ?? m.context_window_tokens?.max
-            ?? m.prompt_max_tokens,
+            ?? m.context_window_tokens?.max,
         ) || undefined,
+      ...(maxima.length ? { maxContext: Math.max(...maxima) } : {}),
+      ...(m.prompt_max_tokens ? { input: m.prompt_max_tokens } : {}),
       output: Number(dev?.max_tokens) || undefined,
     })
   }

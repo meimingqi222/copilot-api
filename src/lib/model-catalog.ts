@@ -8,6 +8,8 @@
  */
 
 import { effortRank } from "~/lib/effort-levels"
+import { resolveModelsDevContext } from "~/lib/models-dev"
+import { isProviderId } from "~/lib/provider-config"
 
 interface ModelVision {
   max_prompt_image_size?: number
@@ -15,8 +17,11 @@ interface ModelVision {
   supported_media_types?: Array<string>
 }
 
-interface ModelLimits {
+export interface ModelLimits {
   max_context_window_tokens?: number
+  /** Optional extended window, not the upstream's default window. */
+  max_context_window_tokens_extended?: number
+  supported_context_window_tokens?: Array<number>
   max_output_tokens?: number
   max_non_streaming_output_tokens?: number
   max_prompt_tokens?: number
@@ -76,6 +81,8 @@ export function getPublicModelData(model: Model): Model & {
   owned_by: string
   type: "model"
   context_length?: number
+  max_context_length?: number
+  supported_context_lengths?: Array<number>
   default_reasoning_level?: string
   limits?: { max_input_tokens?: number; max_output_tokens?: number }
   reasoning?: boolean
@@ -93,7 +100,24 @@ export function getPublicModelData(model: Model): Model & {
     if (rb < 0) return -1
     return ra - rb
   })
-  const limits = model.capabilities.limits
+  // Upstream limits win; the shared catalog only fills missing context windows.
+  const context =
+    model.capabilities.limits?.max_context_window_tokens
+    ?? ((
+      model.vendor === "routing-group"
+      || model.capabilities.limits?.max_prompt_tokens
+    ) ?
+      undefined
+    : resolveModelsDevContext(
+        model.id,
+        isProviderId(model.capabilities.family) ?
+          model.capabilities.family
+        : undefined,
+      ))
+  const limits =
+    context === undefined ?
+      model.capabilities.limits
+    : { ...model.capabilities.limits, max_context_window_tokens: context }
   const tokenLimits =
     limits?.max_prompt_tokens || limits?.max_output_tokens ?
       {
@@ -107,6 +131,7 @@ export function getPublicModelData(model: Model): Model & {
     : undefined
   return {
     ...model,
+    capabilities: { ...model.capabilities, ...(limits ? { limits } : {}) },
     object: "model",
     type: "model",
     created: 0,
@@ -124,6 +149,12 @@ export function getPublicModelData(model: Model): Model & {
     : {}),
     ...(limits?.max_context_window_tokens ?
       { context_length: limits.max_context_window_tokens }
+    : {}),
+    ...(limits?.max_context_window_tokens_extended ?
+      { max_context_length: limits.max_context_window_tokens_extended }
+    : {}),
+    ...(limits?.supported_context_window_tokens?.length ?
+      { supported_context_lengths: [...limits.supported_context_window_tokens] }
     : {}),
     ...(tokenLimits ? { limits: tokenLimits } : {}),
   }

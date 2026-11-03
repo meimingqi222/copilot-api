@@ -263,6 +263,7 @@ function collectModelContext(
 
 export function buildModelsDevContextIndexes(
   catalog: ModelsDevCatalog,
+  labs: Record<string, ModelsDevModel> = {},
 ): ModelsDevContextIndexes {
   const indexes: ModelsDevContextIndexes = {
     byProviderModel: new Map(),
@@ -271,6 +272,14 @@ export function buildModelsDevContextIndexes(
   for (const [providerId, provider] of Object.entries(catalog)) {
     for (const [modelKey, model] of Object.entries(provider.models)) {
       collectModelContext(providerId, modelKey, model, indexes)
+    }
+  }
+  // Labs describe models, not commercial channels. Never replace a provider's
+  // context, and never feed these entries into the billing catalog.
+  for (const [key, model] of Object.entries(labs)) {
+    const nativeId = (model.id || key).trim().toLowerCase().split("/").at(-1)!
+    if (!indexes.byModelId.has(nativeId)) {
+      collectModelContext("labs", key, model, indexes)
     }
   }
   return indexes
