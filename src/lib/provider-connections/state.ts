@@ -730,11 +730,13 @@ function slugifyId(name: string): string | undefined {
 }
 
 /** 仅供测试重置内部状态。 */
-export function __resetProviderConnectionsForTest(): void {
+export function __resetProviderConnectionsForTest(
+  options: { persistenceEnabled?: boolean } = {},
+): void {
   stateRoot.connections = []
   stateRoot.loaded = false
   mutationQueue = Promise.resolve()
-  persistenceEnabled = false
+  persistenceEnabled = options.persistenceEnabled ?? false
 }
 
 // ── 同步 mutation helpers ─────────────────────────────────────────

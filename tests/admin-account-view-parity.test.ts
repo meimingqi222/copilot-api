@@ -7,12 +7,16 @@
  * 同时验证导出/导入往返(serializeAccountForExport → 重新加载 → 形状不变)。
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 import type { TestAccount as Account } from "./helpers/set-accounts"
 
 import { listTestAccounts as listAccounts } from "./helpers/set-accounts"
 import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import {
+  __resetProviderConnectionsForTest,
   listAccountManagedConnections,
   setConnectionCredentialExtra,
 } from "~/lib/provider-connections"
@@ -35,7 +39,8 @@ import { setTestAccounts } from "./helpers/set-accounts"
 
 const originalAccounts = listAccounts()
 const originalFetch = globalThis.fetch
-const testDir = PATHS.APP_DIR
+const originalAppDir = PATHS.APP_DIR
+let testDir: string
 
 function copilotAccount(overrides: Partial<Account> = {}): Account {
   return {
@@ -102,7 +107,10 @@ async function adminJson(url: string, init?: RequestInit): Promise<Response> {
 
 describe("admin account view parity (Phase 4 G1 freeze)", () => {
   beforeEach(async () => {
+    testDir = await mkdtemp(join(tmpdir(), "copilot-api-account-parity-"))
     redirectPathsToDir(testDir)
+    // Earlier suites disable persistence; this suite checks the actual PUT write.
+    __resetProviderConnectionsForTest({ persistenceEnabled: true })
     await statsStore.clearUsageStatsForTest()
     resetAdaptiveRateLimiterForTest()
     setupAdminAuth()
@@ -112,8 +120,11 @@ describe("admin account view parity (Phase 4 G1 freeze)", () => {
   afterEach(async () => {
     clearAdminAuth()
     clearAdminPasswordConfig()
+    __resetProviderConnectionsForTest()
     setTestAccounts(originalAccounts)
     globalThis.fetch = originalFetch
+    redirectPathsToDir(originalAppDir)
+    await rm(testDir, { recursive: true, force: true })
   })
 
   test("credential presence follows each provider's requirements, not the legacy OAuth classification", async () => {

@@ -31,7 +31,7 @@ class ClaudeTuiStartupError extends Error {}
 
 /** An isolated helper keeps PTY native handles outside the server's event loop. */
 class ClaudeTuiHelper {
-  private terminal: IPty | undefined
+  private terminal: Pick<IPty, "write" | "kill"> | undefined
   private readonly screen = new Terminal({
     cols: 200,
     rows: 50,
@@ -122,7 +122,6 @@ class ClaudeTuiHelper {
   }
 
   private async start(): Promise<void> {
-    const { spawn } = await import("node-pty")
     await fs.writeFile(this.tapFile, "", { mode: 0o600 })
     await fs.copyFile(
       path.join(import.meta.dirname, "tui-tap.js"),
@@ -156,25 +155,49 @@ class ClaudeTuiHelper {
     }
     const [binary, ...prefix] = this.config.command
     if (this.cancelled) throw new Error("Interactive startup cancelled")
-    this.terminal = spawn(
-      binary,
-      [...prefix, ...interactiveClaudeArgs(this.config.args, this.sessionId)],
-      {
+    const args = [
+      ...prefix,
+      ...interactiveClaudeArgs(this.config.args, this.sessionId),
+    ]
+    // Bun's native PTY avoids node-pty's incompatible native addon on POSIX.
+    if (process.platform !== "win32" && typeof Bun.Terminal === "function") {
+      const child = Bun.spawn([binary, ...args], {
+        cwd: this.config.cwd,
+        env,
+        terminal: {
+          cols: 200,
+          rows: 50,
+          name: "xterm-256color",
+          data: (_terminal, data) => this.screen.write(data),
+        },
+      })
+      this.terminal = {
+        write: (data) => child.terminal?.write(data),
+        kill: () => child.kill(),
+      }
+      this.terminalExited = child.exited.then(() => {
+        child.terminal?.close()
+        this.ended = true
+      })
+    } else {
+      const { spawn } = await import("node-pty")
+      const terminal = spawn(binary, args, {
         cwd: this.config.cwd,
         env,
         cols: 200,
         rows: 50,
         name: "xterm-256color",
-      },
-    )
+      })
+      this.terminal = terminal
+      terminal.onData((text) => this.screen.write(text))
+      this.terminalExited = new Promise((resolve) =>
+        terminal.onExit(() => {
+          this.ended = true
+          resolve()
+        }),
+      )
+    }
     this.screen.onData((data) => this.terminal?.write(data))
-    this.terminal.onData((text) => this.screen.write(text))
-    this.terminalExited = new Promise((resolve) =>
-      this.terminal!.onExit(() => {
-        this.ended = true
-        resolve()
-      }),
-    )
   }
 
   private plain(): string {

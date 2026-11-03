@@ -74,7 +74,7 @@ export interface OAuthPendingFlow {
 export const OAUTH_FLOW_REPLACE_AFTER_MS = 60_000
 
 const pendingOAuthFlows = new Map<string, OAuthPendingFlow>()
-const oauthCallbackServers = new Map<string, Server>()
+const oauthCallbackServers = new Map<string, Server<undefined>>()
 const oauthFlowAbortControllers = new Map<string, AbortController>()
 const MAX_PENDING_OAUTH_FLOWS = 256
 

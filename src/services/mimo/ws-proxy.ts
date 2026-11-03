@@ -476,7 +476,7 @@ function connectWsViaNodeTls(
         performWsUpgrade(sock, urlObj, headers).then(resolve).catch(reject)
       },
     )
-    sock.on("error", (err) => {
+    sock.on("error", (err: unknown) => {
       reject(err instanceof Error ? err : new Error(String(err)))
     })
     setTimeout(() => {
@@ -521,7 +521,7 @@ export async function connectWebSocketThroughProxy(
             .catch(reject)
         })
 
-        tlsSock.on("error", (err) => {
+        tlsSock.on("error", (err: unknown) => {
           reject(err instanceof Error ? err : new Error(String(err)))
         })
       }

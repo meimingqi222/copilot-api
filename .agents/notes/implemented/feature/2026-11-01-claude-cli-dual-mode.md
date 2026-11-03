@@ -19,8 +19,9 @@ refresh. HTTP selection and the global HTTP override retain precedence.
 
 `src/services/claude/cli/bridge.ts` includes the configured and effective mode
 in run ownership. The interactive helper in
-`src/services/claude/cli/tui-helper.ts` uses node-pty and an actual headless
-terminal screen: native Claude redraws the trust selection by moving the
+`src/services/claude/cli/tui-helper.ts` uses Bun's native PTY on supported POSIX
+runtimes, with node-pty reserved for Windows and older Bun runtimes, and an actual
+headless terminal screen: native Claude redraws the trust selection by moving the
 cursor, so stripping ANSI from accumulated text cannot identify the choice.
 Only the service-owned empty working directory is trusted. Built-in tools
 remain disabled and only this run's MCP server is allowed.
@@ -63,7 +64,11 @@ answer text would lose tool arguments, signatures and token usage. Routing
 native search through unrestricted interactive permissions would bypass caller
 constraints. Installing node-pty as mandatory would break print-only Linux
 installations without native build tools, so it is optional and loaded only by
-the interactive helper. Retrying as print was deliberately removed because it
+the interactive helper's compatibility branch. It cannot be the default on
+POSIX: its native addon failed the CI PTY scenarios and hung under Bun locally,
+while the same addon worked under Node. Bun's built-in terminal avoids that
+addon and its Linux build requirement; child exit closes the terminal handle.
+Retrying as print was deliberately removed because it
 changes the selected mode and prompt cache; startup failure cannot authorize it.
 
 ## Consequences
@@ -84,5 +89,13 @@ partial trust redraw, signed thinking, tool callbacks, mode isolation, startup
 refusal retries, images, strict startup failure and cancellation),
 `tests/claude-cli-images.test.ts`, `tests/account-update.test.ts`,
 `tests/accounts-claude-cli-status.test.ts` and `tests/claude-cli-env.test.ts`.
+The image PTY fixture accepts the protective whitespace before slash-leading
+file paths; image ordering, bytes and post-acceptance cleanup stay asserted.
 `tests/admin-account-view-parity.test.ts` verifies the account API response,
 subsequent listing and the persisted connection record agree on the mode.
+That suite explicitly enables persistence through
+`src/lib/provider-connections/state.ts`'s `__resetProviderConnectionsForTest`
+in a fresh temporary data directory, then resets persistence and restores the
+data path during cleanup. The reset hook otherwise defaults to disabling disk
+writes; without the explicit opt-in, earlier reset-calling suites leave PUT and
+GET correct but prevent the disk assertion from exercising persistence.

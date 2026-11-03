@@ -1002,13 +1002,15 @@ describe("Qoder end-to-end routing", () => {
     let sentBody = ""
 
     globalThis.fetch = mock(
-      (
+      async (
         url: string,
         init: { headers: Record<string, string>; body: string },
       ) => {
         sentUrl = url
         sentHeaders = init.headers
         sentBody = init.body
+        // A zero-ms in-memory response has no measurable end-to-end TPS.
+        await Bun.sleep(5)
         return Promise.resolve(
           sseResponse([
             outerFrame({

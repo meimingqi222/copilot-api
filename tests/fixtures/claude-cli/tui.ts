@@ -167,14 +167,16 @@ if (process.env.FAKE_TUI_SCENARIO === "startup-fail") {
         const end = buffer.indexOf("\x1b[201~", start)
         if (end < 0) return
         const part = buffer.slice(start + 6, end)
+        // The bridge prefixes slash-leading pastes to prevent command execution.
+        const file = part.trim()
         if (
-          fs.existsSync(part)
-          && /image-\d+\.(png|jpg|gif|webp)$/.test(part)
+          fs.existsSync(file)
+          && /image-\d+\.(png|jpg|gif|webp)$/.test(file)
         ) {
           const acceptImage = () => {
             images.push({
-              file: part,
-              bytes: fs.readFileSync(part).toString("base64"),
+              file,
+              bytes: fs.readFileSync(file).toString("base64"),
             })
             pasted += `[Image #${++image}]`
             if (process.env.FAKE_TUI_SCENARIO === "images") {
