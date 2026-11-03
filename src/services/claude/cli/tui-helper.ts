@@ -15,7 +15,7 @@ import { redactAndTruncate } from "~/services/claude/cli/redact"
 import { ClaudeTuiImages } from "~/services/claude/cli/tui-images"
 import type { AnthropicImageSource } from "~/services/protocols/anthropic/types"
 
-export interface ClaudeTuiConfig {
+interface ClaudeTuiConfig {
   command: Array<string>
   args: Array<string>
   cwd: string

@@ -4,7 +4,7 @@ import { renderClaudePrompt } from "~/services/claude/cli/prompt"
 import { claudeSearchDeclaration } from "~/services/claude/cli/search-policy"
 import { LocalPayloadUnsupportedError } from "~/lib/error"
 
-export type ClaudeCliMode = "print" | "interactive"
+type ClaudeCliMode = "print" | "interactive"
 
 export function configuredClaudeCliMode(
   connection: ProviderConnection,

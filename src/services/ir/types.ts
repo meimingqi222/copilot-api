@@ -152,7 +152,7 @@ export interface IRTool {
   responsesType?: IRResponsesToolType
 }
 
-export type IRResponsesToolType = "custom" | "tool_search"
+type IRResponsesToolType = "custom" | "tool_search"
 
 export type IRToolChoice =
   | { type: "auto" | "none" | "required" }
