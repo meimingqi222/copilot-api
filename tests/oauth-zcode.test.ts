@@ -2,14 +2,18 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test"
 
 import type { ProviderConnection } from "~/lib/provider-connections"
 
-import { __resetProviderConnectionsForTest } from "~/lib/provider-connections"
+import {
+  __resetProviderConnectionsForTest,
+  getConnectionRoutability,
+} from "~/lib/provider-connections"
+import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import {
   getOAuthProviderDescriptor,
   isOAuthProviderId,
   OAUTH_PROVIDER_IDS,
   PROVIDER_PROTOCOL_MAP,
 } from "~/lib/provider-config"
-import { parseZcodeQuota } from "~/lib/quota/fetchers/zcode"
+import { fetchZcodeQuota, parseZcodeQuota } from "~/lib/quota/fetchers/zcode"
 import {
   __resetZcodeRouteCacheForTest,
   isZcodeStartPlanName,
@@ -257,6 +261,104 @@ describe("zcode Start Plan (temporary credits)", () => {
     }
     return conn
   }
+
+  test.each(["empty", "expired"])(
+    "%s Start Plan refresh clears stale quota, blocks routing and recovers after renewal",
+    async (state) => {
+      const conn = startPlanConnection()
+      let renewed = false
+      const now = Math.floor(Date.now() / 1000)
+      globalThis.fetch = (async (url: string | URL) => {
+        if (String(url).includes("/api/biz/subscription/list")) {
+          return jsonResponse({ code: 0, data: [] })
+        }
+        return jsonResponse({
+          code: 0,
+          data: {
+            server_time: now,
+            plans:
+              !renewed && state === "empty" ?
+                []
+              : [
+                  {
+                    plan_id: "start-plan",
+                    name: "Start Plan",
+                    status: "active",
+                    ends_at: renewed ? now + 86400 : now - 1,
+                  },
+                ],
+            balances:
+              !renewed && state === "empty" ?
+                []
+              : [
+                  {
+                    plan_id: "start-plan",
+                    total_units: 100,
+                    used_units: 0,
+                    remaining_units: 100,
+                  },
+                ],
+          },
+        })
+      }) as typeof fetch
+      applyOAuthQuotaSnapshot(conn, {
+        provider: "zcode",
+        fetchedAt: Date.now() - 60000,
+        unlimited: false,
+        premiumInteractionsRemaining: 100,
+        premiumInteractionsTotal: 100,
+      })
+
+      const refresh = fetchZcodeQuota(conn)
+      await expect(refresh).resolves.toMatchObject({
+        provider: "zcode",
+        unlimited: false,
+        premiumInteractionsRemaining: 0,
+        chatRemaining: 0,
+        details: { zcode: { planStatus: "inactive", windows: [] } },
+      })
+      const snapshot = await refresh
+      applyOAuthQuotaSnapshot(conn, snapshot)
+      expect(conn.credentials[0]?.quota).toEqual(snapshot)
+      expect(conn.credentials[0]?.status).toBe("quota_exhausted")
+      expect(getConnectionRoutability(conn).routable).toBe(false)
+      expect(conn.enabled).toBe(true)
+
+      renewed = true
+      const recovered = await fetchZcodeQuota(conn)
+      applyOAuthQuotaSnapshot(conn, recovered)
+      expect(recovered.premiumInteractionsRemaining).toBe(100)
+      expect(recovered.details?.zcode).not.toHaveProperty(
+        "planStatus",
+        "inactive",
+      )
+      expect(conn.credentials[0]?.status).toBe("ready")
+      expect(getConnectionRoutability(conn).routable).toBe(true)
+    },
+  )
+
+  test("Start Plan quota still rejects upstream and sign-in failures", async () => {
+    const conn = startPlanConnection()
+    for (const status of [500, 401]) {
+      globalThis.fetch = (async (url: string | URL) =>
+        String(url).includes("/api/biz/subscription/list") ?
+          jsonResponse({ code: 0, data: [] })
+        : jsonResponse({ message: "upstream failure" }, status)) as typeof fetch
+      await expect(fetchZcodeQuota(conn)).rejects.toThrow(`HTTP ${status}`)
+    }
+  })
+
+  test("malformed Start Plan balance is not an inactive-plan reading", async () => {
+    const conn = startPlanConnection()
+    conn.credentials[0]!.value = ""
+    for (const data of [null, {}, { plans: [] }, { balances: [] }]) {
+      globalThis.fetch = (async () =>
+        jsonResponse({ code: 0, data })) as unknown as typeof fetch
+      await expect(fetchZcodeQuota(conn)).rejects.toThrow(
+        "ZCode Start Plan balance response is missing plans or balances",
+      )
+    }
+  })
 
   test("twenty cold requests share one bounded probe and cancellation only drops its waiter", async () => {
     const conn = startPlanConnection()

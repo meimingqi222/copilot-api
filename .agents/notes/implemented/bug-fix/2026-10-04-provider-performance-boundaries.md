@@ -48,7 +48,8 @@ performed off thread. Worker failures propagate and evict the failed cache.
 
 - `tests/admin-performance.test.ts`
 - `tests/request-dump.test.ts`
-- `tests/oauth-zcode.test.ts`
+- `tests/oauth-zcode.test.ts::twenty cold requests share one bounded probe and cancellation only drops its waiter`
+- `tests/oauth-zcode.test.ts::route probes time out and preserve cached routes during background refresh`
 - `tests/quota-refresh.test.ts`
 - `tests/session-affinity.test.ts`
 - `tests/provider-cache-defaults.test.ts`

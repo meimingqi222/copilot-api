@@ -1,0 +1,87 @@
+bun test v1.4.2 (744846f84)
+
+tests/oauth-zcode.test.ts:
+304 |         premiumInteractionsRemaining: 100,
+305 |         premiumInteractionsTotal: 100,
+306 |       })
+307 | 
+308 |       const refresh = fetchZcodeQuota(conn)
+309 |       await expect(refresh).resolves.toMatchObject({
+                                           ^
+error: expect(received).resolves.toMatchObject(expected)
+
+Expected promise that resolves
+Received promise that rejected: Promise { <rejected> }
+
+      at <anonymous> (<repo>/tests/oauth-zcode.test.ts:309:38)
+(fail) zcode Start Plan (temporary credits) > empty Start Plan refresh clears stale quota, blocks routing and recovers after renewal [6.64ms]
+304 |         premiumInteractionsRemaining: 100,
+305 |         premiumInteractionsTotal: 100,
+306 |       })
+307 | 
+308 |       const refresh = fetchZcodeQuota(conn)
+309 |       await expect(refresh).resolves.toMatchObject({
+                                           ^
+error: expect(received).resolves.toMatchObject(expected)
+
+Expected promise that resolves
+Received promise that rejected: Promise { <rejected> }
+
+      at <anonymous> (<repo>/tests/oauth-zcode.test.ts:309:38)
+(fail) zcode Start Plan (temporary credits) > expired Start Plan refresh clears stale quota, blocks routing and recovers after renewal [0.36ms]
+
+tests/quota-display-mode.test.ts:
+67 |       details: { zcode: { planStatus: "inactive", windows: [] } },
+68 |     },
+69 |   }
+70 |   const t = (key: string) =>
+71 |     key === "quota.zcode.noActivePlan" ? "无有效套餐" : key
+72 |   expect(display.buildRows(account, t)).toEqual([
+                                             ^
+error: expect(received).toEqual(expected)
+
+- [
+-   {
+-     "hideBar": true,
+-     "id": "zcode-plan",
+-     "label": "quota.zcode.claimLabel",
+-     "valueText": "无有效套餐",
+-   },
+- ]
++ []
+
+- Expected  - 8
++ Received  + 1
+
+      at <anonymous> (<repo>/tests/quota-display-mode.test.ts:72:41)
+(fail) ZCode without an active plan shows a status instead of stale credit or unlimited quota [2.21ms]
+
+ 0 pass
+ 31 filtered out
+ 3 fail
+ 1 expect() calls
+Ran 3 tests across 2 files. [279.00ms]
+
+bun test v1.4.2 (744846f84)
+
+tests/oauth-zcode.test.ts:
+345 |     const conn = startPlanConnection()
+346 |     conn.credentials[0]!.value = ""
+347 |     for (const data of [null, {}, { plans: [] }, { balances: [] }]) {
+348 |       globalThis.fetch = (async () =>
+349 |         jsonResponse({ code: 0, data })) as typeof fetch
+350 |       await expect(fetchZcodeQuota(conn)).rejects.toThrow(
+                                                        ^
+error: expect(received).rejects.toThrow(expected)
+
+Expected promise that rejects
+Received promise that resolved: Promise { <resolved> }
+
+      at <anonymous> (<repo>/tests/oauth-zcode.test.ts:350:51)
+(fail) zcode Start Plan (temporary credits) > malformed Start Plan balance is not an inactive-plan reading [6.81ms]
+
+ 0 pass
+ 26 filtered out
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [286.00ms]

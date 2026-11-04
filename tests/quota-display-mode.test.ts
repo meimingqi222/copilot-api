@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs"
 import { runInNewContext } from "node:vm"
 
 interface Row {
+  id?: string
+  label?: string
+  hideBar?: boolean
   remainingPercent?: number
   displayPercent?: number
   percentText?: string
@@ -55,6 +58,29 @@ const trace = runInNewContext(
   { ViewHelpers: {}, Date, performance, globalThis },
 ) as TraceView
 const translate = (key: string) => (key.endsWith(".used") ? "已用" : "剩余")
+
+test("ZCode without an active plan shows a status instead of stale credit or unlimited quota", () => {
+  const account = {
+    provider: "zcode",
+    quotaInfo: {
+      unlimited: false,
+      premiumInteractionsRemaining: 0,
+      premiumInteractionsTotal: 100,
+      details: { zcode: { planStatus: "inactive", windows: [] } },
+    },
+  }
+  const t = (key: string) =>
+    key === "quota.zcode.noActivePlan" ? "无有效套餐" : key
+  expect(display.buildRows(account, t)).toEqual([
+    {
+      id: "zcode-plan",
+      label: "quota.zcode.claimLabel",
+      valueText: "无有效套餐",
+      hideBar: true,
+    },
+  ])
+  expect(display.formatSummary(account, t)).toBe("无有效套餐")
+})
 
 test("legacy Codex windows without metadata retain matching cycle costs", () => {
   const rows = display.buildRows(

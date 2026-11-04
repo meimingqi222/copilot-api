@@ -150,9 +150,23 @@ function bucketPeriodMs(
 function buildStartSnapshot(balance: ZcodeStartBalance): QuotaSnapshot {
   const active = zcodeActiveStartPlan(balance)
   if (!active) {
-    throw new Error(
-      "this account has no GLM Coding Plan, and ZCode's Start Plan has ended or was never started",
-    )
+    // A successful empty reading must replace stale credits, not preserve them as a fetch failure.
+    return {
+      fetchedAt: Date.now(),
+      provider: "zcode",
+      unlimited: false,
+      premiumInteractionsRemaining: 0,
+      premiumInteractionsTotal: 100,
+      chatRemaining: 0,
+      chatTotal: 100,
+      details: {
+        zcode: {
+          host: "zcode.z.ai",
+          planStatus: "inactive",
+          windows: [],
+        },
+      },
+    }
   }
   const windows: Array<ZcodeQuotaWindow> = []
   for (const bucket of balance.balances) {

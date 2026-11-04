@@ -779,6 +779,16 @@ const QuotaDisplay = {
     if (!details || typeof details !== "object") return []
     const block = details[key]
     if (!block || typeof block !== "object") return []
+    if (key === "zcode" && block.planStatus === "inactive") {
+      return [
+        {
+          id: "zcode-plan",
+          label: t("quota.zcode.claimLabel"),
+          valueText: t("quota.zcode.noActivePlan"),
+          hideBar: true,
+        },
+      ]
+    }
     const windows = Array.isArray(block.windows) ? block.windows : []
     const rows = []
     for (const [index, window] of windows.entries()) {
@@ -1207,6 +1217,13 @@ const QuotaDisplay = {
     if (account.supportsQuota === false) return t("quota.unavailable")
     const info = account.quotaInfo
     if (!info) return t("quota.noData")
+
+    if (
+      account.provider === "zcode"
+      && info.details?.zcode?.planStatus === "inactive"
+    ) {
+      return t("quota.zcode.noActivePlan")
+    }
 
     if (info.unlimited) return t("quota.unlimited")
 

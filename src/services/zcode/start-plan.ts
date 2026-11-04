@@ -363,6 +363,12 @@ export async function zcodeStartBalance(
     { "X-Device-Mid": zcodeDeviceMid() },
     signal,
   )
+  const root = asRecord(data)
+  if (!root || !Array.isArray(root.plans) || !Array.isArray(root.balances)) {
+    throw new Error(
+      "ZCode Start Plan balance response is missing plans or balances",
+    )
+  }
   return parseZcodeStartBalance(data)
 }
 
