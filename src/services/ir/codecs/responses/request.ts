@@ -686,11 +686,13 @@ function joinedText(value: unknown, type?: string): string {
     .join("")
 }
 
-function encodeContent(parts: Array<IRPart>): Array<RecordValue> {
+function encodeContent(
+  parts: Array<IRPart>,
+  textType: "input_text" | "output_text" = "input_text",
+): Array<RecordValue> {
   const content: Array<RecordValue> = []
   for (const part of parts) {
-    if (part.type === "text")
-      content.push({ type: "input_text", text: part.text })
+    if (part.type === "text") content.push({ type: textType, text: part.text })
     else if (part.type === "image") {
       if (part.source.type === "url")
         content.push({
@@ -862,6 +864,8 @@ function encodeResponsesTurns(turns: Array<IRTurn>): Array<RecordValue> {
       turn.parts.filter(
         (part) => !(replayImages && part.type === "image" && part.id),
       ),
+      // Assistant history is output content even inside the request's input.
+      turn.role === "assistant" ? "output_text" : "input_text",
     )
     if (turn.role === "assistant") {
       for (const part of turn.parts) {
@@ -875,7 +879,7 @@ function encodeResponsesTurns(turns: Array<IRTurn>): Array<RecordValue> {
         // context, without inventing encrypted_content for it.
         if (part.source.wire !== "responses" && part.text) {
           content.unshift({
-            type: "input_text",
+            type: "output_text",
             text: `[historical reasoning] ${part.text}`,
           })
           continue

@@ -529,6 +529,73 @@ describe("chat → responses reasoning effort", () => {
 })
 
 describe("chat → responses input translation (historical reasoning)", () => {
+  test("uses output_text for assistant history and input_text for user and tool content", () => {
+    const out = toResponsesRequest({
+      model: "gpt-6.1-sol",
+      messages: [
+        { role: "user", content: "list files" },
+        {
+          role: "assistant",
+          content: "I will check",
+          tool_calls: [
+            {
+              id: "call_1",
+              type: "function",
+              function: { name: "bash", arguments: "{}" },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call_1",
+          content: [
+            { type: "text", text: "a.txt" },
+            {
+              type: "image_url",
+              image_url: {
+                url: "https://example.com/image.png",
+                detail: "auto",
+              },
+            },
+          ],
+        },
+        { role: "assistant", content: "Found a.txt" },
+        { role: "user", content: "continue" },
+      ],
+    })
+
+    expect(out.input as unknown).toEqual([
+      { role: "user", content: [{ type: "input_text", text: "list files" }] },
+      {
+        role: "assistant",
+        content: [{ type: "output_text", text: "I will check" }],
+      },
+      {
+        type: "function_call",
+        call_id: "call_1",
+        name: "bash",
+        arguments: "{}",
+      },
+      {
+        type: "function_call_output",
+        call_id: "call_1",
+        output: [
+          { type: "input_text", text: "a.txt" },
+          {
+            type: "input_image",
+            image_url: "https://example.com/image.png",
+            detail: "auto",
+          },
+        ],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "output_text", text: "Found a.txt" }],
+      },
+      { role: "user", content: [{ type: "input_text", text: "continue" }] },
+    ])
+  })
+
   test("injects historical reasoning exactly once when top-level and content parts agree", () => {
     // The proxy's own responses→chat output carries reasoning both as
     // top-level reasoning_content and as content parts; replaying it must not
@@ -557,6 +624,12 @@ describe("chat → responses input translation (historical reasoning)", () => {
         assistant.content.map((part) => ("text" in part ? part.text : ""))
       : []
     expect(texts).toEqual(["[historical reasoning] step one", "answer"])
+    expect(assistant).toMatchObject({
+      content: [
+        { type: "output_text", text: "[historical reasoning] step one" },
+        { type: "output_text", text: "answer" },
+      ],
+    })
     // The content-part copy is stripped — reasoning appears in the input
     // exactly once instead of twice.
     expect(JSON.stringify(input).match(/step one/g)).toHaveLength(1)
@@ -594,6 +667,12 @@ describe("chat → responses input translation (historical reasoning)", () => {
         assistant.content.map((part) => ("text" in part ? part.text : ""))
       : []
     expect(texts).toEqual(["[historical reasoning] step one", "answer"])
+    expect(assistant).toMatchObject({
+      content: [
+        { type: "output_text", text: "[historical reasoning] step one" },
+        { type: "output_text", text: "answer" },
+      ],
+    })
     expect(
       input.filter((item) => "type" in item && item.type === "function_call"),
     ).toHaveLength(1)
