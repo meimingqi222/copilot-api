@@ -319,7 +319,7 @@ async function refreshOAuthConnectionTokenOnce(
       fetchOptions,
     )
 
-    logger.debug(
+    logger.info(
       `OAuth refresh succeeded for "${connection.name}" (${provider}, ${reason})`,
     )
     scheduleOAuthRefreshForConnection(connection)
