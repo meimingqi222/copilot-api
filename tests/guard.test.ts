@@ -1,4 +1,10 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
+import {
+  checkAutoBlock,
+  detectSuspicious,
+} from "~/lib/client-guard/abuse-scoring"
+import { ipSnapshots } from "~/lib/client-guard/state"
+import { logger } from "~/lib/logger"
 
 import {
   addBlacklistEntry,
@@ -13,6 +19,51 @@ import {
 describe("guard", () => {
   afterEach(() => {
     resetGuardForTest()
+  })
+
+  test("throttles repeated IP warnings while retaining escalation, other IPs and periodic reminders", () => {
+    const now = Date.now()
+    const clock = spyOn(Date, "now").mockReturnValue(now)
+    const warn = spyOn(logger, "warn").mockImplementation(
+      Object.assign(() => {}, { raw: () => {} }),
+    )
+    try {
+      const snapshot = (ip: string) => {
+        recordRequest({
+          ip,
+          path: "/v1/messages",
+          isError: false,
+          username: "test-user",
+        })
+        return ipSnapshots.get(ip)!
+      }
+      const first = snapshot("203.0.113.9")
+      const assessment = {
+        ...detectSuspicious(first),
+        score: 90,
+        reasons: ["auth_failures"],
+        riskLevel: "critical" as const,
+      }
+      for (let i = 0; i < 100; i++) checkAutoBlock(first, assessment)
+      expect(warn).toHaveBeenCalledTimes(1)
+      checkAutoBlock(snapshot("203.0.113.10"), assessment)
+      expect(warn).toHaveBeenCalledTimes(2)
+      const escalated = { ...assessment, score: 100 }
+      checkAutoBlock(first, escalated)
+      expect(warn).toHaveBeenCalledTimes(3)
+      checkAutoBlock(first, {
+        ...escalated,
+        reasons: ["auth_failures", "burst_traffic"],
+      })
+      expect(warn).toHaveBeenCalledTimes(3)
+      clock.mockReturnValue(now + 5 * 60_000)
+      checkAutoBlock(first, escalated)
+      expect(warn).toHaveBeenCalledTimes(4)
+      expect(isBlocked({ ip: first.key })).toBeNull()
+    } finally {
+      clock.mockRestore()
+      warn.mockRestore()
+    }
   })
 
   test("detects but does not auto-block hard-signal abusive IPs (auto-block disabled)", () => {

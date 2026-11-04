@@ -4,6 +4,7 @@ import type { IRUsage } from "~/services/ir/types"
 
 import { logger } from "~/lib/logger"
 import { retryableUsageLimit } from "~/lib/usage-limit"
+import { isClientAbortError } from "~/lib/client-abort"
 
 export class HTTPError extends Error {
   response: Response
@@ -113,6 +114,9 @@ export function localRateLimitError(
 }
 
 export function forwardError(c: Context, error: unknown) {
+  if (isClientAbortError(error, c.req.raw.signal.aborted)) {
+    return new Response(null, { status: 499 })
+  }
   logger.error("Error occurred:", error)
 
   if (error instanceof HTTPError) {

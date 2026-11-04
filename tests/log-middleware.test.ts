@@ -9,6 +9,9 @@ import {
 } from "~/lib/guard"
 import { guardMiddleware } from "~/lib/guard-middleware"
 import { requestLogger } from "~/lib/log-middleware"
+import { forwardError } from "~/lib/error"
+import { logger } from "~/lib/logger"
+import { ClientAbortError } from "~/lib/request-lifecycle"
 import { logStore } from "~/lib/log-store"
 import {
   beginStreamLog,
@@ -16,18 +19,117 @@ import {
   markStreamTerminal,
   patchRequestLog,
   recordUpstreamAttempt,
+  recordTraceError,
 } from "~/lib/request-log"
 import { handleSseStream, writeSseEvent } from "~/lib/sse"
 import { clearTraceBusForTest, recentTraces } from "~/lib/trace-bus"
 import { statsStore } from "~/lib/stats-store"
 
 describe("log middleware", () => {
-  beforeEach(resetGuardForTest)
+  let originalLogPersist: string | undefined
+  beforeEach(() => {
+    resetGuardForTest()
+    originalLogPersist = process.env.LOG_PERSIST
+    // Persistence has its own suite; queued writes must not escape these tests.
+    process.env.LOG_PERSIST = "0"
+  })
 
   afterEach(() => {
+    if (originalLogPersist === undefined) delete process.env.LOG_PERSIST
+    else process.env.LOG_PERSIST = originalLogPersist
     resetGuardForTest()
     logStore.clearForTest()
     clearTraceBusForTest()
+  })
+
+  test.each(["native", "explicit"])(
+    "%s client cancellation is 499 without server-error logging or counting",
+    async (kind) => {
+      const errorSpy = spyOn(
+        statsStore,
+        "incrementRequestAndError",
+      ).mockImplementation(() => {})
+      const requestSpy = spyOn(
+        statsStore,
+        "incrementRequests",
+      ).mockImplementation(() => {})
+      const loggerSpy = spyOn(logger, "error").mockImplementation(
+        Object.assign(() => {}, { raw: () => {} }),
+      )
+      try {
+        const app = new Hono()
+        app.use("*", requestLogger)
+        app.post("/v1/chat/completions", (c) => {
+          c.set("accountId", "cancel-test")
+          const error =
+            kind === "explicit" ?
+              new ClientAbortError()
+            : new DOMException("The connection was closed.", "AbortError")
+          recordTraceError(c, error)
+          return forwardError(c, error)
+        })
+        const response = await app.request(
+          "http://localhost/v1/chat/completions",
+          {
+            method: "POST",
+            signal: kind === "native" ? AbortSignal.abort() : undefined,
+          },
+        )
+        await Promise.resolve()
+        expect(response.status).toBe(499)
+        const entry = logStore.query({ limit: 1 }).entries[0]
+        expect(entry).toMatchObject({
+          statusCode: 499,
+          outcome: "cancelled",
+          level: "info",
+        })
+        expect(loggerSpy).not.toHaveBeenCalled()
+        expect(errorSpy).not.toHaveBeenCalled()
+        expect(requestSpy).toHaveBeenCalledTimes(1)
+      } finally {
+        errorSpy.mockRestore()
+        requestSpy.mockRestore()
+        loggerSpy.mockRestore()
+      }
+    },
+  )
+
+  test("an internal abort remains a server failure and increments error statistics", async () => {
+    const errorSpy = spyOn(
+      statsStore,
+      "incrementRequestAndError",
+    ).mockImplementation(() => {})
+    const requestSpy = spyOn(
+      statsStore,
+      "incrementRequests",
+    ).mockImplementation(() => {})
+    const loggerSpy = spyOn(logger, "error").mockImplementation(
+      Object.assign(() => {}, { raw: () => {} }),
+    )
+    try {
+      const app = new Hono()
+      app.use("*", requestLogger)
+      app.post("/v1/chat/completions", (c) => {
+        c.set("accountId", "timeout-test")
+        const error = new DOMException("internal timeout", "AbortError")
+        recordTraceError(c, error)
+        return forwardError(c, error)
+      })
+      const response = await app.request(
+        "http://localhost/v1/chat/completions",
+        { method: "POST" },
+      )
+      await Promise.resolve()
+      expect(response.status).toBe(500)
+      expect(logStore.query({ limit: 1 }).entries[0]?.outcome).toBe("failed")
+      expect(errorSpy).toHaveBeenCalledTimes(1)
+      expect(requestSpy).not.toHaveBeenCalled()
+      expect(loggerSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      errorSpy.mockRestore()
+      requestSpy.mockRestore()
+      loggerSpy.mockRestore()
+    }
   })
 
   test("does not treat protected-route 429s as global guard errors", async () => {

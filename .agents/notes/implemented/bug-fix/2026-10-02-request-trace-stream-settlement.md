@@ -24,7 +24,6 @@ Early JSON errors immediately stop the trace timer and enter request logs with t
 
 ## Verification
 
-- `tests/log-middleware.test.ts`
 - `tests/gemini-route.test.ts`
 - `tests/log-middleware.test.ts::settles a requested stream that returns a JSON error on %s`
 - `tests/log-middleware.test.ts::does not settle a real SSE response before its producer finishes`

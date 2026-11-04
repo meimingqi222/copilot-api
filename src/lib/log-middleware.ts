@@ -88,6 +88,10 @@ export const requestLogger = async (c: Context, next: Next) => {
     // 非 API 面的请求不写请求日志、不记统计、不发实时追踪（安全防护快照在 finally
     // 里照常更新，暴力破解信号不受影响）。
     if (!isLlmCall) return
+    let status = nextError ? 500 : c.res.status
+    if (ctx.entry.diagnosticError?.origin === "cancelled" && status >= 400) {
+      status = 499
+    }
     // daily_stats 与 request log 同一次落盘、恰好一次：
     // 流式请求的 accountId 在 SSE producer 里 dispatch 后才落定，
     // middleware finally 时还拿不到，放这里才能计入流式。
@@ -96,8 +100,12 @@ export const requestLogger = async (c: Context, next: Next) => {
       try {
         const accountId = c.get("accountId")
         if (!accountId) return
-        const status = nextError ? 500 : c.res.status
-        if (status >= 400 || ctx.entry.outcome === "failed")
+        if (
+          ctx.entry.outcome === "failed"
+          || (ctx.entry.outcome !== "cancelled"
+            && status >= 400
+            && status !== 499)
+        )
           statsStore.incrementRequestAndError(accountId)
         else statsStore.incrementRequests(accountId)
       } catch {
@@ -122,7 +130,6 @@ export const requestLogger = async (c: Context, next: Next) => {
       publishTraceSnapshot(c, "final")
       return
     }
-    const status = c.res.status
     // 上游自报模型审计：必须在 finalizeRequestLog 之前结算，否则这一条日志
     // 就少了 modelResponse/modelMismatch。只观测不改行为，流式路径在
     // producer 收尾后也会走到这里。

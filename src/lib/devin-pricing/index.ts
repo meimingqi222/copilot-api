@@ -10,14 +10,15 @@ import path from "node:path"
 import type { ResolvedModelPricing } from "~/lib/models-dev/types"
 
 import snapshot from "~/lib/devin-pricing/snapshot.json"
-import { buildDevinPrices, parseDevinPrices } from "~/lib/devin-pricing/parser"
+import { buildDevinPrices, parseDevinCatalog } from "~/lib/devin-pricing/parser"
 import { logger } from "~/lib/logger"
 import { PATHS } from "~/lib/paths"
 
-const PRICING_URL = "https://docs.devin.ai/desktop/models.md"
+const PRICING_URL = "https://docs.devin.ai/desktop/models"
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const RETRY_MS = 60 * 60 * 1000
-const SWE_2_PROMOTION_END = Date.parse("2026-10-16T00:00:00Z")
+const SWE_2_PROMOTION_END = Date.parse("2026-12-01T00:00:00Z")
+let swe2FreeUntil = SWE_2_PROMOTION_END
 let prices = buildDevinPrices(snapshot.models)
 let refreshInFlight: Promise<void> | null = null
 let retryAt = 0
@@ -28,7 +29,9 @@ function cachePath(): string {
 
 function loadCache(filePath: string): boolean {
   try {
-    prices = parseDevinPrices(readFileSync(filePath, "utf8"))
+    const catalog = parseDevinCatalog(readFileSync(filePath, "utf8"))
+    prices = catalog.prices
+    swe2FreeUntil = catalog.swe2FreeUntil ?? SWE_2_PROMOTION_END
     return true
   } catch {
     return false
@@ -62,11 +65,12 @@ export async function refreshDevinPricing(
   refreshInFlight = (async () => {
     try {
       const document = await (options.fetchDocument ?? fetchDocument)()
-      const nextPrices = parseDevinPrices(document)
+      const catalog = parseDevinCatalog(document)
       mkdirSync(path.dirname(filePath), { recursive: true })
       writeFileSync(`${filePath}.tmp`, document, "utf8")
       renameSync(`${filePath}.tmp`, filePath)
-      prices = nextPrices
+      prices = catalog.prices
+      swe2FreeUntil = catalog.swe2FreeUntil ?? SWE_2_PROMOTION_END
       retryAt = 0
     } catch (error) {
       retryAt = now + RETRY_MS
@@ -106,7 +110,7 @@ export function resolveDevinPrice(
   // A cached promotional zero must not remain free after the published expiry.
   if (
     /^swe-2-(high|medium|max)$/.test(id)
-    && now >= SWE_2_PROMOTION_END
+    && now >= swe2FreeUntil
     && price.promptPricePer1k === 0
     && price.completionPricePer1k === 0
   ) {
@@ -123,5 +127,6 @@ export function resolveDevinPrice(
 
 export function resetDevinPricingForTest(): void {
   prices = buildDevinPrices(snapshot.models)
+  swe2FreeUntil = SWE_2_PROMOTION_END
   retryAt = 0
 }

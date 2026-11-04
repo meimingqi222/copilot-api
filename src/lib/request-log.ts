@@ -703,7 +703,8 @@ export function finalizeRequestLogContext(
   const latencyMs =
     base.latencyMs ?? (ctx ? Date.now() - ctx.startMs : undefined)
   const level: LogLevel =
-    status >= 500 ? "error"
+    status === 499 ? "info"
+    : status >= 500 ? "error"
     : status >= 400 ? "warn"
     : "info"
 

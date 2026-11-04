@@ -37,7 +37,6 @@ Model listing, token counting and other non-generation operations no longer crea
 
 ## Verification
 
-- `tests/log-middleware.test.ts`
 - `tests/log-middleware.test.ts::only Gemini generation is traced, not model listing`
 - `tests/log-middleware.test.ts::does not trace non-generation request %s %s`
 - `tests/log-middleware.test.ts::non-generation requests do not increment account request statistics`

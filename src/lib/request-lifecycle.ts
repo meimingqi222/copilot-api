@@ -2,6 +2,9 @@ import type { Context } from "hono"
 
 import { logger } from "~/lib/logger"
 import { ProtectedRouteGuardError } from "~/lib/protected-route-guard"
+import { ClientAbortError } from "~/lib/client-abort"
+
+export { ClientAbortError } from "~/lib/client-abort"
 
 export class RouteRateLimitError extends Error {
   retryAfterSeconds: number
@@ -9,13 +12,6 @@ export class RouteRateLimitError extends Error {
     super(message)
     this.name = "RouteRateLimitError"
     this.retryAfterSeconds = retryAfterSeconds
-  }
-}
-
-export class ClientAbortError extends Error {
-  constructor() {
-    super("Abort")
-    this.name = "ClientAbortError"
   }
 }
 

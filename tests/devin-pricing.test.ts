@@ -35,6 +35,65 @@ function document(
 }
 
 describe("SWE official pricing", () => {
+  test("reads the Mintlify manifest without evaluating compiled JavaScript", () => {
+    const source =
+      'const modelCostData=[{"tier":`TEAMS_TIER_PRO`,"model_uid":`swe-2-high`,"input_cost_per_million_usd":.75,"output_cost_per_million_usd":3.75,"cache_read_cost_per_million_usd":.075,"cache_write_cost_per_million_usd":0}];throw new Error("must not execute");'
+    const html = `<template data-mint="manifest">${JSON.stringify({
+      page: { mdx: { mdxSource: { compiledSource: source } } },
+    })}</template>`
+    expect(parseDevinPrices(html).get("swe-2-high")).toMatchObject({
+      promptPricePer1k: 0.00075,
+      completionPricePer1k: 0.00375,
+      cacheReadPricePer1k: 0.000075,
+    })
+    expect(() =>
+      parseDevinPrices(
+        html.replace("swe-2-high", "${globalThis.priceProbe = true}"),
+      ),
+    ).toThrow()
+  })
+
+  test("SWE-2 stays free through November and stale zeros expire at the UTC boundary", () => {
+    expect(
+      resolveDevinPrice("swe-2", Date.parse("2026-11-30T23:59:59Z"))
+        ?.promptPricePer1k,
+    ).toBe(0)
+    expect(
+      resolveDevinPrice("swe-2", Date.parse("2026-12-01T00:00:00Z"))
+        ?.promptPricePer1k,
+    ).toBe(0.003)
+  })
+
+  test("a published promotion extension survives cache reload", async () => {
+    const filePath = path.join(
+      mkdtempSync(path.join(os.tmpdir(), "devin-promotion-")),
+      "models.md",
+    )
+    const now = Date.parse("2026-12-20T00:00:00Z")
+    await refreshDevinPricing({
+      filePath,
+      now,
+      fetchDocument: async () =>
+        document()
+        + "\nSWE-2 is free for self-serve plans in Devin Desktop and Devin CLI through December 31, 2026; list pricing applies afterward.",
+    })
+    expect(resolveDevinPrice("swe-2", now)?.promptPricePer1k).toBe(0)
+    utimesSync(filePath, new Date(now), new Date(now))
+    resetDevinPricingForTest()
+    await refreshDevinPricing({
+      filePath,
+      now,
+      fetchDocument: async () => {
+        throw new Error("cache should suffice")
+      },
+    })
+    expect(resolveDevinPrice("swe-2", now)?.promptPricePer1k).toBe(0)
+    expect(
+      resolveDevinPrice("swe-2", Date.parse("2027-01-01T00:00:00Z"))
+        ?.promptPricePer1k,
+    ).toBe(0.003)
+  })
+
   test("resolves SWE Fast without applying a generic fast multiplier", () => {
     const price = statsStore.resolveModelPricing("windsurf/swe-1-6-fast")
     expect(price?.source).toBe("devin-official")

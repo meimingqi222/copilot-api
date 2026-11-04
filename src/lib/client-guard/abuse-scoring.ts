@@ -10,6 +10,13 @@ import type {
 import { BURST_WINDOW_MS, RECENT_REQUEST_THRESHOLD } from "./state"
 import { isKnownUA } from "./ua-whitelist"
 
+// Snapshot lifetime bounds the warning state without retaining expired IPs.
+const warningState = new WeakMap<
+  ClientSnapshot,
+  { at: number; score: number }
+>()
+const WARNING_INTERVAL_MS = 5 * 60_000
+
 export function detectSuspicious(snap: ClientSnapshot): SuspiciousAssessment {
   const reasons: Array<string> = []
   let score = 0
@@ -183,6 +190,17 @@ export function checkAutoBlock(
   if (!shouldAutoBlockGlobally(snap, assessment)) {
     return
   }
+
+  const now = Date.now()
+  const previous = warningState.get(snap)
+  if (
+    previous
+    && now - previous.at < WARNING_INTERVAL_MS
+    && assessment.score <= previous.score
+  ) {
+    return
+  }
+  warningState.set(snap, { at: now, score: assessment.score })
 
   const triggerReasons = getGlobalAutoBlockReasons(assessment.reasons)
   logger.warn(

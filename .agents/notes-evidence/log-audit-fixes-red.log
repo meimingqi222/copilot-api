@@ -1,0 +1,94 @@
+bun test v1.4.2 (744846f84)
+
+tests/log-middleware.test.ts:
+47 |         recordTraceError(c, error)
+48 |         return forwardError(c, error)
+49 |       })
+50 |       const response = await app.request("http://localhost/v1/chat/completions", {method:"POST",signal:kind === "native" ? AbortSignal.abort() : undefined})
+51 |       await Promise.resolve()
+52 |       expect(response.status).toBe(499)
+                                   ^
+error: expect(received).toBe(expected)
+
+Expected: 499
+Received: 500
+
+      at <anonymous> (<repo>/tests/log-middleware.test.ts:52:31)
+(fail) log middleware > native client cancellation is 499 without server-error logging or counting [11.81ms]
+47 |         recordTraceError(c, error)
+48 |         return forwardError(c, error)
+49 |       })
+50 |       const response = await app.request("http://localhost/v1/chat/completions", {method:"POST",signal:kind === "native" ? AbortSignal.abort() : undefined})
+51 |       await Promise.resolve()
+52 |       expect(response.status).toBe(499)
+                                   ^
+error: expect(received).toBe(expected)
+
+Expected: 499
+Received: 500
+
+      at <anonymous> (<repo>/tests/log-middleware.test.ts:52:31)
+(fail) log middleware > explicit client cancellation is 499 without server-error logging or counting [0.55ms]
+
+tests/guard.test.ts:
+28 |         return ipSnapshots.get(ip)!
+29 |       }
+30 |       const first = snapshot("203.0.113.9")
+31 |       const assessment = {...detectSuspicious(first),score:90,reasons:["auth_failures"],riskLevel:"critical" as const}
+32 |       for (let i = 0; i < 100; i++) checkAutoBlock(first, assessment)
+33 |       expect(warn).toHaveBeenCalledTimes(1)
+                        ^
+error: expect(received).toHaveBeenCalledTimes(expected)
+
+Expected number of calls: 1
+Received number of calls: 100
+
+      at <anonymous> (<repo>/tests/guard.test.ts:33:20)
+(fail) guard > throttles repeated IP warnings while retaining escalation, other IPs and periodic reminders [1.56ms]
+
+tests/devin-pricing.test.ts:
+ 5 | export function parseDevinPrices(document: string): DevinPrices {
+ 6 |   // Parse only the JSON array; never evaluate the surrounding MDX document.
+ 7 |   const match = /export\s+const\s+modelCostData\s*=\s*(\[[\s\S]*?\])\s*;/.exec(
+ 8 |     document,
+ 9 |   )
+10 |   if (!match) throw new Error("Missing Devin modelCostData")
+                                                                ^
+error: Missing Devin modelCostData
+      at parseDevinPrices (<repo>/src/lib/devin-pricing/parser.ts:10:60)
+      at <anonymous> (<repo>/tests/devin-pricing.test.ts:43:12)
+(fail) SWE official pricing > reads the Mintlify manifest without evaluating compiled JavaScript [5.45ms]
+47 |     })
+48 |     expect(() => parseDevinPrices(html.replace("swe-2-high", "${globalThis.priceProbe = true}"))).toThrow()
+49 |   })
+50 | 
+51 |   test("SWE-2 stays free through November and stale zeros expire at the UTC boundary", () => {
+52 |     expect(resolveDevinPrice("swe-2", Date.parse("2026-11-30T23:59:59Z"))?.promptPricePer1k).toBe(0)
+                                                                                                  ^
+error: expect(received).toBe(expected)
+
+Expected: 0
+Received: 0.003
+
+      at <anonymous> (<repo>/tests/devin-pricing.test.ts:52:94)
+(fail) SWE official pricing > SWE-2 stays free through November and stale zeros expire at the UTC boundary [1.79ms]
+55 | 
+56 |   test("a published promotion extension survives cache reload", async () => {
+57 |     const filePath = path.join(mkdtempSync(path.join(os.tmpdir(), "devin-promotion-")), "models.md")
+58 |     const now = Date.parse("2026-12-20T00:00:00Z")
+59 |     await refreshDevinPricing({ filePath, now, fetchDocument: async () => document() + "\nSWE-2 is free for self-serve plans in Devin Desktop and Devin CLI through December 31, 2026; list pricing applies afterward." })
+60 |     expect(resolveDevinPrice("swe-2", now)?.promptPricePer1k).toBe(0)
+                                                                   ^
+error: expect(received).toBe(expected)
+
+Expected: 0
+Received: 0.003
+
+      at <anonymous> (<repo>/tests/devin-pricing.test.ts:60:63)
+(fail) SWE official pricing > a published promotion extension survives cache reload [2.52ms]
+
+ 0 pass
+ 34 filtered out
+ 6 fail
+ 5 expect() calls
+Ran 6 tests across 3 files. [305.00ms]
