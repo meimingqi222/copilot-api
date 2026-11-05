@@ -61,6 +61,13 @@ against the existing per-entry and global byte budgets and are replaced with
 their adapter body when final HTTP evidence arrives. Mapping selection includes
 retained excerpts as well as the body prefix. No retention limit is increased.
 
+Within each capture's excerpt selection, sample each distinct placeholder once,
+across all fields. Repeated HOME hits must not exhaust the excerpt budget before
+a late SECRET or a different HOME can be represented. Skipped occurrences still
+mark evidence as truncated; this is representative evidence, not a complete
+occurrence log. Deduplicate by full placeholder, not category. The HTTP prefix,
+excerpt limits, masking rules and default non-reveal behavior remain unchanged.
+
 ### Detail rendering
 
 `pages/partials/redaction.html` uses `contentParts` and `excerptSegments` from
@@ -165,6 +172,16 @@ originals are fetched once when needed and failed loads keep the previous mode.
 - `tests/redaction-history.test.ts`
 - `tests/system-config.test.ts`
 - `tests/system-config-view.test.ts`
+- `tests/redaction-excerpts.test.ts::repeated home hits cannot crowd out distinct late placeholders across fields or HTTP bodies`
+- `tests/redaction-review.test.ts::masked HTTP inspection retains distinct late mappings after repeated home hits`
+
+Proved: before the distinct-placeholder sampling fix, running
+`bun test tests/redaction-excerpts.test.ts tests/redaction-review.test.ts`
+produced 9 passes and 2 failures. The excerpt regression expected three distinct
+samples but received sixteen repeated HOME samples. The HTTP inspection
+regression expected HOME and SECRET mappings but retained only HOME, despite
+the request diagnostics counting both. The identical command passed all eleven
+tests after the fix, including non-reveal and truncated-prefix assertions.
 
 Proved: pre-fix backend tests failed for partial spaced homes, temporary default
 enablement, missing action/attempt counters and completion-day history. View

@@ -160,6 +160,54 @@ test("HTTP placeholder positions and repeated adapter attempts remain observable
   }
 })
 
+test("masked HTTP inspection retains distinct late mappings after repeated home hits", async () => {
+  process.env.UPSTREAM_REDACTION = '{"enabled":true}'
+  initializeSystemConfig({ save: () => {}, onChange: () => {} })
+  setRedactionInspection(true)
+  const secret = "fixture-credential-" + "12345678"
+  const payload = {
+    instructions: `${"x".repeat(300)}${home}/project `.repeat(150),
+    input: [{ output: `api_key=${secret}` }],
+  }
+  const mockFetch = Object.assign(async () => Response.json({ ok: true }), {
+    preconnect: globalThis.fetch.preconnect,
+  })
+  const fetchMock = spyOn(globalThis, "fetch").mockImplementation(mockFetch)
+  try {
+    await runRedactedCall(payload, undefined, (prepared) =>
+      withRedactionUpstream(upstream, prepared, async () => {
+        await performanceFetch("https://fixture.invalid", {
+          method: "POST",
+          body: serializeUpstreamBody(prepared),
+        })
+        return { response: { text: "ok" } }
+      }),
+    )
+  } finally {
+    fetchMock.mockRestore()
+  }
+  const entry = getRedactionDiagnostics().entries[0]
+  expect(entry.byKind).toMatchObject({ HOME: 1, SECRET: 1 })
+  const detail = getRedactionInspection(entry.id)!
+  expect(detail.truncated).toBe(true)
+  expect(detail.attempts[0].stage).toBe("http")
+  expect(detail.mappings.map((mapping) => mapping.kind).sort()).toEqual([
+    "HOME",
+    "SECRET",
+  ])
+  const secretMapping = detail.mappings.find(
+    (mapping) => mapping.kind === "SECRET",
+  )!
+  expect(detail.attempts[0].body).not.toContain(secretMapping.placeholder)
+  expect(
+    detail.attempts[0].excerpts.some((item) =>
+      item.text.includes(secretMapping.placeholder),
+    ),
+  ).toBe(true)
+  expect(detail.mappings.every((mapping) => !("value" in mapping))).toBe(true)
+  expect(JSON.stringify(detail)).not.toContain(secret)
+})
+
 test("history uses request start time even when completion crosses a day boundary", async () => {
   process.env.UPSTREAM_REDACTION = '{"enabled":true}'
   initializeSystemConfig({ save: () => {}, onChange: () => {} })

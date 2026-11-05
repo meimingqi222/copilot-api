@@ -11,6 +11,7 @@ export function redactionExcerpts(value: unknown): {
   truncated: boolean
 } {
   const items: Array<RedactionExcerpt> = []
+  const sampled = new Set<string>()
   let remaining = 4096
   let nodes = 0
   let truncated = false
@@ -21,6 +22,11 @@ export function redactionExcerpts(value: unknown): {
     }
     if (typeof node === "string") {
       for (const match of node.matchAll(tokenPattern())) {
+        // Spend the evidence budget on distinct values, not repeated home paths.
+        if (sampled.has(match[0])) {
+          truncated = true
+          continue
+        }
         const start = Math.max(0, match.index - 120)
         const end = Math.min(node.length, match.index + match[0].length + 120)
         const text = `${start ? "…" : ""}${node.slice(start, end)}${end < node.length ? "…" : ""}`
@@ -29,6 +35,7 @@ export function redactionExcerpts(value: unknown): {
           break
         }
         items.push({ path, text })
+        sampled.add(match[0])
         remaining -= path.length + text.length
       }
       return
