@@ -77,6 +77,67 @@ describe("normalizeChunk", () => {
 })
 
 describe("normalizeResponse", () => {
+  test("separates interleaved reasoning from visible text without mutating internal block order", () => {
+    const input = response({
+      content: [
+        { type: "reasoning", text: "First thought. ", signature: "sig-first" },
+        { type: "text", text: "3" },
+        { type: "thinking", thinking: "Last thought.", signature: "sig-last" },
+        { type: "output_text", text: "23" },
+      ],
+      reasoning_text: "First thought. Last thought.",
+    })
+    const original = structuredClone(input)
+    const message = normalizeResponse(input).choices[0].message
+    expect(message.content).toBe("323")
+    expect(message.reasoning_content).toBe("First thought. Last thought.")
+    expect(message.reasoning_text).toBeUndefined()
+    expect(message.reasoning_details).toEqual([
+      {
+        type: "reasoning.text",
+        text: "First thought. ",
+        signature: "sig-first",
+      },
+      { type: "reasoning.text", text: "Last thought.", signature: "sig-last" },
+    ])
+    expect(input).toEqual(original)
+  })
+
+  test("extracts content-only thinking while preserving media, tools and existing details", () => {
+    const image = {
+      type: "image_url" as const,
+      image_url: { url: "https://example.com/image.png" },
+    }
+    const tools = [
+      {
+        id: "call-1",
+        type: "function" as const,
+        function: { name: "read", arguments: "{}" },
+      },
+    ]
+    const details = [{ type: "reasoning.text", text: "why", signature: "sig" }]
+    const message = normalizeResponse(
+      response({
+        content: [
+          { type: "reasoning", text: "why", signature: "sig" },
+          image,
+          { type: "text", text: "answer" },
+        ],
+        tool_calls: tools,
+        reasoning_details: details,
+      }),
+    ).choices[0].message
+    expect(message.content).toEqual([image, { type: "text", text: "answer" }])
+    expect(message.reasoning_content).toBe("why")
+    expect(message.reasoning_details).toEqual(details)
+    expect(message.tool_calls).toEqual(tools)
+    const thinkingOnly = normalizeResponse(
+      response({ content: [{ type: "thinking", thinking: "only thought" }] }),
+    ).choices[0].message
+    expect(thinkingOnly.content).toBeNull()
+    expect(thinkingOnly.reasoning_content).toBe("only thought")
+  })
+
   test("an empty reasoning_content does not shadow a populated alias", () => {
     const out = normalizeResponse(
       response({ content: "done", reasoning_content: "", reasoning: "why" }),
@@ -100,5 +161,16 @@ describe("normalizeResponse", () => {
     )
     expect(out.choices[0].message.reasoning_content).toBe("mine")
     expect(out.choices[0].message.reasoning).toBeUndefined()
+    const canonicalOnly = normalizeResponse(
+      response({
+        content: [
+          { type: "reasoning", text: "other spelling" },
+          { type: "text", text: "done" },
+        ],
+        reasoning_content: "mine",
+      }),
+    )
+    expect(canonicalOnly.choices[0].message.content).toBe("done")
+    expect(canonicalOnly.choices[0].message.reasoning_content).toBe("mine")
   })
 })

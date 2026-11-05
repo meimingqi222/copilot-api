@@ -3,7 +3,11 @@ import type {
   ChatCompletionResponse,
 } from "~/services/protocols/chat/types"
 
-import { extractReasoningTextAlias } from "~/lib/thinking"
+import {
+  extractReasoningBlockText,
+  extractReasoningPartsText,
+  extractReasoningTextAlias,
+} from "~/lib/thinking"
 
 /**
  * Normalizes a streaming ChatCompletionChunk so that non-standard reasoning
@@ -78,25 +82,61 @@ export function normalizeResponse(
 
   const normalizedChoices = response.choices.map((choice) => {
     const { message } = choice
+    const reasoningParts =
+      Array.isArray(message.content) ?
+        message.content.flatMap((part) =>
+          part.type === "reasoning" || part.type === "thinking" ? [part] : [],
+        )
+      : []
     // Same alias-key check as `normalizeChunk` — see the comment there.
     const hasReasoningAliasKey =
       message.reasoning_text !== undefined
       || message.reasoning !== undefined
       || message.thinking !== undefined
     const reasoningContent =
-      message.reasoning_content || extractReasoningTextAlias(message)
-    if (reasoningContent === undefined) {
+      message.reasoning_content
+      || extractReasoningTextAlias(message)
+      || extractReasoningPartsText(message.content)
+      || undefined
+    if (reasoningContent === undefined && reasoningParts.length === 0) {
       return choice
     }
     if (
       !hasReasoningAliasKey
       && message.reasoning_content === reasoningContent
+      && reasoningParts.length === 0
     ) {
       return choice
     }
     // Same dedup as `normalizeChunk`: the source alias now duplicates
     // reasoning_content verbatim.
     const nextMessage = { ...message, reasoning_content: reasoningContent }
+    // Keep ordered blocks inside the translation pipeline, not in Chat's visible content.
+    if (reasoningParts.length > 0 && Array.isArray(message.content)) {
+      const visible = message.content.filter(
+        (part) => part.type !== "reasoning" && part.type !== "thinking",
+      )
+      nextMessage.content =
+        (
+          visible.every(
+            (part) => part.type === "text" || part.type === "output_text",
+          )
+        ) ?
+          visible.map((part) => ("text" in part ? part.text : "")).join("")
+          || null
+        : visible
+      if (
+        !message.reasoning_details?.length
+        && (reasoningParts.length > 1
+          || reasoningParts.some((part) => part.signature))
+      ) {
+        nextMessage.reasoning_details = reasoningParts.map((part) => ({
+          type: "reasoning.text",
+          text: extractReasoningBlockText(part) ?? "",
+          ...(part.signature ? { signature: part.signature } : {}),
+        }))
+      }
+    }
     delete nextMessage.reasoning_text
     delete nextMessage.reasoning
     delete nextMessage.thinking

@@ -1,0 +1,128 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/chat-completions-normalize.test.ts:
+(pass) normalizeChunk > fills reasoning_content from the reasoning_text alias [0.06ms]
+(pass) normalizeChunk > drops the source alias after mapping so thinking is not duplicated [0.01ms]
+(pass) normalizeChunk > an empty reasoning_content does not shadow a populated alias
+(pass) normalizeChunk > leaves a populated reasoning_content untouched
+(pass) normalizeChunk > adds nothing when no alias carries text
+87 |       ],
+88 |       reasoning_text: "First thought. Last thought.",
+89 |     })
+90 |     const original = structuredClone(input)
+91 |     const message = normalizeResponse(input).choices[0].message
+92 |     expect(message.content).toBe("323")
+                                 ^
+error: expect(received).toBe(expected)
+
+Expected: "323"
+Received: [
+  {
+    type: "reasoning",
+    text: "First thought. ",
+    signature: "sig-first",
+  }, {
+    type: "text",
+    text: "3",
+  }, {
+    type: "thinking",
+    thinking: "Last thought.",
+    signature: "sig-last",
+  }, {
+    type: "output_text",
+    text: "23",
+  }
+]
+
+      at <anonymous> (tests/chat-completions-normalize.test.ts:92:29)
+(fail) normalizeResponse > separates interleaved reasoning from visible text without mutating internal block order [1.05ms]
+125 |         ],
+126 |         tool_calls: tools,
+127 |         reasoning_details: details,
+128 |       }),
+129 |     ).choices[0].message
+130 |     expect(message.content).toEqual([image, { type: "text", text: "answer" }])
+                                  ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
++     "signature": "sig",
++     "text": "why",
++     "type": "reasoning",
++   },
++   {
+      "image_url": {
+        "url": "https://example.com/image.png",
+      },
+      "type": "image_url",
+    },
+    {
+      "text": "answer",
+      "type": "text",
+    },
+  ]
+
+- Expected  - 0
++ Received  + 5
+
+      at <anonymous> (tests/chat-completions-normalize.test.ts:130:29)
+(fail) normalizeResponse > extracts content-only thinking while preserving media, tools and existing details [0.85ms]
+(pass) normalizeResponse > an empty reasoning_content does not shadow a populated alias
+(pass) normalizeResponse > drops the source alias after mapping so thinking is not duplicated
+(pass) normalizeResponse > leaves a populated reasoning_content untouched
+
+tests/windsurf-responses-translation.test.ts:
+(pass) Windsurf shares developer-to-system normalization without mutating caller history [3.97ms]
+<-- POST /v1/responses
+[error] Error occurred: previous_response_not_found: full input replay required
+  at createTranslatedCall (src/services/protocols/wire-pairs.ts:429:15)
+  at execute (src/services/dispatch/shared.ts:414:7)
+  at run (node:async_hooks:144:29)
+  at executeWithFailover (src/services/dispatch/failover.ts:296:30)
+--> POST /v1/responses 400 5ms
+(pass) chained Responses deltas are rejected before a stateless Windsurf request [8.19ms]
+<-- GET /v1/responses
+--> GET /v1/responses 200 0ms
+(pass) Codex WebSocket chat fallback asks for full replay, then translates a self-contained turn [10.10ms]
+<-- POST /v1/chat/completions
+--> POST /v1/chat/completions 200 2ms
+340 |       expect(
+341 |         deltas.map((delta) => delta.reasoning_content ?? "").join(""),
+342 |       ).toBe("Synthetic reasoning and a late thought")
+343 |     } else {
+344 |       const body = await response.json()
+345 |       expect(body.choices[0].message.content).toBe("Synthetic answer")
+                                                    ^
+error: expect(received).toBe(expected)
+
+Expected: "Synthetic answer"
+Received: [
+  {
+    type: "reasoning",
+    text: "Synthetic reasoning",
+  }, {
+    type: "text",
+    text: "Synthetic answer",
+  }, {
+    type: "reasoning",
+    text: " and a late thought",
+  }
+]
+
+      at <anonymous> (tests/windsurf-responses-translation.test.ts:345:47)
+(fail) Windsurf Chat keeps late reasoning out of visible content (stream=false) [2.65ms]
+<-- POST /v1/responses
+--> POST /v1/responses 200 1ms
+(pass) Responses to Windsurf preserves Codex instructions, namespace tools and replay (stream=false) [2.37ms]
+<-- POST /v1/chat/completions
+--> POST /v1/chat/completions 200 1ms
+(pass) Windsurf Chat keeps late reasoning out of visible content (stream=true) [2.72ms]
+<-- POST /v1/responses
+--> POST /v1/responses 200 1ms
+(pass) Responses to Windsurf preserves Codex instructions, namespace tools and replay (stream=true) [2.38ms]
+
+ 14 pass
+ 3 fail
+ 93 expect() calls
+Ran 17 tests across 2 files. [117.00ms]

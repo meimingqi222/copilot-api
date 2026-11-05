@@ -4,7 +4,11 @@ import path from "node:path"
 
 import type { ProviderConnection } from "~/lib/provider-connections"
 import type { ProtobufNode } from "~/services/windsurf/protobuf"
-import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
+import type {
+  ChatCompletionChunk,
+  ChatCompletionResponse,
+  ChatCompletionsPayload,
+} from "~/services/protocols/chat/types"
 import { bunWebsocket } from "~/lib/bun-websocket"
 import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import {
@@ -151,6 +155,7 @@ beforeEach(async () => {
     const frame = new ProtobufEncoder()
     frame.writeString(9, "Synthetic reasoning")
     frame.writeString(3, "Synthetic answer")
+    frame.writeString(9, " and a late thought")
     const call = new ProtobufEncoder()
     call.writeString(1, "call_next")
     call.writeString(2, "functions__read_file")
@@ -313,6 +318,49 @@ loopbackTest(
 )
 
 for (const stream of [false, true]) {
+  test(`Windsurf Chat keeps late reasoning out of visible content (stream=${stream})`, async () => {
+    const response = await server.request(
+      "http://localhost/v1/chat/completions",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "deepseek-v4-1-flash",
+          messages: [{ role: "user", content: "Answer briefly" }],
+          stream,
+        }),
+      },
+    )
+    expect(response.status).toBe(200)
+    if (stream) {
+      const deltas = (await response.text())
+        .split("\n")
+        .filter((line) => line.startsWith("data: ") && line !== "data: [DONE]")
+        .flatMap((line) =>
+          (JSON.parse(line.slice(6)) as ChatCompletionChunk).choices.map(
+            (choice) => choice.delta,
+          ),
+        )
+      expect(deltas.map((delta) => delta.content ?? "").join("")).toBe(
+        "Synthetic answer",
+      )
+      expect(
+        deltas.map((delta) => delta.reasoning_content ?? "").join(""),
+      ).toBe("Synthetic reasoning and a late thought")
+    } else {
+      const body = (await response.json()) as ChatCompletionResponse
+      expect(body.choices[0].message.content).toBe("Synthetic answer")
+      expect(body.choices[0].message.reasoning_content).toBe(
+        "Synthetic reasoning and a late thought",
+      )
+      expect(body.choices[0].message.reasoning_text).toBeUndefined()
+      expect(body.choices[0].message.tool_calls?.[0].function.name).toBe(
+        "functions__read_file",
+      )
+    }
+    expect(packets).toHaveLength(1)
+  })
+
   test(`Responses to Windsurf preserves Codex instructions, namespace tools and replay (stream=${stream})`, async () => {
     const targets = buildRouteTargets({
       publicModelId: "deepseek-v4-1-flash",
@@ -378,7 +426,24 @@ for (const stream of [false, true]) {
     expect(body).toContain('"name":"read_file"')
     expect(body).toContain('"namespace":"functions"')
     if (stream) expect(body).toContain("response.completed")
-    else expect(JSON.parse(body).object).toBe("response")
+    else {
+      const result = JSON.parse(body)
+      expect(result.object).toBe("response")
+      expect(
+        result.output
+          .filter((item: { type: string }) => item.type === "reasoning")
+          .flatMap((item: { summary: Array<{ text: string }> }) =>
+            item.summary.map((part) => part.text),
+          ),
+      ).toEqual(["Synthetic reasoning", " and a late thought"])
+      expect(
+        result.output
+          .filter((item: { type: string }) => item.type === "message")
+          .flatMap((item: { content: Array<{ text: string }> }) =>
+            item.content.map((part) => part.text),
+          ),
+      ).toEqual(["Synthetic answer"])
+    }
     expect(packets).toHaveLength(1)
     const packet = packets[0]
     expect(fieldText(packet, 21)).toBe("deepseek-v4-1-flash-high")

@@ -22,12 +22,25 @@ upstream chunk carrying both spellings non-empty therefore produced different
 reasoning depending on whether the client asked for `stream: true` or
 `stream: false`.
 
+Devin SWE-2 Flash also emits reasoning after visible text. Its Protobuf fields
+remain separate (field 9 reasoning, field 3 text), but the non-streaming
+collector preserves interleaving in typed content parts. Returning those parts
+unchanged from Chat lets clients concatenate reasoning into the visible answer.
+
 ## Decision
 
 `normalizeChunk`/`normalizeResponse` fill `reasoning_content` from the first
 non-null alias, then delete `reasoning_text`, `reasoning`, and `thinking` from
 the emitted object. The canonical field is the wire contract for
 `/v1/chat/completions`; the aliases are input-only.
+
+At the final non-streaming Chat boundary, remove reasoning/thinking content
+parts from visible content. Join remaining text-only parts without separators;
+preserve media arrays and tool calls. Read content-part reasoning only when no
+top-level spelling carries text. Preserve existing reasoning_details, or create
+them for multiple/signed blocks so each signature stays paired with its text.
+Do not flatten the provider collector or the IR: internal ordered blocks remain
+available to Responses/Messages translation. Streaming normalization is unchanged.
 
 The aggregator reads `delta.reasoning_content || extractReasoningTextAlias(delta)`,
 matching `normalize.ts` exactly: canonical first, empty string falls through to
@@ -59,7 +72,8 @@ order is load-bearing; changing it would move the precedence bug into
 
 ## Consequences
 
-`/v1/chat-completions` responses now carry exactly one reasoning field.
+`/v1/chat/completions` responses now carry one canonical aggregate reasoning field;
+structured reasoning_details may additionally preserve individual signed blocks.
 Clients that read `reasoning_text` directly (rather than the canonical
 `reasoning_content`) lose the text; no repo-internal consumer does, and the
 protocol-translation contract already treats `reasoning_content` as canonical.
@@ -72,8 +86,17 @@ empty canonical field does not shadow a populated alias in either path.
 
 - `tests/chat-completions-normalize.test.ts` — `drops the source alias after mapping so thinking is not duplicated`, `an empty reasoning_content does not shadow a populated alias`
 - `tests/sse-aggregate.test.ts` — `canonical reasoning_content wins over a non-empty alias`, `an empty reasoning_content does not shadow a populated alias`
+- `tests/chat-completions-normalize.test.ts::separates interleaved reasoning from visible text without mutating internal block order`
+- `tests/chat-completions-normalize.test.ts::extracts content-only thinking while preserving media, tools and existing details`
+- `tests/windsurf-responses-translation.test.ts::Windsurf Chat keeps late reasoning out of visible content`
 
-The verifier's anchor grammar cannot carry a space, so the paths are cited bare
-and the exact test names are spelled out above and in the `Proved:` line.
+Proved: before the content-part fix,
+`bun test tests/chat-completions-normalize.test.ts tests/windsurf-responses-translation.test.ts`
+failed three regressions (14 pass, 3 fail): typed reasoning remained in visible
+content in both normalizer cases and the non-streaming HTTP route. The same
+fixture's streaming Chat and translated Responses controls passed, including
+separate late reasoning blocks. Output is retained in
+`.agents/notes-evidence/devin-chat-reasoning-red.log`. After the boundary fix,
+both files and the unchanged Windsurf collector tests passed (21 pass, 0 fail).
 
 Proved: reverting the aggregator to read the alias chain first (`extractReasoningTextAlias(delta)` instead of `delta.reasoning_content || extractReasoningTextAlias(delta)`) failed `tests/sse-aggregate.test.ts::canonical reasoning_content wins over a non-empty alias` with `Expected: "mine" / Received: "theirs"`; separately the alias-deletion step in `normalizeChunk` was removed and `tests/chat-completions-normalize.test.ts::drops the source alias after mapping so thinking is not duplicated` failed. Both were reverted and the suite passed.
