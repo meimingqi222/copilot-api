@@ -10,6 +10,7 @@ import { maskUpstream } from "~/lib/redaction/context"
 import { isDebugLoggingEnabled, logger } from "~/lib/logger"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 import { state } from "~/lib/state"
+import type { WindsurfAttemptDiagnostics } from "~/services/windsurf/diagnostics"
 
 import { fetchDevinUserJwt, invalidateDevinUserJwtCache } from "./auth"
 import { normalizeWindsurfBaseUrl } from "./base-url"
@@ -36,6 +37,7 @@ interface AttemptFetchOptions {
   body: Uint8Array
   signal?: AbortSignal
   accountLabel: string
+  diagnostics: WindsurfAttemptDiagnostics
 }
 
 interface CreateWindsurfAttemptOptions {
@@ -46,6 +48,7 @@ interface CreateWindsurfAttemptOptions {
   settings: { apiKey: string; baseUrl?: string }
   model: string
   requestModel: string
+  diagnostics: WindsurfAttemptDiagnostics
   /**
    * Reuse a previously resolved per-session turn ordinal (field 15.2)
    * across same-turn retries instead of consuming a new one.
@@ -57,13 +60,15 @@ interface CreateWindsurfAttemptOptions {
     model: string,
     cacheDebug?: WindsurfCacheDebugContext,
     memoryTraceId?: string,
-    streamOpts?: { collect?: boolean },
+    streamOpts?: {
+      collect?: boolean
+      diagnostics?: WindsurfAttemptDiagnostics
+    },
   ) => AsyncIterable<CopilotStreamEvent>
 }
 
 export interface WindsurfAttempt {
   stream: AsyncIterable<CopilotStreamEvent>
-  abort: () => void
   dispose: () => void
   authCacheKey: { apiKey: string; baseUrl: string }
   /** Per-session turn ordinal placed on the wire (field 15.2). */
@@ -113,6 +118,7 @@ export async function createWindsurfAttempt(
     settings,
     model,
     requestModel,
+    diagnostics,
     turnIndex,
     fetcher,
     streamFactory,
@@ -140,6 +146,7 @@ export async function createWindsurfAttempt(
       authCacheStatus: auth.cacheStatus,
     })
     const chatBaseUrl = normalizeWindsurfBaseUrl(auth.baseUrl ?? baseUrl)
+    diagnostics.enter("session", { authCacheStatus: auth.cacheStatus })
 
     const resolvedConversation = resolveWindsurfConversationKey({
       forwardedHeaders: ctx?.forwardedHeaders,
@@ -175,6 +182,7 @@ export async function createWindsurfAttempt(
     }
 
     updateMemoryTrace(ctx?.memoryTraceId, "windsurf_protobuf_build_start")
+    diagnostics.enter("encode")
     let protobufBytes = 0
     let usedTurnIndex = turnIndex ?? 0
     const requestBody = await buildRequest({
@@ -244,6 +252,7 @@ export async function createWindsurfAttempt(
       body: requestBody,
       signal: upstreamSignal,
       accountLabel: connection.name,
+      diagnostics,
     })
     updateMemoryTrace(ctx?.memoryTraceId, "windsurf_response_open", {
       httpStatus: response.status,
@@ -275,12 +284,8 @@ export async function createWindsurfAttempt(
         // pure streaming only forwards `data`. Cross-protocol streaming
         // (messages-via-chat) translates each chunk and opts back in via ctx.
         collect: !payload.stream || ctx?.collectChatStreamTwin === true,
+        diagnostics,
       }),
-      abort: () => {
-        if (!linkedAbort.controller.signal.aborted) {
-          linkedAbort.controller.abort()
-        }
-      },
       dispose: linkedAbort.dispose,
       authCacheKey: { apiKey, baseUrl },
       turnIndex: usedTurnIndex,

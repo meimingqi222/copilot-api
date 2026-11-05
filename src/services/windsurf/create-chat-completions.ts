@@ -12,6 +12,8 @@ import type {
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { HTTPError } from "~/lib/error"
+import { currentLogContext } from "~/lib/log-context"
+import { WindsurfAttemptDiagnostics } from "~/services/windsurf/diagnostics"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { isDebugLoggingEnabled, logger } from "~/lib/logger"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
@@ -45,6 +47,7 @@ import { beginWindsurfAccountRequest } from "./concurrency"
 import {
   getWindsurfFirstFrameRetries,
   getWindsurfFirstFrameTimeoutMs,
+  getWindsurfStreamIdleTimeoutMs,
 } from "./config"
 import {
   WindsurfUpstreamError,
@@ -187,10 +190,11 @@ function computeRetryDelayMs(attempt: number): number {
 async function* decodeWindsurfFrames(
   stream: ReadableStream<Uint8Array>,
   memoryTraceId?: string,
-  opts?: { onEndStream?: () => void },
+  opts?: { onEndStream?: () => void; diagnostics?: WindsurfAttemptDiagnostics },
 ): AsyncIterable<Uint8Array> {
   try {
     for await (const frame of decodeConnectFrames(stream, {
+      onRead: (bytes) => opts?.diagnostics?.read(bytes),
       onFirstRead: (upstreamReadBytes) => {
         updateMemoryTrace(memoryTraceId, "windsurf_first_upstream_bytes", {
           upstreamReadBytes,
@@ -231,12 +235,17 @@ interface FetchOptions {
   body: Uint8Array
   signal?: AbortSignal
   accountLabel: string
+  diagnostics?: WindsurfAttemptDiagnostics
 }
 
 export async function fetchWithRetry(opts: FetchOptions): Promise<Response> {
   let lastError: unknown
   for (let attempt = 1; attempt <= FETCH_MAX_ATTEMPTS; attempt++) {
     let response: Response
+    opts.diagnostics?.enter("headers", {
+      fetchAttempt: attempt,
+      wireBytes: opts.body.byteLength,
+    })
     try {
       response = await fetch(opts.url, {
         method: "POST",
@@ -245,6 +254,7 @@ export async function fetchWithRetry(opts: FetchOptions): Promise<Response> {
         signal: opts.signal,
       })
     } catch (error) {
+      opts.signal?.throwIfAborted()
       if (isAbortError(error)) throw error
       // Network error (TypeError from fetch) — transient, retry
       lastError = error
@@ -253,16 +263,24 @@ export async function fetchWithRetry(opts: FetchOptions): Promise<Response> {
         logger.warn(
           `[windsurf] network error for ${opts.accountLabel}, retry ${attempt}/${FETCH_MAX_ATTEMPTS - 1} in ${delayMs}ms`,
         )
+        opts.diagnostics?.enter("retry_delay", {
+          fetchAttempt: attempt,
+          delayMs,
+        })
         await sleep(delayMs, opts.signal)
         continue
       }
       throw lastError
     }
 
+    opts.diagnostics?.enter(response.ok ? "first_output" : "error_body", {
+      httpStatus: response.status,
+    })
     if (response.ok) return response
 
     // Read body once for both retry-decision and error reporting
     const errorBody = await response.text().catch(() => "(unreadable)")
+    opts.signal?.throwIfAborted()
     const httpError = new HTTPError(
       "Failed to create Windsurf chat completion",
       response,
@@ -285,6 +303,7 @@ export async function fetchWithRetry(opts: FetchOptions): Promise<Response> {
       logger.warn(
         `[windsurf] HTTP ${response.status} for ${opts.accountLabel}, retry ${attempt}/${FETCH_MAX_ATTEMPTS - 1} in ${delayMs}ms`,
       )
+      opts.diagnostics?.enter("retry_delay", { fetchAttempt: attempt, delayMs })
       await sleep(delayMs, opts.signal)
       continue
     }
@@ -300,7 +319,7 @@ async function* streamToOpenAI(
   model: string,
   cacheDebug?: WindsurfCacheDebugContext,
   memoryTraceId?: string,
-  streamOpts?: { collect?: boolean },
+  streamOpts?: { collect?: boolean; diagnostics?: WindsurfAttemptDiagnostics },
 ): AsyncIterable<WindsurfStreamEvent> {
   const stream = response.body
   if (!stream) throw new Error("Windsurf response body is empty")
@@ -318,6 +337,15 @@ async function* streamToOpenAI(
     data: string,
     collected: WindsurfStreamEvent["collected"],
   ): WindsurfStreamEvent {
+    if (collected?.content !== undefined)
+      streamOpts?.diagnostics?.output("content")
+    else if (
+      collected?.reasoningText !== undefined
+      || collected?.reasoningOpaque !== undefined
+    )
+      streamOpts?.diagnostics?.output("reasoning")
+    else if (collected?.toolCalls !== undefined)
+      streamOpts?.diagnostics?.output("tool")
     return collect ? { data, collected } : { data }
   }
   let usage: ChatStreamFrame["usage"] | undefined
@@ -340,12 +368,15 @@ async function* streamToOpenAI(
 
   let sawEndStream = false
   for await (const frame of decodeWindsurfFrames(stream, memoryTraceId, {
+    diagnostics: streamOpts?.diagnostics,
     onEndStream: () => {
       sawEndStream = true
+      streamOpts?.diagnostics?.endStream()
     },
   })) {
     upstreamFrameCount += 1
     upstreamFrameBytes += frame.byteLength
+    streamOpts?.diagnostics?.frame(frame.byteLength)
     const classified = classifyWindsurfFrameError(frame)
     if (classified) throw new WindsurfUpstreamError(classified, frame)
 
@@ -666,28 +697,69 @@ export async function createWindsurfChatCompletionsOnce(
   // same-turn retries reuse the first attempt's index instead of advancing
   // the counter with an identical payload.
   let attemptTurnIndex: number | undefined
+  const requestId = currentLogContext()?.req ?? randomUUID()
 
   try {
     for (let attemptNumber = 1; ; attemptNumber++) {
       let attempt: WindsurfAttempt | undefined
+      const diagnostics = new WindsurfAttemptDiagnostics({
+        requestId,
+        accountId: connection.id,
+        model: requestModel,
+        streaming: Boolean(payload.stream),
+        attempt: attemptNumber,
+      })
+      const abort = new AbortController()
+      const attemptSignal =
+        signal ? AbortSignal.any([signal, abort.signal]) : abort.signal
       try {
-        attempt = await createWindsurfAttempt({
-          connection,
-          payload,
-          signal,
-          ctx,
-          settings: { apiKey, baseUrl: settings.baseUrl },
-          model,
-          requestModel,
-          turnIndex: attemptTurnIndex,
-          fetcher: fetchWithRetry,
-          streamFactory: streamToOpenAI,
-        })
-        attemptTurnIndex ??= attempt.turnIndex
         const waitStartedAt = Date.now()
-        const primed = await primeWindsurfStream(attempt.stream, {
+        // Start auth/fetch lazily inside the first next(), so the deadline also
+        // covers requests that never receive HTTP headers.
+        const source: AsyncIterable<CopilotStreamEvent> = {
+          async *[Symbol.asyncIterator]() {
+            let outcome = "cancelled"
+            try {
+              attempt = await createWindsurfAttempt({
+                connection,
+                payload,
+                signal: attemptSignal,
+                ctx,
+                settings: { apiKey, baseUrl: settings.baseUrl },
+                model,
+                requestModel,
+                diagnostics,
+                turnIndex: attemptTurnIndex,
+                fetcher: fetchWithRetry,
+                streamFactory: streamToOpenAI,
+              })
+              attemptTurnIndex ??= attempt.turnIndex
+              yield* attempt.stream
+              outcome = "completed"
+            } catch (error) {
+              outcome =
+                abort.signal.aborted ? "timeout"
+                : attemptSignal.aborted ? "cancelled"
+                : "error"
+              throw error
+            } finally {
+              diagnostics.log("info", "request finished", { outcome })
+            }
+          },
+        }
+        const primed = await primeWindsurfStream(source, {
           timeoutMs: firstFrameTimeoutMs,
-          onTimeout: attempt.abort,
+          idleTimeoutMs: getWindsurfStreamIdleTimeoutMs(),
+          onTimeout: (error) => {
+            diagnostics.log("warn", "deadline exceeded", {
+              deadline:
+                error instanceof WindsurfFirstFrameTimeoutError ?
+                  "before_first_output"
+                : "stream_idle",
+              timeoutMs: error.timeoutMs,
+            })
+            abort.abort(error)
+          },
         })
         updateMemoryTrace(ctx?.memoryTraceId, "windsurf_first_output_ready", {
           firstFrameWaitMs: Date.now() - waitStartedAt,
@@ -696,16 +768,15 @@ export async function createWindsurfChatCompletionsOnce(
         })
 
         if (payload.stream) {
-          const currentAttempt = attempt
           streamOwnsRelease = true
           return withWindsurfStreamCleanup(
             primed,
             () => {
-              currentAttempt.dispose()
+              attempt?.dispose()
               releaseAccountRequest()
             },
             (error) => {
-              invalidateWindsurfAttemptAuthOnError(error, currentAttempt)
+              if (attempt) invalidateWindsurfAttemptAuthOnError(error, attempt)
             },
           )
         }
@@ -713,7 +784,7 @@ export async function createWindsurfChatCompletionsOnce(
         try {
           return await collectChatCompletion(primed, model, ctx?.memoryTraceId)
         } finally {
-          attempt.dispose()
+          attempt?.dispose()
         }
       } catch (error) {
         attempt?.dispose()

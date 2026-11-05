@@ -17,10 +17,19 @@ function readBoundedInteger(
   return Math.min(parsed, max)
 }
 
-/** Time from HTTP 200 until the first forwardable model event. Zero disables. */
+/** Whole attempt through the first forwardable event, including auth/headers. */
 export function getWindsurfFirstFrameTimeoutMs(): number {
   return readBoundedInteger(
     "WINDSURF_FIRST_FRAME_TIMEOUT_MS",
+    DEFAULT_FIRST_FRAME_TIMEOUT_MS,
+    MAX_FIRST_FRAME_TIMEOUT_MS,
+  )
+}
+
+/** Maximum silence between forwardable events after the first. Zero disables. */
+export function getWindsurfStreamIdleTimeoutMs(): number {
+  return readBoundedInteger(
+    "WINDSURF_STREAM_IDLE_TIMEOUT_MS",
     DEFAULT_FIRST_FRAME_TIMEOUT_MS,
     MAX_FIRST_FRAME_TIMEOUT_MS,
   )

@@ -22,6 +22,25 @@ describe("Windsurf stream start", () => {
     expect(values).toEqual(["first", "second"])
   })
 
+  test.each([0, 50])(
+    "idle deadline resets per event, not per response (timeout=%s)",
+    async (timeoutMs) => {
+      async function* source() {
+        for (const value of ["a", "b", "c", "d"]) {
+          await Bun.sleep(20)
+          yield value
+        }
+      }
+      const primed = await primeWindsurfStream(source(), {
+        timeoutMs,
+        idleTimeoutMs: timeoutMs,
+      })
+      const values: Array<string> = []
+      for await (const value of primed) values.push(value)
+      expect(values).toEqual(["a", "b", "c", "d"])
+    },
+  )
+
   test("times out, runs cancellation, and closes the source", async () => {
     let cancelled = false
     let closed = false

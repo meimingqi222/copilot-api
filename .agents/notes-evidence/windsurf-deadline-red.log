@@ -1,0 +1,153 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/windsurf-first-frame.test.ts:
+159 |           const result = await createWindsurfChatCompletionsOnce(
+160 |             { connection, credential }, { ...payload, stream }, AbortSignal.timeout(250),
+161 |           )
+162 |           return Symbol.asyncIterator in result ? collectEvents(result) : result
+163 |         }
+164 |         await expect(run()).rejects.toThrow(stage === "mid-stream" ? "stream idle" : "first frame")
+                                          ^
+error: expect(received).toThrow(expected)
+
+Expected substring: "first frame"
+Received message: "The operation timed out."
+
+      at <anonymous> (tests/windsurf-first-frame.test.ts:164:37)
+(fail) Windsurf first-frame resilience > bounds auth stalls and frees the account (stream=false) [255.97ms]
+[warn] [windsurf] network error for windsurf-timeout, retry 1/1 in 822ms
+159 |           const result = await createWindsurfChatCompletionsOnce(
+160 |             { connection, credential }, { ...payload, stream }, AbortSignal.timeout(250),
+161 |           )
+162 |           return Symbol.asyncIterator in result ? collectEvents(result) : result
+163 |         }
+164 |         await expect(run()).rejects.toThrow(stage === "mid-stream" ? "stream idle" : "first frame")
+                                          ^
+error: expect(received).toThrow(expected)
+
+Expected substring: "first frame"
+Received message: "The operation timed out."
+
+      at <anonymous> (tests/windsurf-first-frame.test.ts:164:37)
+(fail) Windsurf first-frame resilience > bounds headers stalls and frees the account (stream=false) [253.37ms]
+[warn] [windsurf] stream ended without EOS trailer { req: 'chatcmpl-d48396f99b5b455497cc054a9f65ac50',
+  model: 'swe-test',
+  upstreamFrameCount: 1,
+  upstreamFrameBytes: 11,
+  decodedDeltaCount: 1 }
+(pass) Windsurf first-frame resilience > bounds first-frame stalls and frees the account (stream=false) [24.53ms]
+159 |           const result = await createWindsurfChatCompletionsOnce(
+160 |             { connection, credential }, { ...payload, stream }, AbortSignal.timeout(250),
+161 |           )
+162 |           return Symbol.asyncIterator in result ? collectEvents(result) : result
+163 |         }
+164 |         await expect(run()).rejects.toThrow(stage === "mid-stream" ? "stream idle" : "first frame")
+                                          ^
+error: expect(received).toThrow(expected)
+
+Expected substring: "stream idle"
+Received message: "The operation timed out."
+
+      at <anonymous> (tests/windsurf-first-frame.test.ts:164:37)
+(fail) Windsurf first-frame resilience > bounds mid-stream stalls and frees the account (stream=false) [250.10ms]
+159 |           const result = await createWindsurfChatCompletionsOnce(
+160 |             { connection, credential }, { ...payload, stream }, AbortSignal.timeout(250),
+161 |           )
+162 |           return Symbol.asyncIterator in result ? collectEvents(result) : result
+163 |         }
+164 |         await expect(run()).rejects.toThrow(stage === "mid-stream" ? "stream idle" : "first frame")
+                                          ^
+error: expect(received).toThrow(expected)
+
+Expected substring: "first frame"
+Received message: "The operation timed out."
+
+      at <anonymous> (tests/windsurf-first-frame.test.ts:164:37)
+(fail) Windsurf first-frame resilience > bounds auth stalls and frees the account (stream=true) [250.49ms]
+[warn] [windsurf] network error for windsurf-timeout, retry 1/1 in 1229ms
+159 |           const result = await createWindsurfChatCompletionsOnce(
+160 |             { connection, credential }, { ...payload, stream }, AbortSignal.timeout(250),
+161 |           )
+162 |           return Symbol.asyncIterator in result ? collectEvents(result) : result
+163 |         }
+164 |         await expect(run()).rejects.toThrow(stage === "mid-stream" ? "stream idle" : "first frame")
+                                          ^
+error: expect(received).toThrow(expected)
+
+Expected substring: "first frame"
+Received message: "The operation timed out."
+
+      at <anonymous> (tests/windsurf-first-frame.test.ts:164:37)
+(fail) Windsurf first-frame resilience > bounds headers stalls and frees the account (stream=true) [252.95ms]
+[warn] [windsurf] stream ended without EOS trailer { req: 'chatcmpl-efc206fa1dd541e08d95b1a74b2521a3',
+  model: 'swe-test',
+  upstreamFrameCount: 1,
+  upstreamFrameBytes: 11,
+  decodedDeltaCount: 1 }
+(pass) Windsurf first-frame resilience > bounds first-frame stalls and frees the account (stream=true) [22.45ms]
+159 |           const result = await createWindsurfChatCompletionsOnce(
+160 |             { connection, credential }, { ...payload, stream }, AbortSignal.timeout(250),
+161 |           )
+162 |           return Symbol.asyncIterator in result ? collectEvents(result) : result
+163 |         }
+164 |         await expect(run()).rejects.toThrow(stage === "mid-stream" ? "stream idle" : "first frame")
+                                          ^
+error: expect(received).toThrow(expected)
+
+Expected substring: "stream idle"
+Received message: "The operation timed out."
+
+      at <anonymous> (tests/windsurf-first-frame.test.ts:164:37)
+(fail) Windsurf first-frame resilience > bounds mid-stream stalls and frees the account (stream=true) [250.10ms]
+[warn] [windsurf] first frame timeout; retrying account { accountId: 'windsurf-timeout-account',
+  accountLabel: 'windsurf-timeout',
+  model: 'swe-test',
+  timeoutMs: 15,
+  retry: 1,
+  maxRetries: 1 }
+[warn] [windsurf] stream ended without EOS trailer { req: 'chatcmpl-41996581e8b14846ab09238fc30b4a80',
+  model: 'swe-test',
+  upstreamFrameCount: 1,
+  upstreamFrameBytes: 11,
+  decodedDeltaCount: 1 }
+(pass) Windsurf first-frame resilience > cancels a silent response and retries before returning output [19.80ms]
+(pass) Windsurf first-frame resilience > does not retry an error after the first output was exposed [1.62ms]
+
+tests/windsurf-connect-frames.test.ts:
+(pass) decodeConnectFrames > yields uncompressed protobuf frames [0.08ms]
+(pass) decodeConnectFrames > reports the first raw read and first complete frame once [0.25ms]
+(pass) decodeConnectFrames > yields compressed protobuf frames [0.96ms]
+86 |     const stream = new ReadableStream<Uint8Array>({
+87 |       start(controller) {
+88 |         controller.enqueue(encodeConnectFrame(new TextEncoder().encode("answer"), false))
+89 |         controller.enqueue(trailer.slice(0, 3))
+90 |         controller.enqueue(trailer.slice(3))
+91 |         timer = setTimeout(() => controller.error(new Error("waited for HTTP EOF after EOS")), 100)
+                                                           ^
+error: waited for HTTP EOF after EOS
+      at <anonymous> (tests/windsurf-connect-frames.test.ts:91:55)
+(fail) decodeConnectFrames > ends on a fragmented EOS without waiting for HTTP EOF (compressed=%s) [102.14ms]
+86 |     const stream = new ReadableStream<Uint8Array>({
+87 |       start(controller) {
+88 |         controller.enqueue(encodeConnectFrame(new TextEncoder().encode("answer"), false))
+89 |         controller.enqueue(trailer.slice(0, 3))
+90 |         controller.enqueue(trailer.slice(3))
+91 |         timer = setTimeout(() => controller.error(new Error("waited for HTTP EOF after EOS")), 100)
+                                                           ^
+error: waited for HTTP EOF after EOS
+      at <anonymous> (tests/windsurf-connect-frames.test.ts:91:55)
+(fail) decodeConnectFrames > ends on a fragmented EOS without waiting for HTTP EOF (compressed=%s) [102.34ms]
+(pass) decodeConnectFrames > skips clean end-of-stream trailer [0.36ms]
+(pass) decodeConnectFrames > throws on end-of-stream trailer carrying an error [0.14ms]
+(pass) decodeConnectFrames > throws on compressed end-of-stream trailer carrying an error [2.63ms]
+(pass) decodeConnectFrames > rejects oversized declared frame length [0.57ms]
+(pass) decodeConnectFrames > handles chunked frame delivery [0.18ms]
+(pass) decodeConnectFrames > handles many frames delivered in one chunk without quadratic copying [17.07ms]
+(pass) decodeConnectFrames > handles many compressed frames without per-frame web stream setup [14.96ms]
+(pass) decodeConnectFrames > rejects a compressed frame that expands beyond the safety limit [28.64ms]
+(pass) decodeConnectFrames > cancels the reader when the consumer stops early [0.35ms]
+
+ 16 pass
+ 8 fail
+ 47 expect() calls
+Ran 24 tests across 2 files. [2.01s]

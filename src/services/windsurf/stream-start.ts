@@ -8,9 +8,22 @@ export class WindsurfFirstFrameTimeoutError extends Error {
   }
 }
 
+export class WindsurfStreamIdleTimeoutError extends Error {
+  readonly timeoutMs: number
+
+  constructor(timeoutMs: number) {
+    super(`Windsurf stream idle timed out after ${timeoutMs}ms`)
+    this.name = "WindsurfStreamIdleTimeoutError"
+    this.timeoutMs = timeoutMs
+  }
+}
+
 interface PrimeStreamOptions {
   timeoutMs: number
-  onTimeout?: () => void
+  idleTimeoutMs?: number
+  onTimeout?: (
+    error: WindsurfFirstFrameTimeoutError | WindsurfStreamIdleTimeoutError,
+  ) => void
 }
 
 /**
@@ -23,22 +36,29 @@ export async function primeWindsurfStream<T>(
   options: PrimeStreamOptions,
 ): Promise<AsyncIterable<T>> {
   const iterator = source[Symbol.asyncIterator]()
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let timeoutError: WindsurfFirstFrameTimeoutError | undefined
 
-  const firstPromise = iterator.next()
-  const first = await (async () => {
+  async function read(first: boolean): Promise<IteratorResult<T>> {
+    const timeoutMs = first ? options.timeoutMs : (options.idleTimeoutMs ?? 0)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let timeoutError:
+      | WindsurfFirstFrameTimeoutError
+      | WindsurfStreamIdleTimeoutError
+      | undefined
     try {
-      if (options.timeoutMs === 0) return await firstPromise
+      const pending = iterator.next()
+      if (timeoutMs === 0) return await pending
       const timeout = new Promise<never>((_resolve, reject) => {
         timer = setTimeout(() => {
-          const error = new WindsurfFirstFrameTimeoutError(options.timeoutMs)
+          const error =
+            first ?
+              new WindsurfFirstFrameTimeoutError(timeoutMs)
+            : new WindsurfStreamIdleTimeoutError(timeoutMs)
           timeoutError = error
           reject(error)
-          options.onTimeout?.()
-        }, options.timeoutMs)
+          options.onTimeout?.(error)
+        }, timeoutMs)
       })
-      return await Promise.race([firstPromise, timeout])
+      return await Promise.race([pending, timeout])
     } catch (error) {
       try {
         await iterator.return?.()
@@ -49,7 +69,9 @@ export async function primeWindsurfStream<T>(
     } finally {
       if (timer) clearTimeout(timer)
     }
-  })()
+  }
+
+  const first = await read(true)
 
   let claimed = false
   return {
@@ -65,7 +87,7 @@ export async function primeWindsurfStream<T>(
             firstPending = false
             return first
           }
-          return iterator.next()
+          return read(false)
         },
         async return(value?: unknown): Promise<IteratorResult<T>> {
           firstPending = false

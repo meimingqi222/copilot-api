@@ -78,6 +78,42 @@ describe("decodeConnectFrames", () => {
     expect(new TextDecoder().decode(frames[0])).toBe("compressed payload")
   })
 
+  test.each([false, true])(
+    "ends on a fragmented EOS without waiting for HTTP EOF (compressed=%s)",
+    async (compressed) => {
+      let cancelled = false
+      let timer: ReturnType<typeof setTimeout>
+      const trailer = encodeConnectFrame(
+        new TextEncoder().encode("{}"),
+        compressed,
+      )
+      trailer[0] = compressed ? 0x03 : 0x02
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            encodeConnectFrame(new TextEncoder().encode("answer"), false),
+          )
+          controller.enqueue(trailer.slice(0, 3))
+          controller.enqueue(trailer.slice(3))
+          timer = setTimeout(
+            () => controller.error(new Error("waited for HTTP EOF after EOS")),
+            100,
+          )
+        },
+        cancel() {
+          clearTimeout(timer)
+          cancelled = true
+        },
+      })
+      const frames = await collectFrames(stream)
+      expect(frames.map((frame) => new TextDecoder().decode(frame))).toEqual([
+        "answer",
+      ])
+      expect(cancelled).toBe(true)
+      expect(stream.locked).toBe(false)
+    },
+  )
+
   test("skips clean end-of-stream trailer", async () => {
     const payload = new TextEncoder().encode("message")
     const msgFrame = encodeConnectFrame(payload, false)

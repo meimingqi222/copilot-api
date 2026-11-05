@@ -331,6 +331,7 @@ function decodeConnectFramePayload(
 }
 
 interface ConnectFrameDiagnostics {
+  onRead?: (bytes: number) => void
   onFirstRead?: (bytes: number) => void
   onFirstFrame?: (bytes: number) => void
   /** Invoked once per clean end-of-stream trailer (flag 0x02). */
@@ -354,6 +355,7 @@ export async function* decodeConnectFrames(
       if (done) {
         break
       }
+      diagnostics?.onRead?.(value.byteLength)
       if (!sawRead) {
         sawRead = true
         diagnostics?.onFirstRead?.(value.byteLength)
@@ -420,6 +422,8 @@ export async function* decodeConnectFrames(
         const decoded = decodeConnectFramePayload(flags, payload)
         if (!decoded && (flags & CONNECT_END_STREAM_FLAG) !== 0) {
           diagnostics?.onEndStream?.()
+          // Connect EOS ends the RPC; HTTP EOF can lag on a persistent transport.
+          return
         }
         if (!decoded) continue
         if (!sawFrame) diagnostics?.onFirstFrame?.(decoded.byteLength)
