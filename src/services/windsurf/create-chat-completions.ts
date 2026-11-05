@@ -734,7 +734,11 @@ export async function createWindsurfChatCompletionsOnce(
                 streamFactory: streamToOpenAI,
               })
               attemptTurnIndex ??= attempt.turnIndex
-              yield* attempt.stream
+              for await (const event of attempt.stream) {
+                // SSE consumers may close the iterator as soon as DONE arrives.
+                if (event.data === "[DONE]") outcome = "completed"
+                yield event
+              }
               outcome = "completed"
             } catch (error) {
               outcome =

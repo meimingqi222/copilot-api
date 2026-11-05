@@ -321,7 +321,11 @@ describe("Windsurf first-frame resilience", () => {
         { connection, credential },
         { ...payload, stream },
       )
-      if (Symbol.asyncIterator in result) await collectEvents(result)
+      if (Symbol.asyncIterator in result) {
+        for await (const event of result) {
+          if (event.data === "[DONE]") break
+        }
+      }
       const finished = diagnosticLogs.find(
         (entry) => entry.args[0] === "[windsurf] request finished",
       )

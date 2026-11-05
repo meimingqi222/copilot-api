@@ -38,6 +38,9 @@ counts and timing are recorded, never payloads, credentials or raw error text.
 Progress updates do not log per delta. Cancellation, timeout, error and completion
 are separate terminal outcomes. Diagnostics still work when deadlines are disabled;
 they report observed phases, not a verdict that connection reuse caused a stall.
+Mark completion before yielding `[DONE]`: the Chat SSE consumer closes the iterator
+at that event, so code after a delegated yield may never run. Closing after DONE
+is successful completion, not caller cancellation.
 
 ## Alternatives considered
 
@@ -62,7 +65,7 @@ No CCS settings or service deployment are changed by this patch.
   logs, no sensitive text, cancellation, no partial-response retry, and recovery.
 - `tests/windsurf-first-frame.test.ts::counts reasoning and tools without per-delta or content logs`
   checks successful info-level summaries, exact byte/frame/event counts and
-  bounded log volume in both modes.
+  bounded log volume in both modes, including a consumer that stops at DONE.
 - `tests/windsurf-first-frame.test.ts::records auth failure without a deadline or sensitive error text`
   checks failures are diagnosable with the deadline disabled.
 - `tests/windsurf-first-frame.test.ts::records caller cancellation separately from provider deadlines`
@@ -79,3 +82,8 @@ cases failed with the caller's fallback timeout instead of the expected provider
 error; two additional EOS decoder cases failed while waiting for HTTP EOF.
 The pre-fix output is retained in
 `.agents/notes-evidence/windsurf-deadline-red.log`.
+
+Proved: Stopping the streaming consumer at DONE on commit 6e81214 failed the
+existing successful-summary assertion (`cancelled` instead of `completed`);
+the same evidence file retains the focused red-run excerpt. The equivalent
+collected case passed, distinguishing consumer closure from upstream failure.

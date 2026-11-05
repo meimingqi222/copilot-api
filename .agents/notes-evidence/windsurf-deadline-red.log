@@ -151,3 +151,23 @@ error: waited for HTTP EOF after EOS
  8 fail
  47 expect() calls
 Ran 24 tests across 2 files. [2.01s]
+
+Follow-up red run on 6e81214: consumer closes at DONE.
+Command: bun test tests/windsurf-first-frame.test.ts -t 'counts reasoning'
+Excerpt (unrelated fields and local filesystem paths omitted):
+    "frames": 101,
+-   "outcome": "completed",
++   "outcome": "cancelled",
+    "phase": "streaming",
+    "readBytes": 1992,
+    "reasoningEvents": 1,
+    "sawEos": true,
+    "streaming": true,
+    "toolEvents": 2,
+(fail) Windsurf first-frame resilience > counts reasoning and tools without per-delta or content logs (stream=%s) [3.71ms]
+
+ 1 pass
+ 19 filtered out
+ 1 fail
+ 10 expect() calls
+Ran 2 tests across 1 file. [103.00ms]
