@@ -9,7 +9,7 @@ const TERMINALS = new Set([
 ])
 const FAILURES = new Set(["error", "response.failed"])
 
-export interface DiagnosticText {
+interface DiagnosticText {
   channel: string
   kind: "text" | "reasoning" | "tool"
   text: string

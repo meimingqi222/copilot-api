@@ -6,7 +6,7 @@ import { assertWritableDataPath, PATHS } from "~/lib/paths"
 import { logger } from "~/lib/logger"
 
 /** Callers MUST sanitize all fields before saving; this store does not redact. */
-export interface StreamIncidentRecord {
+interface StreamIncidentRecord {
   requestId: string
   createdAt: number
   [key: string]: unknown
