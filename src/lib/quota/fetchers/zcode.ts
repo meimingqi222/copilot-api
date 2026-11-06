@@ -161,16 +161,8 @@ function periodLabel(ms: number): string {
 
 function bucketPeriodMs(
   bucket: ZcodeStartBalance["balances"][number],
-  balance: ZcodeStartBalance,
+  plan: ZcodeStartBalance["plans"][number] | undefined,
 ): number {
-  const plan = balance.plans.find(
-    (p) =>
-      (bucket.userPlanId !== ""
-        && p.userPlanId !== ""
-        && bucket.userPlanId === p.userPlanId)
-      || ((bucket.userPlanId === "" || p.userPlanId === "")
-        && bucket.planId === p.planId),
-  )
   const period =
     bucket.entitlement ?
       plan?.entitlementPeriods.get(bucket.entitlement)
@@ -232,7 +224,15 @@ function buildStartSnapshot(balance: ZcodeStartBalance): ProviderQuotaSnapshot {
       )
       .filter(Boolean)
     const name = bucket.showName || models.join(", ") || "Credits"
-    const periodMs = bucketPeriodMs(bucket, balance)
+    const owner = balance.plans.find(
+      (plan) =>
+        (bucket.userPlanId !== ""
+          && plan.userPlanId !== ""
+          && bucket.userPlanId === plan.userPlanId)
+        || ((bucket.userPlanId === "" || plan.userPlanId === "")
+          && bucket.planId === plan.planId),
+    )
+    const periodMs = bucketPeriodMs(bucket, owner)
     // A periodic bucket renews at its period end; an expiry at that same
     // instant is the period boundary, not lost credit.
     const periodEnd =
@@ -243,6 +243,13 @@ function buildStartSnapshot(balance: ZcodeStartBalance): ProviderQuotaSnapshot {
       bucket.expiresAt !== undefined && bucket.expiresAt > 0 ?
         bucket.expiresAt * 1000
       : undefined
+    // A daily boundary can renew credits, but never extend their owner's plan.
+    const deadlines = [
+      expiresAt !== periodEnd ? expiresAt : undefined,
+      owner?.endsAt !== undefined && owner.endsAt > 0 ?
+        owner.endsAt * 1000
+      : undefined,
+    ].filter((deadline): deadline is number => deadline !== undefined)
     const w: ZcodeQuotaWindow = {
       name,
       usedPercent: 0,
@@ -261,7 +268,7 @@ function buildStartSnapshot(balance: ZcodeStartBalance): ProviderQuotaSnapshot {
         total,
         unit: "credits",
         resetsAtMs: periodEnd,
-        expiresAtMs: expiresAt !== periodEnd ? expiresAt : undefined,
+        expiresAtMs: deadlines.length > 0 ? Math.min(...deadlines) : undefined,
         scope: { models },
         aside: models.length === 0,
       },

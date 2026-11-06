@@ -19,6 +19,7 @@ import {
 import { enrichQuotaDetails } from "~/lib/quota/cycles"
 import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import { claudeAllowance } from "~/lib/quota/fetchers/claude"
+import { mergeQuotaAllowance } from "~/lib/quota/allowance"
 import type { ClaudeUsagePayload } from "~/lib/quota/parsers"
 import type { UsageIdentity } from "~/lib/usage"
 
@@ -138,9 +139,15 @@ export function recordClaudeRateLimit(
     provider: credential.quota?.provider ?? "claude",
     details: enrichQuotaDetails("claude", plain),
   }
-  // The quota apply path owns the primary credential; others keep display data.
+  // Secondary events update their own allowance, never account-wide waits.
   if (credential !== connection.credentials[0]) {
-    credential.quota = snapshot
+    credential.quota = {
+      ...snapshot,
+      allowance: mergeQuotaAllowance(
+        { ...claudeAllowance(measured, connection), partial: true },
+        credential.quota?.allowance,
+      ),
+    }
     return
   }
   applyOAuthQuotaSnapshot(connection, {

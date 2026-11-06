@@ -1,0 +1,119 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/copilot-reasoning-effort.test.ts:
+45 |   expect(snapshot.allowance?.windows[0]).toMatchObject({
+46 |     used: 1,
+47 |     unlimited: false,
+48 |     resetsAtMs: Date.parse("2026-12-01T00:00:00Z"),
+49 |   })
+50 |   expect(snapshot.allowance?.windows[0]?.aside).toBe(true)
+                                                     ^
+error: expect(received).toBe(expected)
+
+Expected: true
+Received: undefined
+
+      at <anonymous> (tests/copilot-reasoning-effort.test.ts:50:49)
+(fail) Copilot premium exhaustion is reporting-only without proven model billing scopes [0.33ms]
+(pass) sanitizeReasoningEffortForCopilot > passes through the values Copilot accepts [0.02ms]
+(pass) sanitizeReasoningEffortForCopilot > drops the translation-pipeline-only values
+(pass) sanitizeReasoningEffortForCopilot > clamps max to Copilot's highest tier instead of forwarding it
+(pass) Copilot model discovery keeps the levels the catalog advertises [0.23ms]
+
+tests/oauth-zcode.test.ts:
+(pass) zcode registration > zcode is an OAuth provider on the zcode-native protocol [0.02ms]
+(pass) zcode registration > strategy and refresh wiring exist [0.03ms]
+(pass) zcode sign-in start > parses the flow and appends the redirect [0.34ms]
+(pass) zcode key minting > finds an existing zcode-api-key and reads its secret [0.20ms]
+(pass) zcode credential landing > applyZcodeOAuthBundle stores key + base + site [0.08ms]
+(pass) zcode credential landing > applyZcodeOAuthBundle keeps the session JWT for the Start Plan
+(pass) zcode-native adapter > posts to the Anthropic endpoint with x-api-key + Bearer [0.35ms]
+(pass) zcode quota parsing > reads 5h + weekly windows from percentage and usage [0.07ms]
+(pass) zcode quota parsing > a spent monthly tool-call limit does not stop chat [0.07ms]
+(pass) zcode Start Plan (temporary credits) > empty Start Plan refresh clears stale quota, blocks routing and recovers after renewal [1.07ms]
+(pass) zcode Start Plan (temporary credits) > expired Start Plan refresh clears stale quota, blocks routing and recovers after renewal [0.18ms]
+(pass) zcode Start Plan (temporary credits) > Start Plan quota still rejects upstream and sign-in failures [0.12ms]
+(pass) zcode Start Plan (temporary credits) > malformed Start Plan balance is not an inactive-plan reading [0.10ms]
+(pass) zcode Start Plan (temporary credits) > twenty cold requests share one bounded probe and cancellation only drops its waiter [1.19ms]
+(pass) zcode Start Plan (temporary credits) > route probes time out and preserve cached routes during background refresh [44.26ms]
+(pass) zcode Start Plan (temporary credits) > route follows the subscription list [0.04ms]
+(pass) zcode Start Plan (temporary credits) > route stays on the coding plan while a subscription is VALID [0.03ms]
+(pass) zcode Start Plan (temporary credits) > route falls back to an active Start Plan when subscriptions fail [0.08ms]
+610 |     const window = snapshot.allowance?.windows.find((w) => !w.aside)
+611 |     expect(window).toMatchObject({
+612 |       remaining: 0,
+613 |       resetsAtMs: periodEnd * 1000,
+614 |     })
+615 |     expect(window?.expiresAtMs).toBe(ownerEnd * 1000)
+                                      ^
+error: expect(received).toBe(expected)
+
+Expected: 1796526509000
+Received: undefined
+
+      at <anonymous> (tests/oauth-zcode.test.ts:615:33)
+(fail) zcode Start Plan (temporary credits) > daily bucket admission respects its owner's deadline: ordinary [0.22ms]
+610 |     const window = snapshot.allowance?.windows.find((w) => !w.aside)
+611 |     expect(window).toMatchObject({
+612 |       remaining: 0,
+613 |       resetsAtMs: periodEnd * 1000,
+614 |     })
+615 |     expect(window?.expiresAtMs).toBe(ownerEnd * 1000)
+                                      ^
+error: expect(received).toBe(expected)
+
+Expected: 1793938109000
+Received: undefined
+
+      at <anonymous> (tests/oauth-zcode.test.ts:615:33)
+(fail) zcode Start Plan (temporary credits) > daily bucket admission respects its owner's deadline: final [0.07ms]
+610 |     const window = snapshot.allowance?.windows.find((w) => !w.aside)
+611 |     expect(window).toMatchObject({
+612 |       remaining: 0,
+613 |       resetsAtMs: periodEnd * 1000,
+614 |     })
+615 |     expect(window?.expiresAtMs).toBe(ownerEnd * 1000)
+                                      ^
+error: expect(received).toBe(expected)
+
+Expected: 1793936309000
+Received: undefined
+
+      at <anonymous> (tests/oauth-zcode.test.ts:615:33)
+(fail) zcode Start Plan (temporary credits) > daily bucket admission respects its owner's deadline: early-owner-end [0.06ms]
+610 |     const window = snapshot.allowance?.windows.find((w) => !w.aside)
+611 |     expect(window).toMatchObject({
+612 |       remaining: 0,
+613 |       resetsAtMs: periodEnd * 1000,
+614 |     })
+615 |     expect(window?.expiresAtMs).toBe(ownerEnd * 1000)
+                                      ^
+error: expect(received).toBe(expected)
+
+Expected: 1793938109000
+Received: undefined
+
+      at <anonymous> (tests/oauth-zcode.test.ts:615:33)
+(fail) zcode Start Plan (temporary credits) > daily bucket admission respects its owner's deadline: no-bucket-expiry [0.06ms]
+(pass) zcode Start Plan (temporary credits) > no JWT never leaves the coding plan [0.04ms]
+(pass) zcode Start Plan balance parsing > expired plans take their buckets with them (temporary credits) [0.04ms]
+(pass) zcode Start Plan balance parsing > plan name matching covers start-plan and 体验 [0.02ms]
+(pass) zcode Start Plan balance parsing > jwt expiry is read from exp [0.01ms]
+(pass) zcode Start Plan request shaping > system is replaced by ZCode blocks, date reminder prepended, cache moved to the last turn [1.44ms]
+(pass) zcode Start Plan request shaping > a body already carrying the ZCode prefix is left alone [0.01ms]
+(pass) zcode-native adapter — Start Plan > a Start Plan account posts JWT + ZCode fingerprint to zcode.z.ai [1.21ms]
+(pass) zcode-native adapter — Start Plan > GLM-5.3 is refused on the Start Plan before any upstream call [0.06ms]
+(pass) zcode-native adapter — Start Plan > an expired JWT asks to sign in again [0.04ms]
+(pass) zcode-native adapter — Start Plan > a 405 unusual-activity block is explained, not forwarded raw [0.30ms]
+
+5 tests failed:
+(fail) Copilot premium exhaustion is reporting-only without proven model billing scopes [0.33ms]
+(fail) zcode Start Plan (temporary credits) > daily bucket admission respects its owner's deadline: ordinary [0.22ms]
+(fail) zcode Start Plan (temporary credits) > daily bucket admission respects its owner's deadline: final [0.07ms]
+(fail) zcode Start Plan (temporary credits) > daily bucket admission respects its owner's deadline: early-owner-end [0.06ms]
+(fail) zcode Start Plan (temporary credits) > daily bucket admission respects its owner's deadline: no-bucket-expiry [0.06ms]
+
+ 32 pass
+ 5 fail
+ 125 expect() calls
+Ran 37 tests across 2 files. [149.00ms]

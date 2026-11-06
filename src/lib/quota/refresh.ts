@@ -17,7 +17,7 @@ function quotaRefreshIsCurrent(connection: ProviderConnection): () => boolean {
   const credential = connection.credentials.at(0)
   const value = credential?.value
   const context = JSON.stringify(credential?.context)
-  const fetchedAt = credential?.quota?.fetchedAt ?? -Infinity
+  const quota = credential?.quota
   return () =>
     getMutableProviderConnection(connection.id) === connection
     && connection.enabled
@@ -27,8 +27,9 @@ function quotaRefreshIsCurrent(connection: ProviderConnection): () => boolean {
     && credential.status !== "disabled"
     && credential.value === value
     && JSON.stringify(credential.context) === context
-    // Response events keep the poll's `fetchedAt`; only a newer reading wins.
-    && (credential.quota?.fetchedAt ?? -Infinity) <= fetchedAt
+    // Events replace the snapshot but keep the poll clock. Identity detects
+    // intervening observations even when fetchedAt is unchanged.
+    && credential.quota === quota
 }
 
 /** Shared guarded fetch/apply boundary used by provider-owned runtimes. */

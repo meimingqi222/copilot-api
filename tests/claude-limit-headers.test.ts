@@ -14,12 +14,69 @@ import {
   recordClaudeRateLimit,
 } from "~/services/claude/limit-headers"
 
-import { testConnection } from "./claude-cli-fixtures"
+import { testConnection, testCredential } from "./claude-cli-fixtures"
+import { quotaAvailability } from "~/lib/quota/allowance"
 
 const FIVE = Date.parse("2026-11-01T05:00:00Z") / 1000
 const WEEK = Date.parse("2026-11-07T00:00:00Z") / 1000
 
 afterEach(() => __resetProviderConnectionsForTest())
+
+test.each([0.2, 1])(
+  "secondary events update typed allowance without changing account waits (used=%s)",
+  (used) => {
+    const connection = connectionWithQuota()
+    const primary = connection.credentials.at(0)!
+    const primaryQuota = primary.quota
+    const secondary = testCredential({
+      id: "secondary",
+      status: "cooldown",
+      cooldownUntil: Date.now() + 60_000,
+      quota: {
+        fetchedAt: Date.now(),
+        unlimited: false,
+        allowance: {
+          state: "known",
+          windows: [{ id: "five_hour", used: 1 - used }],
+        },
+      },
+    })
+    connection.credentials.push(secondary)
+    recordClaudeRateLimit(connection.id, secondary.id, {
+      unifiedWindows: { five_hour: { utilization: used } },
+    })
+    expect(secondary.quota?.allowance?.windows[0]?.used).toBe(used)
+    expect(quotaAvailability(secondary.quota!)).toBe(
+      used === 1 ? "exhausted" : "available",
+    )
+    expect(secondary.status).toBe("cooldown")
+    expect(secondary.cooldownUntil).toBeGreaterThan(Date.now())
+    expect(primary.quota).toBe(primaryQuota)
+    expect(primary.status).toBe("ready")
+  },
+)
+
+test.each([false, true])(
+  "fresh usage does not inherit an expired reset (expired=%s)",
+  (expired) => {
+    const connection = connectionWithQuota()
+    const credential = connection.credentials.at(0)!
+    const reset = Date.now() + (expired ? -60_000 : 60_000)
+    credential.quota!.allowance = {
+      state: "known",
+      windows: [{ id: "five_hour", used: 0.2, resetsAtMs: reset }],
+    }
+    recordClaudeRateLimit(connection.id, credential.id, {
+      unifiedWindows: { five_hour: { utilization: 1 } },
+    })
+    const updated = getProviderConnection(connection.id)!.credentials.at(0)!
+    expect(updated.status).toBe("quota_exhausted")
+    expect(updated.quota?.allowance?.windows[0]?.used).toBe(1)
+    expect(updated.quota?.allowance?.windows[0]?.resetsAtMs).toBe(
+      expired ? undefined : reset,
+    )
+  },
+)
 
 function connectionWithQuota() {
   const connection = testConnection()

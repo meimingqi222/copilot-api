@@ -80,8 +80,6 @@ export function snapshotFromCopilotUsage(
   const unlimited = Boolean(
     premium?.unlimited || chat?.unlimited || completions?.unlimited,
   )
-  // Organization seats are paused by the org whatever `overage_permitted` says.
-  const managed = /^(business|enterprise)$/i.test(usage.copilot_plan ?? "")
   const resetsAtMs = Date.parse(
     usage.quota_reset_date_utc ?? usage.quota_reset_date ?? "",
   )
@@ -137,14 +135,10 @@ export function snapshotFromCopilotUsage(
             ],
           },
         }
-        // Premium requests limit the whole account (as in magpie): the catalog
-        // cannot say which models are premium. Paid overage on a personal plan
-        // keeps it serving; completions never stop chat traffic.
-      : (
-        id === "completions" || (product.overage_permitted === true && !managed)
-      ) ?
-        { aside: true }
-      : {}),
+        // No proven model-to-premium billing mapping exists in the catalog.
+        // Premium (including pooled/overage products) and completions report
+        // usage without excluding included chat models from admission.
+      : { aside: true }),
     })
   }
 

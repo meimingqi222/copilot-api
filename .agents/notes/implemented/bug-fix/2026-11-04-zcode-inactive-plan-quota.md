@@ -22,6 +22,13 @@ exact model-capability scopes and real credit expiry, not a reset. The common
 apply path clears the previous account-wide lock on trusted scoped capacity;
 per-model admission still excludes models outside depleted applicable pools.
 
+Each bucket retains the matching owner's `endsAt` as an independent expiry,
+using `userPlanId` when both sides supply it (otherwise `planId`). An ordinary
+daily `expires_at = period_end` is a renewal, but the final daily boundary
+must never renew past the owner's deadline. Preserve that deadline even when
+the bucket has no expiry; an earlier non-renewal bucket expiry still wins.
+The first active Start Plan's summary deadline cannot stand in for ownership.
+
 `src/services/zcode/start-plan.ts` requires the successful balance payload to
 contain both plans and balances arrays. Missing/malformed payloads and HTTP or
 sign-in failures remain errors, rather than falsely exhausting the account.
@@ -46,9 +53,16 @@ The separate ZCode cold-probe concurrency contract is unchanged.
 
 - `tests/oauth-zcode.test.ts::Start Plan refresh clears stale quota, blocks routing and recovers after renewal`
 - `tests/oauth-zcode.test.ts::malformed Start Plan balance is not an inactive-plan reading`
+- `tests/oauth-zcode.test.ts::daily bucket admission respects its owner's deadline`
 - `tests/quota-display-mode.test.ts::ZCode without an active plan shows a status instead of stale credit or unlimited quota`
 
 Proved: Pre-fix tests rejected empty/expired successful refreshes, returned no
 inactive-plan display row, and accepted a malformed balance as an inactive plan.
 The failing assertions are retained in
 `.agents/notes-evidence/zcode-inactive-plan-red.log`; all pass after the fixes.
+
+Proved: Before preserving the owner deadline, all four daily-boundary cases
+failed the expiry assertion (received undefined) in
+`.agents/notes-evidence/copilot-zcode-provider-boundaries-red.log`. After the
+fix, ordinary renewal restores route admission while final expiry, an earlier
+owner deadline, and a missing bucket expiry cannot restore a route.

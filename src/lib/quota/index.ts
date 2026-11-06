@@ -11,10 +11,7 @@ import {
 } from "~/lib/provider-connections"
 import { liftRestAfterQuotaRecovery } from "~/lib/quota/recovery"
 import { clearAccountPacingState } from "~/lib/rate-limit"
-import {
-  normalizeQuotaAllowance,
-  quotaAvailability,
-} from "~/lib/quota/allowance"
+import { mergeQuotaAllowance, quotaAvailability } from "~/lib/quota/allowance"
 
 /**
  * 拉取 OAuth provider 配额快照(connection 原生)。
@@ -49,20 +46,10 @@ export function applyOAuthQuotaSnapshot(
   const previous = connection.credentials.at(0)?.quota
   if (previous && previous.fetchedAt > snapshot.fetchedAt) return
   if (snapshot.allowance) {
-    const allowance = normalizeQuotaAllowance(snapshot.allowance)
-    if (allowance.partial && previous?.allowance) {
-      // An event updates only the fields it measured: a reset-only event keeps
-      // the stored usage, and a usage-only event keeps the stored reset.
-      const windows = new Map(
-        previous.allowance.windows.map((window) => [window.id, window]),
-      )
-      for (const window of allowance.windows)
-        windows.set(window.id, { ...windows.get(window.id), ...window })
-      allowance.windows = [...windows.values()]
-      if (allowance.state === "unknown")
-        allowance.state = previous.allowance.state
-    }
-    snapshot.allowance = allowance
+    snapshot.allowance = mergeQuotaAllowance(
+      snapshot.allowance,
+      previous?.allowance,
+    )
   }
   setConnectionQuotaInfo(connection, snapshot)
   // Keep the plan reading beside the snapshot: a later refresh that fails

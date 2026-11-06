@@ -72,6 +72,32 @@ export function normalizeQuotaAllowance(value: QuotaAllowance): QuotaAllowance {
   }
 }
 
+/** Merge only measured event fields, without inheriting an expired cycle. */
+export function mergeQuotaAllowance(
+  value: QuotaAllowance,
+  previous?: QuotaAllowance,
+  now = Date.now(),
+): QuotaAllowance {
+  const allowance = normalizeQuotaAllowance(value)
+  if (!allowance.partial || !previous) return allowance
+  const windows = new Map(previous.windows.map((window) => [window.id, window]))
+  for (const window of allowance.windows) {
+    const stored = windows.get(window.id)
+    const merged = { ...stored, ...window }
+    if (
+      (window.used !== undefined || window.remaining !== undefined)
+      && window.resetsAtMs === undefined
+      && stored?.resetsAtMs !== undefined
+      && stored.resetsAtMs <= now
+    )
+      merged.resetsAtMs = undefined
+    windows.set(window.id, merged)
+  }
+  allowance.windows = [...windows.values()]
+  if (allowance.state === "unknown") allowance.state = previous.state
+  return allowance
+}
+
 /** No provider names, labels, currencies or model-family guesses here. */
 export function quotaWindowApplies(
   window: QuotaWindow,

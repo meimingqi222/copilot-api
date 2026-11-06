@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test"
 
 import { managedConnectionFromInput } from "~/lib/provider-connections"
+import { applyOAuthQuotaSnapshot } from "~/lib/quota"
+import { buildRouteTargets } from "~/lib/route-target"
 import { quotaAvailability } from "~/lib/quota/allowance"
 import { snapshotFromCopilotUsage } from "~/lib/quota/fetchers/copilot"
 import { sanitizeReasoningEffortForCopilot } from "~/services/copilot/create-chat-completions-once"
 import { copilotProviderRuntime } from "~/services/providers/copilot"
 
-test("Copilot premium requests limit the whole account unless a personal plan pays overage", () => {
+test("Copilot premium exhaustion is reporting-only without proven model billing scopes", () => {
   const connection = managedConnectionFromInput({
     provider: "copilot",
     id: "copilot-quota",
@@ -35,7 +37,7 @@ test("Copilot premium requests limit the whole account unless a personal plan pa
         ...premium,
       },
       chat: { remaining: 0, entitlement: 0, unlimited: true },
-      completions: { remaining: 0, entitlement: 0, unlimited: true },
+      completions: { remaining: 0, entitlement: 50, unlimited: false },
     },
   })
   const snapshot = snapshotFromCopilotUsage(usage({}), connection)
@@ -45,19 +47,20 @@ test("Copilot premium requests limit the whole account unless a personal plan pa
     unlimited: false,
     resetsAtMs: Date.parse("2026-12-01T00:00:00Z"),
   })
-  expect(snapshot.allowance?.windows[0]?.aside).toBeUndefined()
-  expect(quotaAvailability(snapshot, "native")).toBe("exhausted")
+  expect(snapshot.allowance?.windows[0]?.aside).toBe(true)
+  expect(quotaAvailability(snapshot, "native")).toBe("available")
   expect(snapshot.allowance?.windows[1]).toMatchObject({
     unlimited: true,
     scope: { models: ["native"] },
   })
   expect(snapshot.allowance?.windows[1]?.used).toBeUndefined()
   expect(snapshot.allowance?.windows[2]).toMatchObject({
-    unlimited: true,
+    used: 1,
+    unlimited: false,
     aside: true,
   })
 
-  // Paid overage keeps a personal plan serving; an organization seat is paused.
+  // Neither paid overage nor an organization seat proves model billing scope.
   const overage = { overage_permitted: true }
   expect(
     quotaAvailability(
@@ -70,8 +73,8 @@ test("Copilot premium requests limit the whole account unless a personal plan pa
       snapshotFromCopilotUsage(usage(overage, "business"), connection),
       "native",
     ),
-  ).toBe("exhausted")
-  // A pooled "unlimited" product without quota is spent.
+  ).toBe("available")
+  // A pooled "unlimited" product without quota is spent, but reporting-only.
   expect(
     quotaAvailability(
       snapshotFromCopilotUsage(
@@ -80,7 +83,39 @@ test("Copilot premium requests limit the whole account unless a personal plan pa
       ),
       "native",
     ),
-  ).toBe("exhausted")
+  ).toBe("available")
+  expect(snapshot.premiumInteractionsRemaining).toBe(0)
+  applyOAuthQuotaSnapshot(connection, snapshot)
+  const routes = () =>
+    buildRouteTargets({
+      connections: [connection],
+      publicModelId: "premium-looking",
+      endpoint: "chat",
+    })
+  expect(routes()).toHaveLength(1)
+  for (const reading of [
+    usage(overage),
+    usage(overage, "business"),
+    usage({}, "enterprise"),
+    usage({ unlimited: true, has_quota: false }),
+  ]) {
+    applyOAuthQuotaSnapshot(
+      connection,
+      snapshotFromCopilotUsage(reading, connection),
+    )
+    expect(routes()).toHaveLength(1)
+  }
+  const chatSpent = usage({ overage_permitted: true })
+  chatSpent.quota_snapshots!.chat = {
+    remaining: 0,
+    entitlement: 50,
+    unlimited: false,
+  }
+  const depleted = snapshotFromCopilotUsage(chatSpent, connection)
+  expect(quotaAvailability(depleted, "native")).toBe("exhausted")
+  expect(quotaAvailability(depleted, "unrelated-native")).toBe("unknown")
+  applyOAuthQuotaSnapshot(connection, depleted)
+  expect(routes()).toEqual([])
   expect(snapshotFromCopilotUsage({}, connection).allowance).toEqual({
     state: "unknown",
     windows: [],

@@ -8,6 +8,7 @@ import {
 } from "~/lib/provider-connections"
 import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import { quotaAvailability } from "~/lib/quota/allowance"
+import { buildRouteTargets } from "~/lib/route-target"
 import {
   getOAuthProviderDescriptor,
   isOAuthProviderId,
@@ -556,51 +557,96 @@ describe("zcode Start Plan (temporary credits)", () => {
     expect(await resolveZcodeRoute(conn, conn.credentials[0]!)).toBe("start")
   })
 
-  test("a spent daily bucket renews at its period end instead of expiring", async () => {
-    const now = Math.floor(Date.now() / 1000)
-    const periodEnd = now + 3600
-    globalThis.fetch = (async (url: string | URL) => {
-      if (String(url).includes("/api/biz/subscription/list")) {
-        return jsonResponse({ code: 0, data: [] })
-      }
-      return jsonResponse({
-        code: 0,
-        data: {
-          server_time: now,
-          plans: [
-            {
-              plan_id: "start-plan",
-              user_plan_id: "up1",
-              name: "Start Plan",
-              status: "active",
-              ends_at: now + 30 * 86400,
-              entitlements: [{ entitlement_id: "e1", period: "daily" }],
-            },
-          ],
-          balances: [
-            {
-              plan_id: "start-plan",
-              user_plan_id: "up1",
-              entitlement_id: "e1",
-              capabilities: ["model:GLM-5.2"],
-              total_units: 100,
-              used_units: 100,
-              remaining_units: 0,
-              period_end: periodEnd,
-              expires_at: periodEnd,
-            },
-          ],
+  test.each(["ordinary", "final", "early-owner-end", "no-bucket-expiry"])(
+    "daily bucket admission respects its owner's deadline: %s",
+    async (boundary) => {
+      const now = Math.floor(Date.now() / 1000)
+      const periodEnd = now + 3600
+      const ownerEnd =
+        boundary === "ordinary" ? now + 30 * 86400
+        : boundary === "early-owner-end" ? now + 1800
+        : periodEnd
+      globalThis.fetch = (async (url: string | URL) => {
+        if (String(url).includes("/api/biz/subscription/list")) {
+          return jsonResponse({ code: 0, data: [] })
+        }
+        return jsonResponse({
+          code: 0,
+          data: {
+            server_time: now,
+            plans: [
+              {
+                plan_id: "start-plan",
+                user_plan_id: "other-owner",
+                name: "Start Plan",
+                status: "active",
+                ends_at: now + 60 * 86400,
+                entitlements: [{ entitlement_id: "e1", period: "daily" }],
+              },
+              {
+                plan_id: "start-plan",
+                user_plan_id: "up1",
+                name: "Start Plan",
+                status: "active",
+                ends_at: ownerEnd,
+                entitlements: [{ entitlement_id: "e1", period: "daily" }],
+              },
+            ],
+            balances: [
+              {
+                plan_id: "start-plan",
+                user_plan_id: "up1",
+                entitlement_id: "e1",
+                capabilities: ["model:GLM-5.2"],
+                total_units: 100,
+                used_units: 100,
+                remaining_units: 0,
+                period_end: periodEnd,
+                expires_at:
+                  boundary === "no-bucket-expiry" ? undefined : periodEnd,
+              },
+            ],
+          },
+        })
+      }) as typeof fetch
+      const conn = startPlanConnection()
+      conn.models = [
+        {
+          publicId: "included",
+          upstreamId: "GLM-5.2",
+          endpoints: ["messages"],
+          enabled: true,
         },
+      ]
+      const snapshot = await fetchZcodeQuota(conn)
+      const window = snapshot.allowance?.windows.find((w) => !w.aside)
+      expect(window).toMatchObject({
+        remaining: 0,
+        resetsAtMs: periodEnd * 1000,
       })
-    }) as typeof fetch
-    const snapshot = await fetchZcodeQuota(startPlanConnection())
-    const window = snapshot.allowance?.windows.find((w) => !w.aside)
-    expect(window).toMatchObject({
-      remaining: 0,
-      resetsAtMs: periodEnd * 1000,
-    })
-    expect(window?.expiresAtMs).toBeUndefined()
-  })
+      expect(window?.expiresAtMs).toBe(ownerEnd * 1000)
+      applyOAuthQuotaSnapshot(conn, snapshot)
+      const routes = () =>
+        buildRouteTargets({
+          connections: [conn],
+          publicModelId: "included",
+          endpoint: "messages",
+        })
+      expect(routes()).toEqual([])
+      const clock = spyOn(Date, "now").mockReturnValue(periodEnd * 1000 + 1)
+      try {
+        if (boundary === "ordinary") {
+          expect(quotaAvailability(snapshot, "GLM-5.2")).not.toBe("exhausted")
+          expect(routes()).toHaveLength(1)
+          clock.mockReturnValue(ownerEnd * 1000)
+        }
+        expect(quotaAvailability(snapshot, "GLM-5.2")).toBe("exhausted")
+        expect(routes()).toEqual([])
+      } finally {
+        clock.mockRestore()
+      }
+    },
+  )
 
   test("no JWT never leaves the coding plan", async () => {
     const conn = createConnection()

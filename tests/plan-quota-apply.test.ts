@@ -19,6 +19,7 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 import {
   __resetPlanAllowanceMirrorForTest,
   noteSnapshotReading,
+  noteReadingFailure,
   planAccountFor,
   planAllowanceFor,
   planWindowsFromSnapshot,
@@ -37,6 +38,7 @@ import {
   setConnectionCredentialExtra,
 } from "~/lib/provider-connections"
 import { routeEvidenceFor } from "~/lib/route-target"
+import { recordClaudeRateLimit } from "~/services/claude/limit-headers"
 
 const MINUTE = 60_000
 const HOUR = 3_600_000
@@ -75,6 +77,7 @@ describe("recordAllowanceReading", () => {
   let filePath: string
 
   beforeEach(async () => {
+    __resetProviderConnectionsForTest()
     tempDir = await fs.mkdtemp(
       path.join(os.tmpdir(), `plan-quota-apply-${randomUUID()}-`),
     )
@@ -148,6 +151,56 @@ describe("recordAllowanceReading", () => {
     expect(served?.stale).toBe(true)
     expect(served?.windows).toEqual(windows)
   })
+
+  test.each([false, true])(
+    "pending persistence and a later failure retain same-clock response observations (persisted=%s)",
+    async (persisted) => {
+      const conn = await claudeConnection("mirror-race", "mirror@example.com")
+      const now = Date.now()
+      const credential = conn.credentials.at(0)!
+      credential.quota = {
+        fetchedAt: now,
+        unlimited: false,
+        allowance: {
+          state: "known",
+          windows: [{ id: "five_hour", used: 0.2 }],
+        },
+      }
+      const pending = recordAllowanceReading(
+        {
+          provider: "claude",
+          user: "mirror@example.com",
+          windows: [{ id: "five_hour", used: 0.2 }],
+        },
+        now,
+      )
+      if (persisted) await pending
+      recordClaudeRateLimit(conn.id, credential.id, {
+        unifiedWindows: { five_hour: { utilization: 1 } },
+      })
+      await pending
+      expect(
+        planAllowanceFor("claude", "mirror@example.com")?.windows[0]?.used,
+      ).toBe(1)
+      // The durable copy is deliberately older; events are memory-only.
+      expect(
+        (await lastReading("claude", "mirror@example.com", now))?.windows[0]
+          ?.used,
+      ).toBe(0.2)
+      await noteReadingFailure(conn, new Error("503 service unavailable"))
+      const replay = planAllowanceFor("claude", "mirror@example.com")
+      expect(replay?.windows[0]?.used).toBe(1)
+      expect(replay?.stale).toBe(true)
+      credential.quota!.fetchedAt = now - 2 * HOUR
+      expect(
+        routeEvidenceFor(
+          conn.id,
+          conn.credentials.at(0)!.id,
+          "claude-sonnet-4-5",
+        ).quota?.usedFraction,
+      ).toBe(1)
+    },
+  )
 
   test("a replay advances windows that renewed since the reading", async () => {
     await recordAllowanceReading(

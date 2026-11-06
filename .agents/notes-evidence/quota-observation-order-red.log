@@ -1,0 +1,160 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/claude-limit-headers.test.ts:
+(pass) fresh usage does not inherit an expired reset (expired=%s) [0.45ms]
+31 |   }
+32 |   recordClaudeRateLimit(connection.id, credential.id, {
+33 |     unifiedWindows: { five_hour: { utilization: 1 } },
+34 |   })
+35 |   const updated = getProviderConnection(connection.id)!.credentials.at(0)!
+36 |   expect(updated.status).toBe("quota_exhausted")
+                              ^
+error: expect(received).toBe(expected)
+
+Expected: "quota_exhausted"
+Received: "ready"
+
+      at <anonymous> (tests/claude-limit-headers.test.ts:36:26)
+(fail) fresh usage does not inherit an expired reset (expired=%s) [0.13ms]
+(pass) headers carry a 0-1 share and a Unix-seconds reset per window, as Anthropic's do [0.05ms]
+(pass) a reply carries them on both the JSON and the streamed response [0.95ms]
+(pass) Claude Code's rate_limit_event updates the account's windows for the next reply [0.04ms]
+(pass) CLI events apply exhaustion but leave recovery, waits and the poll clock to the poll [0.10ms]
+(pass) the translator hands Claude Code's rate_limit_event over, not to the client [0.35ms]
+
+tests/provider-runtime-operations.test.ts:
+43 |   pending.resolve({
+44 |     fetchedAt: polledAt + 1,
+45 |     unlimited: false,
+46 |     allowance: { state: "known", windows: [{ id: "five_hour", used: 0.2 }] },
+47 |   })
+48 |   expect(await refreshing).toBeUndefined()
+                                ^
+error: expect(received).toBeUndefined()
+
+Received: {
+  fetchedAt: 1793934460940,
+  unlimited: false,
+  allowance: {
+    state: "known",
+    windows: [
+      {
+        id: "five_hour",
+        used: 0.2,
+      }
+    ],
+  },
+}
+
+      at <anonymous> (tests/provider-runtime-operations.test.ts:48:28)
+(fail) a real Claude event defeats an older in-flight poll without moving the poll clock [1.45ms]
+(pass) provider-owned operations update connection models and quota without central dispatch [0.44ms]
+(pass) provider-owned operations never run for another provider's connection [0.04ms]
+(pass) Copilot compatibility refresh delegates once and preserves skipSave=%s [0.45ms]
+(pass) Copilot compatibility refresh delegates once and preserves skipSave=%s [0.03ms]
+(pass) quota refresh discards a result after deleted connection [0.06ms]
+(pass) quota refresh discards a result after replaced connection [0.03ms]
+(pass) quota refresh discards a result after disabled connection
+(pass) quota refresh discards a result after disabled credential
+(pass) quota refresh discards a result after replaced credential [0.01ms]
+(pass) quota refresh discards a result after rotated access token
+(pass) quota refresh discards a result after rotated refresh context [0.01ms]
+(pass) quota refresh discards a result after newer response observation
+(pass) a provider renewing its own token before the poll keeps the reading [0.06ms]
+
+tests/plan-quota-apply.test.ts:
+(pass) recordAllowanceReading > a good reading is stored and replaces the last one [0.79ms]
+(pass) recordAllowanceReading > a passing error replays the last reading as stale [0.33ms]
+160 |     noteSnapshotReading(conn, {
+161 |       fetchedAt: now, unlimited: false,
+162 |       allowance: { state: "known", partial: true, windows: [{ id: "five_hour", used: 1 }] },
+163 |     })
+164 |     await pending
+165 |     expect(planAllowanceFor("claude", "mirror@example.com")?.windows[0]?.used).toBe(1)
+                                                                                     ^
+error: expect(received).toBe(expected)
+
+Expected: 1
+Received: 0.2
+
+      at <anonymous> (tests/plan-quota-apply.test.ts:165:80)
+(fail) recordAllowanceReading > pending persistence and a later failure retain same-clock response observations [0.40ms]
+(pass) recordAllowanceReading > a replay advances windows that renewed since the reading [0.35ms]
+(pass) recordAllowanceReading > a terminal error leaves the stored reading alone [0.31ms]
+(pass) recordAllowanceReading > a passing error with nothing stored is not a reading [0.12ms]
+(pass) planWindowsFromSnapshot > reads the canonical window list, scoping model windows [0.03ms]
+(pass) planWindowsFromSnapshot > a snapshot with no window list carries no reading
+(pass) quota write path > a snapshot noted on the write path becomes the reading [0.07ms]
+(pass) routing evidence > a replayed reading stands in for a credential with no snapshot [0.52ms]
+(pass) routing evidence > a stale snapshot gives way to the reading, a fresh one wins [0.25ms]
+(pass) routing evidence > a stale snapshot with no reading keeps today's evidence [0.03ms]
+
+3 tests failed:
+(fail) fresh usage does not inherit an expired reset (expired=%s) [0.13ms]
+(fail) a real Claude event defeats an older in-flight poll without moving the poll clock [1.45ms]
+(fail) recordAllowanceReading > pending persistence and a later failure retain same-clock response observations [0.40ms]
+
+ 30 pass
+ 3 fail
+ 107 expect() calls
+Ran 33 tests across 3 files. [115.00ms]
+
+--- Secondary credential regression before fix ---
+bun test v1.4.4 (38afee6c8)
+
+tests/claude-limit-headers.test.ts:
+37 |   })
+38 |   connection.credentials.push(secondary)
+39 |   recordClaudeRateLimit(connection.id, secondary.id, {
+40 |     unifiedWindows: { five_hour: { utilization: used } },
+41 |   })
+42 |   expect(secondary.quota?.allowance?.windows[0]?.used).toBe(used)
+                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: 0.2
+Received: 0.8
+
+      at <anonymous> (tests/claude-limit-headers.test.ts:42:56)
+(fail) secondary events update typed allowance without changing account waits (used=%s) [0.27ms]
+37 |   })
+38 |   connection.credentials.push(secondary)
+39 |   recordClaudeRateLimit(connection.id, secondary.id, {
+40 |     unifiedWindows: { five_hour: { utilization: used } },
+41 |   })
+42 |   expect(secondary.quota?.allowance?.windows[0]?.used).toBe(used)
+                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: 1
+Received: 0
+
+      at <anonymous> (tests/claude-limit-headers.test.ts:42:56)
+(fail) secondary events update typed allowance without changing account waits (used=%s) [0.03ms]
+(pass) fresh usage does not inherit an expired reset (expired=%s) [0.33ms]
+(pass) fresh usage does not inherit an expired reset (expired=%s) [0.03ms]
+(pass) headers carry a 0-1 share and a Unix-seconds reset per window, as Anthropic's do [0.04ms]
+(pass) a reply carries them on both the JSON and the streamed response [0.97ms]
+(pass) Claude Code's rate_limit_event updates the account's windows for the next reply [0.04ms]
+(pass) CLI events apply exhaustion but leave recovery, waits and the poll clock to the poll [0.09ms]
+(pass) the translator hands Claude Code's rate_limit_event over, not to the client [0.34ms]
+
+tests/plan-quota-apply.test.ts:
+(pass) recordAllowanceReading > a good reading is stored and replaces the last one [0.97ms]
+(pass) recordAllowanceReading > a passing error replays the last reading as stale [0.35ms]
+(pass) recordAllowanceReading > pending persistence and a later failure retain same-clock response observations (persisted=%s) [0.69ms]
+(pass) recordAllowanceReading > pending persistence and a later failure retain same-clock response observations (persisted=%s) [0.31ms]
+(pass) recordAllowanceReading > a replay advances windows that renewed since the reading [0.33ms]
+(pass) recordAllowanceReading > a terminal error leaves the stored reading alone [0.33ms]
+(pass) recordAllowanceReading > a passing error with nothing stored is not a reading [0.13ms]
+(pass) planWindowsFromSnapshot > reads the canonical window list, scoping model windows [0.03ms]
+(pass) planWindowsFromSnapshot > a snapshot with no window list carries no reading
+(pass) quota write path > a snapshot noted on the write path becomes the reading [0.07ms]
+(pass) routing evidence > a replayed reading stands in for a credential with no snapshot [1.44ms]
+(pass) routing evidence > a stale snapshot gives way to the reading, a fresh one wins [0.24ms]
+(pass) routing evidence > a stale snapshot with no reading keeps today's evidence [0.03ms]
+
+ 20 pass
+ 2 fail
+ 72 expect() calls
+Ran 22 tests across 2 files. [99.00ms]

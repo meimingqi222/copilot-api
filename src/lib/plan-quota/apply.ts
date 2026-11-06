@@ -28,7 +28,7 @@ import {
 
 import type { MergedPlanAllowance, PlanAllowance, PlanWindow } from "./types"
 
-import { mergeWithLast } from "./store"
+import { isPassingError, mergeWithLast } from "./store"
 import { elapsed } from "./windows"
 
 interface PlanAccount {
@@ -172,6 +172,8 @@ interface MirroredReading {
 
 /** Last reading per account, for the synchronous read side. Memory-only. */
 const mirror = new Map<string, MirroredReading>()
+/** Observation order is independent of the polling timestamp (`asOf`). */
+const observations = new Map<string, symbol>()
 
 interface AllowanceReadingInput {
   provider: string
@@ -194,9 +196,28 @@ export async function recordAllowanceReading(
   input: AllowanceReadingInput,
   now: number = Date.now(),
 ): Promise<MergedPlanAllowance> {
-  const merged = await mergeWithLast(input, now)
   const key = readingKey(input.provider, input.user)
+  const previous = mirror.get(key)
+  const observation = Symbol()
+  observations.set(key, observation)
+  // The mirror can contain response observations not yet persisted. A failed
+  // poll replays those, not the older durable copy with the same poll clock.
+  const merged =
+    (
+      previous
+      && input.windows === undefined
+      && input.error
+      && isPassingError(input.error)
+    ) ?
+      {
+        windows: elapsed(previous.windows, now),
+        asOf: previous.asOf,
+        stale: true,
+      }
+    : await mergeWithLast(input, now)
   const newer = mirror.get(key)
+  // Synchronous observations win over an in-flight write, even at equal asOf.
+  if (observations.get(key) !== observation) return newer ?? merged
   if (newer?.asOf !== undefined && newer.asOf > (merged.asOf ?? now))
     return newer
   if (merged.windows.length > 0 || input.windows !== undefined) {
@@ -248,7 +269,9 @@ export function noteSnapshotReading(
   )
     return
   // Publish synchronously: selection must see this reading before disk I/O.
-  mirror.set(readingKey(account.provider, account.user), {
+  const key = readingKey(account.provider, account.user)
+  observations.set(key, Symbol())
+  mirror.set(key, {
     windows,
     asOf: snapshot.fetchedAt,
     stale: false,
@@ -286,4 +309,5 @@ export async function noteReadingFailure(
 /** Forget the in-memory mirror (tests; the durable store has its own reset). */
 export function __resetPlanAllowanceMirrorForTest(): void {
   mirror.clear()
+  observations.clear()
 }

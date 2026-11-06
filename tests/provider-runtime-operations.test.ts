@@ -14,9 +14,61 @@ import { refreshProviderQuota } from "~/lib/quota/refresh"
 import { refreshQuotaForConnection } from "~/lib/quota/scheduler"
 import { onStateChange } from "~/lib/state-events"
 import { createOAuthProviderRuntime } from "~/services/providers/oauth"
+import { recordClaudeRateLimit } from "~/services/claude/limit-headers"
 
 beforeEach(() => __resetProviderConnectionsForTest())
 afterEach(() => __resetProviderConnectionsForTest())
+
+test("a real Claude event defeats an older in-flight poll without moving the poll clock", async () => {
+  const connection = await createConnection({
+    id: "claude-event-race",
+    name: "claude event race",
+    protocol: "claude-native",
+    baseUrl: "https://example.test",
+    credentials: [
+      { id: "event-credential", value: "test", authMode: "bearer" },
+    ],
+  })
+  const credential = connection.credentials.at(0)!
+  const polledAt = Date.now()
+  credential.quota = {
+    fetchedAt: polledAt,
+    unlimited: false,
+    allowance: { state: "known", windows: [{ id: "five_hour", used: 0.2 }] },
+  }
+  const pending = Promise.withResolvers<ProviderQuotaSnapshot>()
+  const refreshing = refreshProviderQuota(
+    connection,
+    () => pending.promise,
+    undefined,
+    { skipSave: true },
+  )
+  recordClaudeRateLimit(connection.id, credential.id, {
+    unifiedWindows: { five_hour: { utilization: 1 } },
+  })
+  expect(credential.status).toBe("quota_exhausted")
+  pending.resolve({
+    fetchedAt: polledAt + 1,
+    unlimited: false,
+    allowance: { state: "known", windows: [{ id: "five_hour", used: 0.2 }] },
+  })
+  expect(await refreshing).toBeUndefined()
+  expect(credential.status).toBe("quota_exhausted")
+  expect(credential.quota?.fetchedAt).toBe(polledAt)
+  expect(credential.quota?.allowance?.windows[0]?.used).toBe(1)
+  // A subsequent poll can recover; response observations do not postpone it.
+  await refreshProviderQuota(
+    connection,
+    async () => ({
+      fetchedAt: polledAt + 2,
+      unlimited: false,
+      allowance: { state: "known", windows: [{ id: "five_hour", used: 0.3 }] },
+    }),
+    undefined,
+    { skipSave: true },
+  )
+  expect(credential.status).toBe("ready")
+})
 
 test("provider-owned operations update connection models and quota without central dispatch", async () => {
   const connection = await createConnection({
