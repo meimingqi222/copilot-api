@@ -3,6 +3,7 @@ import type { Context } from "hono"
 import { streamSSE } from "hono/streaming"
 
 import { logger } from "~/lib/logger"
+import { observeDownstreamEvent } from "~/lib/stream-diagnostics"
 import {
   markPerformanceWrite,
   markPerformanceText,
@@ -76,6 +77,7 @@ export async function writeSseEvent(
         performance.now() - started,
       )
   }
+  observeDownstreamEvent(context, data, event)
   if (context) markPerformanceWrite(context)
 }
 
@@ -125,6 +127,8 @@ export async function writeSseEvents(
           performance.now() - started,
         )
     }
+    for (const item of events)
+      observeDownstreamEvent(context, item.data, item.event)
     if (context) markPerformanceWrite(context)
     return
   }

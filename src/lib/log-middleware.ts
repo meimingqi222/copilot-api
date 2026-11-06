@@ -18,6 +18,7 @@ import {
 } from "./protected-route-guard"
 import { isProtectedRoute } from "./protected-routes"
 import { dumpIncomingRequest } from "./request-dump"
+import { finishStreamDiagnostics } from "~/lib/stream-diagnostics"
 import {
   finalizeRequestLog,
   finalizeUpstreamModelAudit,
@@ -85,6 +86,7 @@ export const requestLogger = async (c: Context, next: Next) => {
   let nextError: unknown
   const persistRequestLog = () => {
     if (!claimRequestLogFinish(c)) return
+    finishStreamDiagnostics(c, ctx.entry.outcome)
     // 非 API 面的请求不写请求日志、不记统计、不发实时追踪（安全防护快照在 finally
     // 里照常更新，暴力破解信号不受影响）。
     if (!isLlmCall) return

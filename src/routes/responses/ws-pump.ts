@@ -31,6 +31,8 @@ interface ResponsesWsCommitDetails {
 
 interface PumpHooks {
   onFrame?: (frame: unknown) => void
+  /** Only frames accepted by the client socket, including buffered frames. */
+  onSent?: (data: string) => void
   onWrite?: (ms: number) => void
   /** Fired synchronously on the first successful forward to the client. */
   onCommit: (details: ResponsesWsCommitDetails) => void
@@ -64,6 +66,7 @@ export async function pumpWithLeadingBuffer(
     if (!(await sendText(ws, data))) {
       throw new ClientAbortError()
     }
+    hooks.onSent?.(data)
     if (started !== undefined) hooks.onWrite?.(performance.now() - started)
   }
 

@@ -131,6 +131,14 @@ protection is not a guarantee that every sensitive value will be recognized.
 Saving rules changes only redaction settings and does not reset diagnostic expiry
 or overwrite other system preferences; System Settings links to this page.
 
+Streaming anomaly diagnostics are always-on and separate from temporary debug
+sessions. Chat, Messages, Responses, Gemini and Responses WebSocket turns keep
+bounded in-memory evidence; only suspected repetition, malformed/broken streams
+and other anomalies produce short-lived private incident files. Normal turns
+are discarded, and forwarding is never modified. Set `STREAM_DIAGNOSTICS=0` to
+disable this recorder. See [stream diagnostics](docs/stream-diagnostics.md) for
+privacy boundaries, limits and administrator-only retrieval endpoints.
+
 Actual request inspection is a separate, administrator-only, **default-off**
 five-minute opt-in session. It keeps at most 100 captures in memory with an
 8 MiB total and 128 KiB per-record retained-text budget (UTF-16 bytes, excluding

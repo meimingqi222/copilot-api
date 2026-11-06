@@ -78,6 +78,10 @@ import {
 import { handleResponseError, sendError, sendJson } from "./ws-error"
 import { pumpWithLeadingBuffer, type WebSocketSendTarget } from "./ws-pump"
 import {
+  beginStreamDiagnostics,
+  observeDownstreamEvent,
+} from "~/lib/stream-diagnostics"
+import {
   resolveSaturatedCredential,
   selectNextResponsesAdmission,
 } from "./ws-rotation"
@@ -221,10 +225,16 @@ export function createResponsesWebSocketSession(c: Context) {
       })
       activeTurn = turnCtx
       const previousCtx = bindRequestLogContext(c, turnCtx)
+      const diagnostics = beginStreamDiagnostics(c, payload)
 
       const finishTurn = (status: number) => {
         if (turnCtx.finished) return
         turnCtx.finished = true
+        void diagnostics?.finish(
+          status === 499 ? "cancelled"
+          : status >= 400 ? "failed"
+          : "completed",
+        )
         // 上游模型审计必须在 finalize 之前结算，否则 WS turn 的日志同样会
         // 缺 modelResponse/modelMismatch。WS 路径自己 finish，不走
         // log-middleware，所以这里必须显式调用。
@@ -657,6 +667,7 @@ async function runResponsesAttempt(
     } else {
       const pumped = await pumpWithLeadingBuffer(ws, result.response, {
         onFrame: (frame) => markPerformanceText(c, frame),
+        onSent: (data) => observeDownstreamEvent(c, data),
         onWrite: (ms) => {
           addPerformanceTiming(c, "downstreamWriteMs", ms)
           markPerformanceWrite(c)

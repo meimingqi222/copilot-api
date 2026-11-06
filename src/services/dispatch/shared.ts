@@ -20,6 +20,7 @@ import type { GeminiGenerateContentRequest } from "~/services/protocols/gemini"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
 import { LocalPayloadUnsupportedError } from "~/lib/error"
+import { beginStreamDiagnostics } from "~/lib/stream-diagnostics"
 import { runRedactedCall } from "~/lib/redaction/context"
 import { connectionProvider } from "~/lib/provider-connections"
 import {
@@ -274,6 +275,7 @@ export async function dispatchRequest(
   admission: RequestAdmission,
   signal?: AbortSignal,
 ): Promise<DispatchResult> {
+  beginStreamDiagnostics(options.c, options.payload)
   return runRedactedCall(options.payload, options.c, (payload) =>
     dispatchPreparedRequest(
       { ...options, payload } as DispatchOptions,

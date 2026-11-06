@@ -20,8 +20,29 @@ import {
   isRequestDumpEnabled,
   readDumpedRequestBodies,
 } from "~/lib/request-dump"
+import {
+  listStreamIncidents,
+  readStreamIncident,
+} from "~/lib/stream-diagnostics-store"
 
 export const logApiRoutes = new Hono()
+
+// Mounted under the existing authenticated admin API. These contain prompts.
+logApiRoutes.get("/stream-incidents", async (c) => {
+  c.header("Cache-Control", "no-store")
+  return c.json({ incidents: await listStreamIncidents() })
+})
+
+logApiRoutes.get("/:requestId/stream-incident", async (c) => {
+  c.header("Cache-Control", "no-store")
+  const requestId = c.req.param("requestId")
+  if (!/^[A-Za-z0-9_-]{1,100}$/.test(requestId))
+    return c.json({ error: "Invalid request ID" }, 400)
+  const incident = await readStreamIncident(requestId)
+  return incident ?
+      c.json(incident)
+    : c.json({ error: "Stream incident unavailable or expired" }, 404)
+})
 
 function parseNumber(v: string | undefined): number | undefined {
   if (v === undefined || v === "") return undefined

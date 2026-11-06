@@ -13,6 +13,7 @@ import {
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { readJsonBody } from "~/lib/request-body"
 import {
+  attachPerformanceStream,
   createSsePingInterval,
   writeSseComment,
   writeSseEvent,
@@ -93,6 +94,7 @@ export async function handleGenerateContent(c: Context) {
 
   beginStreamLog(c)
   return streamSSE(c, async (stream) => {
+    attachPerformanceStream(stream, c)
     const pingInterval = createSsePingInterval(stream)
     let outputObserved = false
     try {

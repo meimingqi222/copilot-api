@@ -2,6 +2,7 @@ import type { CopilotStreamEventLike } from "~/services/protocols/responses/type
 
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
+import { currentStreamDiagnosticScope } from "~/lib/stream-diagnostics"
 import { markUpstreamEvent } from "~/lib/request-performance"
 import { performanceContext } from "~/lib/upstream-performance"
 
@@ -112,6 +113,7 @@ export function createTurnConsumer(options: {
   }
 
   const metricContext = performanceContext()
+  const diagnostics = currentStreamDiagnosticScope()
   const onMessage = (event: MessageEvent) => {
     markUpstreamEvent(metricContext)
     let data = ""
@@ -134,6 +136,7 @@ export function createTurnConsumer(options: {
       data = new TextDecoder().decode(event.data)
     }
     if (!data) return
+    diagnostics?.recorder.observe("upstream-wire", data, diagnostics.attempt)
     const dataBytes = Buffer.byteLength(data)
     if (
       queue.length >= MAX_UPSTREAM_WS_QUEUE_MESSAGES

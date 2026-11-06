@@ -16,6 +16,7 @@
  */
 
 import type { ProviderProtocol } from "~/lib/provider-connections"
+import { withStreamDiagnosticAttempt } from "~/lib/stream-diagnostics"
 import {
   bindRedactionStream,
   maskUpstream,
@@ -66,37 +67,39 @@ function protect<
       ) ?
         params.payload.model
       : params.target.upstreamModelId
-    return withRedactionIssuer(params.connection.id, () => {
-      const payload = maskUpstream(params.payload)
-      return withRedactionUpstream(
-        {
-          id: params.connection.id,
-          name: params.connection.name,
-          protocol: params.connection.protocol,
-          model: typeof model === "string" ? model : "",
-        },
-        payload,
-        async () => {
-          const result = await call({
-            ...params,
-            payload,
-          })
-          const response = result.response
-          return (
-              response
-                && typeof response === "object"
-                && Symbol.asyncIterator in response
-            ) ?
-              {
-                ...result,
-                response: bindRedactionStream(
-                  response as AsyncIterable<unknown>,
-                ),
-              }
-            : result
-        },
-      )
-    })
+    return withStreamDiagnosticAttempt(params, () =>
+      withRedactionIssuer(params.connection.id, () => {
+        const payload = maskUpstream(params.payload)
+        return withRedactionUpstream(
+          {
+            id: params.connection.id,
+            name: params.connection.name,
+            protocol: params.connection.protocol,
+            model: typeof model === "string" ? model : "",
+          },
+          payload,
+          async () => {
+            const result = await call({
+              ...params,
+              payload,
+            })
+            const response = result.response
+            return (
+                response
+                  && typeof response === "object"
+                  && Symbol.asyncIterator in response
+              ) ?
+                {
+                  ...result,
+                  response: bindRedactionStream(
+                    response as AsyncIterable<unknown>,
+                  ),
+                }
+              : result
+          },
+        )
+      }),
+    )
   }
 }
 

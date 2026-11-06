@@ -5,6 +5,7 @@ import {
 } from "~/lib/upstream-performance"
 
 import { HTTPError } from "~/lib/error"
+import { observeDiagnosticWire } from "~/lib/stream-diagnostics"
 import {
   getConnectionProxyUrl,
   type ApiCredential,
@@ -336,6 +337,7 @@ export async function safeSseStream<T>(
     opts?.firstByteTimeoutMs,
   )
   if (first.done) return raw
+  observeDiagnosticWire(first.value)
   observeUpstreamResponse(response)
 
   const error = isError(first.value)
@@ -357,7 +359,9 @@ export async function safeSseStream<T>(
             yieldedFirst = true
             return first
           }
-          return iterator.next()
+          const next = await iterator.next()
+          if (!next.done) observeDiagnosticWire(next.value)
+          return next
         },
       }
     },

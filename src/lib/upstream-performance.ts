@@ -1,6 +1,7 @@
 import type { Context } from "hono"
 
 import { AsyncLocalStorage } from "node:async_hooks"
+import { observeDiagnosticRequest } from "~/lib/stream-diagnostics"
 import {
   maskUpstream,
   observeRedactionHttp,
@@ -131,9 +132,11 @@ export function* measureLocalIterable<T>(input: Iterable<T>): Generator<T> {
 }
 
 export function serializeUpstreamBody(value: object): string {
-  return measureLocalWork("adapterPreparationMs", () =>
+  const body = measureLocalWork("adapterPreparationMs", () =>
     prepareRedactionBody(JSON.stringify(maskUpstream(value))),
   )
+  observeDiagnosticRequest(body)
+  return body
 }
 
 export function measureLocalWork<T>(field: PerformanceTiming, run: () => T): T {
