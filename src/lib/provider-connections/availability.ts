@@ -25,6 +25,7 @@ import {
   getConnectionQuotaExhaustedAt,
   getConnectionQuotaState,
   readConnectionMetadata,
+  setConnectionCooldownUntil,
   setConnectionQuotaState,
 } from "./connection-metadata"
 import { DEFAULTS } from "./types"
@@ -39,11 +40,13 @@ const logger = createLogger("connection")
  * cooldownUntil 但不重置 status 的历史 bug,以及从磁盘加载时
  * cooldownUntil 丢失的边缘情况。如果上游仍处于限额状态,
  * 下次请求会重新标记 credential。
+ *
+ * 返回值表示本次是否解除了配额耗尽(供连接级清理历史耗尽标记)。
  */
 export function refreshCredentialAvailability(
   credential: ApiCredential,
   now: number = Date.now(),
-): void {
+): boolean {
   if (
     credential.status === "cooldown"
     && (credential.cooldownUntil === undefined
@@ -60,7 +63,9 @@ export function refreshCredentialAvailability(
   ) {
     credential.status = "ready"
     credential.cooldownUntil = undefined
+    return true
   }
+  return false
 }
 
 export function refreshConnectionAvailability(
@@ -69,8 +74,19 @@ export function refreshConnectionAvailability(
 ): void {
   const credentials = connection.credentials
   if (!Array.isArray(credentials)) return
+  let recoveredQuota = false
   for (const credential of credentials) {
-    refreshCredentialAvailability(credential, now)
+    recoveredQuota =
+      refreshCredentialAvailability(credential, now) || recoveredQuota
+  }
+
+  // 配额窗口到期后 credential 会自行恢复为 ready，但那次写入留下的
+  // exhaustedAt / quotaState 镜像仍在。仪表盘等读方直接看 exhaustedAt
+  // 时会继续把已恢复的账号显示成“配额耗尽”，直到下一次配额轮询才清掉。
+  // 状态机已经确认等待结束，就在同一处把镜像一起清掉。
+  if (recoveredQuota && getConnectionQuotaState(connection) !== "exhausted") {
+    setConnectionQuotaState(connection, "available")
+    setConnectionCooldownUntil(connection, undefined)
   }
 
   // 陈旧耗尽标记自愈：超过自动恢复窗口、且 credential 已不再处于

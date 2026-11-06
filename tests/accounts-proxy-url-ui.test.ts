@@ -27,7 +27,10 @@ interface AccountsView {
 
 function createView(requests: Array<UpdateRequest>): AccountsView {
   const view = runInNewContext(
-    readFileSync("pages/js/views/accounts.js", "utf8") + "\naccountsView()",
+    readFileSync("pages/js/usage-auto-refresh.js", "utf8")
+      + "\n"
+      + readFileSync("pages/js/views/accounts.js", "utf8")
+      + "\naccountsView()",
     {
       ViewHelpers: {},
       I18n: { t: (key: string) => key },

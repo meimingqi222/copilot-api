@@ -1,6 +1,7 @@
 function accountsView() {
   return {
     ...ViewHelpers,
+    ...usageAutoRefresh("accounts"),
     loading: false,
     accounts: [],
     claudeCli: null,
@@ -234,6 +235,31 @@ function accountsView() {
         this.loading = false
         this.$nextTick(() => refreshAdminIcons(this.$el))
       }
+    },
+
+    init() {
+      this.load()
+      this.initAutoRefresh()
+    },
+
+    /**
+     * Availability changes without an account edit (a cooldown expires, a quota
+     * window resets). Poll only the list so the badge follows the quota page
+     * instead of freezing on whatever was true when the view first opened.
+     */
+    async refreshCachedUsage() {
+      if (
+        this.showAddModal
+        || this.showImportModal
+        || this.showAccountModels
+        || this.editingLabel
+      )
+        return
+      const data = await API.accounts.list()
+      this.accounts = data.accounts || []
+      this.claudeCli = data.claudeCli ?? this.claudeCli
+      this.lastUpdatedAt = Date.now()
+      this.$nextTick(() => refreshAdminIcons(this.$el))
     },
 
     providerIcon(providerId) {

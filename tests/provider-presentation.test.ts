@@ -24,7 +24,8 @@ interface AccountView {
 
 function createView(): AccountView {
   const source = fs.readFileSync("pages/js/views/accounts.js", "utf8")
-  const view = vm.runInNewContext(`${source}\naccountsView()`, {
+  const autoRefresh = fs.readFileSync("pages/js/usage-auto-refresh.js", "utf8")
+  const view = vm.runInNewContext(`${autoRefresh}\n${source}\naccountsView()`, {
     ViewHelpers: {},
   }) as AccountView
   view.providers = PROVIDER_IDS.map(getProviderDescriptor)

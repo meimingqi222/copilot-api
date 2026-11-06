@@ -37,7 +37,9 @@ describe("账号卡片:认证失败可见", () => {
       .filter((tag) => tag.includes('@click="openReauthModal(account)"'))
     expect(buttons).toHaveLength(2)
     const view = runInNewContext(
-      readFileSync(join(ROOT, "pages/js/views/accounts.js"), "utf8")
+      readFileSync(join(ROOT, "pages/js/usage-auto-refresh.js"), "utf8")
+        + "\n"
+        + readFileSync(join(ROOT, "pages/js/views/accounts.js"), "utf8")
         + "\naccountsView()",
       { ViewHelpers: {} },
     ) as Record<string, unknown>

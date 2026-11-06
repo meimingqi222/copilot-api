@@ -53,6 +53,7 @@ for (const config of [
       let finish: (() => void) | undefined
       const view = runInNewContext(
         readFileSync("pages/js/view-helpers.js", "utf8")
+          + readFileSync("pages/js/usage-auto-refresh.js", "utf8")
           + readFileSync(`pages/js/views/${config.name}.js`, "utf8")
           + `\n${config.name}View()`,
         {

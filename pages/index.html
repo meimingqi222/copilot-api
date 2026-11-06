@@ -1512,7 +1512,6 @@
           <div
             x-show="currentView === 'accounts'"
             x-data="accountsView()"
-            x-init="load()"
             style="display: none"
           >
             <header class="page-header">
@@ -1521,6 +1520,31 @@
                 <p class="page-description" x-text="t('accounts.subtitle')"></p>
               </div>
               <div class="page-actions">
+                <select
+                  class="input input-small"
+                  :value="autoRefreshSeconds"
+                  @change="setAutoRefresh($event.target.value)"
+                  :aria-label="t('usage.autoRefresh')"
+                  :title="t('usage.autoRefresh')"
+                >
+                  <option value="0" x-text="t('usage.refreshOff')"></option>
+                  <option
+                    value="5"
+                    x-text="t('usage.refreshEvery', { seconds: 5 })"
+                  ></option>
+                  <option
+                    value="10"
+                    x-text="t('usage.refreshEvery', { seconds: 10 })"
+                  ></option>
+                  <option
+                    value="30"
+                    x-text="t('usage.refreshEvery', { seconds: 30 })"
+                  ></option>
+                  <option
+                    value="60"
+                    x-text="t('usage.refreshEvery', { seconds: 60 })"
+                  ></option>
+                </select>
                 <button
                   @click="load()"
                   class="btn btn-secondary"

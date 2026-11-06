@@ -324,6 +324,44 @@ describe("Admin Dashboard API", () => {
     }
   })
 
+  test("a recovered quota wait no longer reports an exhausted alert", async () => {
+    const conn = managedConnectionFromInput({
+      id: "dashboard-recovered-quota",
+      name: "Codex-Recovered",
+      provider: "codex",
+      credentials: { accessToken: "fixture-token" },
+    })
+    upsertProviderConnection(conn)
+    setConnectionQuotaState(conn, "exhausted")
+    // The vendor's reset instant has passed, but no quota poll has run yet.
+    const expired = Date.now() - 1
+    conn.credentials[0].cooldownUntil = expired
+    conn.metadata!.cooldownUntil = expired
+    try {
+      const response = await server.fetch(
+        adminRequest("http://localhost/admin/api/dashboard"),
+      )
+      expect(response.status).toBe(200)
+      const data = (await response.json()) as {
+        alerts: { connectionId: string; type: string }[]
+        fleet: { items: { id: string; status: string }[] }
+      }
+      expect(
+        data.alerts.find((item) => item.connectionId === conn.id),
+      ).toBeUndefined()
+      expect(data.fleet.items.find((item) => item.id === conn.id)?.status).toBe(
+        "healthy",
+      )
+      // The dashboard read is also a state-machine read: the historical
+      // exhaustion mirror must not survive the expired wait.
+      expect(conn.credentials[0].status).toBe("ready")
+      expect(conn.credentials[0].exhaustedAt).toBeUndefined()
+      expect(conn.metadata?.quotaState).toBe("available")
+    } finally {
+      removeProviderConnection(conn.id)
+    }
+  })
+
   test("CodeBuddy zero credits are not displayed as an account-wide HTTP 429 cooldown", async () => {
     const conn = managedConnectionFromInput({
       id: "dashboard-zero-credit",

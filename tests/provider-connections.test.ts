@@ -11,6 +11,7 @@ import {
   classifyUpstreamError,
   createConnection,
   DEFAULTS,
+  getConnectionExhaustedAt,
   getConnectionRoutability,
   getProviderConnection,
   isCodexUsageLimitError,
@@ -21,6 +22,7 @@ import {
   markCredentialCooldown,
   markCredentialQuotaExhausted,
   parseCodexUsageLimitRetryAfter,
+  refreshConnectionAvailability,
   refreshCredentialAvailability,
   resetCredentialStatus,
   setConnectionCooldownUntil,
@@ -242,6 +244,26 @@ describe("availability state machine", () => {
     refreshCredentialAvailability(cred)
     expect(cred.status).toBe("ready")
     expect(cred.cooldownUntil).toBeUndefined()
+  })
+
+  test("expired quota wait also clears the connection's exhaustion mirrors", async () => {
+    await setupSimpleConnection({ id: "quota-expired-mirror" })
+    const conn = getProviderConnection("quota-expired-mirror")
+    if (!conn) throw new Error("connection not found")
+    setConnectionQuotaState(conn, "exhausted")
+    const expired = Date.now() - 1
+    conn.credentials[0].cooldownUntil = expired
+    conn.metadata!.cooldownUntil = expired
+
+    refreshConnectionAvailability(conn)
+
+    expect(conn.credentials[0].status).toBe("ready")
+    expect(conn.credentials[0].cooldownUntil).toBeUndefined()
+    expect(conn.credentials[0].exhaustedAt).toBeUndefined()
+    expect(conn.metadata?.quotaState).toBe("available")
+    expect(conn.metadata?.quotaExhaustedAt).toBeUndefined()
+    expect(conn.metadata?.cooldownUntil).toBeUndefined()
+    expect(getConnectionExhaustedAt(conn)).toBeUndefined()
   })
 
   test("cooldown with undefined cooldownUntil auto-recovers", () => {

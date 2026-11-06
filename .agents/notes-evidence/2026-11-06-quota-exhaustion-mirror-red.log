@@ -1,0 +1,22 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/provider-connections.test.ts:
+257 | 
+258 |     refreshConnectionAvailability(conn)
+259 | 
+260 |     expect(conn.credentials[0].status).toBe("ready")
+261 |     expect(conn.credentials[0].cooldownUntil).toBeUndefined()
+262 |     expect(conn.credentials[0].exhaustedAt).toBeUndefined()
+                                                  ^
+error: expect(received).toBeUndefined()
+
+Received: 1793979096361
+
+      at <anonymous> (<repo>/tests/provider-connections.test.ts:262:45)
+(fail) availability state machine > expired quota wait also clears the connection's exhaustion mirrors [0.38ms]
+
+ 0 pass
+ 57 filtered out
+ 1 fail
+ 3 expect() calls
+Ran 1 test across 1 file. [79.00ms]

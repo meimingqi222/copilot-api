@@ -6,14 +6,15 @@ import {
   getConnectionAuthError,
   getConnectionAuthStatus,
   getConnectionCooldownUntil,
-  getConnectionExhaustedAt,
   getConnectionLastRateLimitReason,
   getConnectionProvider,
   getConnectionQuotaInfo,
+  getConnectionRoutability,
   isAccountManagedConnection,
   isConnectionAvailable,
   listAccountManagedConnections,
   listProviderConnections,
+  refreshConnectionAvailability,
 } from "~/lib/provider-connections"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
@@ -163,6 +164,9 @@ function collectFleetAndAlerts(
   let disabledCount = 0
 
   for (const conn of connections) {
+    // Expired quota waits self-heal here too. Reading the raw exhaustedAt
+    // mirror made a recovered account look spent until the next quota poll.
+    refreshConnectionAvailability(conn, now)
     const cred = conn.credentials?.[0]
     // CodeBuddy's credit-reprobe timestamp is not an account-wide rate limit:
     // zero-credit models can still run. Only the pacing limiter blocks them.
@@ -174,7 +178,11 @@ function collectFleetAndAlerts(
       : getConnectionCooldownUntil(conn)
     const authStatus = getConnectionAuthStatus(conn)
     const authError = getConnectionAuthError(conn)
-    const exhaustedAt = getConnectionExhaustedAt(conn)
+    // The same state machine admission uses; a historical exhaustedAt alone no
+    // longer marks a currently usable account as quota exhausted.
+    const quotaExhausted =
+      creditExhausted
+      || getConnectionRoutability(conn).reason === "quota_exhausted"
     const reason =
       cred?.lastError
       ?? cred?.lastRateLimitReason
@@ -254,7 +262,7 @@ function collectFleetAndAlerts(
           detail: authError || "401/403",
         },
       })
-    } else if (exhaustedAt || cred?.status === "quota_exhausted") {
+    } else if (quotaExhausted) {
       status = "exhausted"
       statusMessage =
         creditExhausted ?

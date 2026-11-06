@@ -39,7 +39,10 @@ test.each([false, true])(
 
 test("account card distinguishes missing CLI from HTTP and unknown detection state", () => {
   const view = runInNewContext(
-    readFileSync("pages/js/views/accounts.js", "utf8") + "\naccountsView()",
+    readFileSync("pages/js/usage-auto-refresh.js", "utf8")
+      + "\n"
+      + readFileSync("pages/js/views/accounts.js", "utf8")
+      + "\naccountsView()",
     { ViewHelpers: {} },
   ) as {
     claudeCli: { installed: boolean; httpForced: boolean } | null
@@ -65,7 +68,10 @@ test("account card saves the run mode and keeps the saved value on failure", asy
   const updates: Array<unknown> = []
   let fail = false
   const view = runInNewContext(
-    readFileSync("pages/js/views/accounts.js", "utf8") + "\naccountsView()",
+    readFileSync("pages/js/usage-auto-refresh.js", "utf8")
+      + "\n"
+      + readFileSync("pages/js/views/accounts.js", "utf8")
+      + "\naccountsView()",
     {
       ViewHelpers: {},
       I18n: { t: (key: string) => key },
