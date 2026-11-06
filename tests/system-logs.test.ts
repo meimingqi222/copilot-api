@@ -17,7 +17,7 @@ import {
 import { handleSseStream, writeSseEvent } from "~/lib/sse"
 import { recentSystemLogs } from "~/lib/system-log-bus"
 import { dateKeyFromDate } from "~/lib/log-rotation"
-import { PATHS } from "~/lib/paths"
+import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import {
   __resetProviderConnectionsForTest,
   upsertProviderConnection,
@@ -31,6 +31,10 @@ import { testConnection } from "./claude-cli-fixtures"
 
 const NOW = Date.now()
 const today = dateKeyFromDate(new Date(NOW))
+let originalAppDir: string
+let originalLogDir: string | undefined
+let originalLogPersist: string | undefined
+let testDir: string
 const KEY = "sk-bundletest1234567890abcd"
 
 function entry(partial: Partial<SystemLogEntry>): SystemLogEntry {
@@ -72,7 +76,15 @@ test("connection links recover untagged historical metadata and quoted names wit
 })
 
 beforeEach(() => {
-  fs.rmSync(PATHS.LOG_DIR, { recursive: true, force: true })
+  originalAppDir = PATHS.APP_DIR
+  originalLogDir = process.env.LOG_DIR
+  originalLogPersist = process.env.LOG_PERSIST
+  testDir = fs.mkdtempSync(path.join(os.tmpdir(), "system-logs-"))
+  // Queued writes already captured the previous directory; deleting it is not
+  // isolation. These tests own their log fixtures, not request persistence.
+  redirectPathsToDir(testDir)
+  process.env.LOG_DIR = PATHS.LOG_DIR
+  process.env.LOG_PERSIST = "0"
   writeLines(`system-${today}.jsonl`, [
     JSON.stringify(entry({ id: 1, ts: NOW - 3000, msg: "boot" })),
     JSON.stringify(
@@ -107,7 +119,12 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  fs.rmSync(PATHS.LOG_DIR, { recursive: true, force: true })
+  redirectPathsToDir(originalAppDir)
+  if (originalLogDir === undefined) delete process.env.LOG_DIR
+  else process.env.LOG_DIR = originalLogDir
+  if (originalLogPersist === undefined) delete process.env.LOG_PERSIST
+  else process.env.LOG_PERSIST = originalLogPersist
+  fs.rmSync(testDir, { recursive: true, force: true })
   __resetProviderConnectionsForTest()
 })
 
