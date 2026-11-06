@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { __resetProviderConnectionsForTest } from "~/lib/provider-connections"
+import { fetchGeminiQuota } from "~/lib/quota/fetchers/gemini"
 import {
   getOAuthProviderDescriptor,
   isOAuthProviderId,
@@ -120,6 +121,16 @@ describe("gemini auth url + exchange", () => {
 })
 
 describe("gemini Code Assist project", () => {
+  test("a paid tier is not evidence of unlimited quota", async () => {
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        jsonResponse({ paidTier: { name: "Pro" } }),
+      )) as unknown as typeof fetch
+    const snapshot = await fetchGeminiQuota(createConnection())
+    expect(snapshot.allowance).toEqual({ state: "unknown", windows: [] })
+    expect(snapshot.details?.gemini).toMatchObject({ plan: "Pro" })
+  })
+
   test("reads the project from loadCodeAssist", async () => {
     globalThis.fetch = (async (url: string | URL) => {
       expect(String(url)).toBe(

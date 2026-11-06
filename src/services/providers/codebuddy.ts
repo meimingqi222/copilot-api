@@ -14,7 +14,12 @@ import { getProviderDescriptor } from "~/lib/provider-descriptors"
 
 import type { ModelMapping } from "~/lib/provider-connections"
 
-import { refreshCodebuddyQuota } from "~/services/codebuddy/quota"
+import {
+  applyCodebuddyQuotaSnapshot,
+  fetchCodebuddyQuota,
+} from "~/services/codebuddy/quota"
+import { refreshProviderQuota } from "~/lib/quota/refresh"
+import { ensureCodebuddyAccessToken } from "~/services/codebuddy/token-refresh"
 import { getProtocolAdapter } from "~/services/protocols"
 
 import type { ProviderRuntime } from "~/services/providers/runtime"
@@ -83,6 +88,7 @@ function createCodebuddyRuntime(opts: {
   return {
     id,
     descriptor: getProviderDescriptor(id),
+    quota: { source: "poll" },
     supports(_connection, feature) {
       return this.descriptor.features.includes(feature)
     },
@@ -114,8 +120,16 @@ function createCodebuddyRuntime(opts: {
     getFallbackModels(_connection) {
       return fallbackModels
     },
-    async refreshQuota(connection, signal) {
-      return refreshCodebuddyQuota(connection, signal)
+    async refreshQuota(connection, signal, options) {
+      return refreshProviderQuota(connection, fetchCodebuddyQuota, signal, {
+        ...options,
+        applySnapshot: applyCodebuddyQuotaSnapshot,
+        async prepare(conn, prepareSignal) {
+          const credential = conn.credentials.at(0)
+          if (credential)
+            await ensureCodebuddyAccessToken(conn, credential, prepareSignal)
+        },
+      })
     },
   }
 }

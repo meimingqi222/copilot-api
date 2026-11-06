@@ -9,7 +9,11 @@ import {
   OAUTH_PROVIDER_IDS,
   PROVIDER_PROTOCOL_MAP,
 } from "~/lib/provider-config"
-import { parseFactoryQuota } from "~/lib/quota/fetchers/factory"
+import {
+  fetchFactoryQuota,
+  parseFactoryQuota,
+} from "~/lib/quota/fetchers/factory"
+import { quotaAvailability } from "~/lib/quota/allowance"
 import {
   applyFactoryOAuthBundle,
   FACTORY_API_BASE,
@@ -215,6 +219,47 @@ describe("factory-native adapter wire selection", () => {
 })
 
 describe("factory quota parsing", () => {
+  test("standard and Core limits use evidenced exact native models, leaving new models unknown", async () => {
+    let standardUsed = 10
+    let coreUsed = 100
+    let extra = 0
+    globalThis.fetch = (async () =>
+      jsonResponse({
+        limits: {
+          standard: {
+            fiveHour: { usedPercent: standardUsed, windowEnd: 1893456000000 },
+          },
+          core: { fiveHour: { usedPercent: coreUsed } },
+        },
+        extraUsageAllowed: true,
+        extraUsageBalanceCents: extra,
+      })) as unknown as typeof fetch
+    const connection = createConnection()
+    connection.credentials[0]!.value = "access-token"
+    const snapshot = await fetchFactoryQuota(connection)
+    expect(snapshot.allowance?.state).toBe("known")
+    expect(snapshot.allowance?.windows[0]).toMatchObject({
+      id: "standard:fiveHour",
+      used: 0.1,
+      spanMs: 5 * 3_600_000,
+      resetsAtMs: 1893456000000,
+    })
+    expect(quotaAvailability(snapshot, "claude-opus-5-5")).toBe("available")
+    expect(quotaAvailability(snapshot, "glm-5.3")).toBe("exhausted")
+    expect(quotaAvailability(snapshot, "future-unmapped-model")).toBe("unknown")
+    standardUsed = 100
+    coreUsed = 10
+    const opposite = await fetchFactoryQuota(connection)
+    expect(quotaAvailability(opposite, "claude-opus-5-5")).toBe("exhausted")
+    expect(quotaAvailability(opposite, "glm-5.3")).toBe("available")
+    extra = 0.01
+    const withExtra = await fetchFactoryQuota(connection)
+    expect(quotaAvailability(withExtra, "claude-opus-5-5")).toBe("available")
+    expect(
+      withExtra.allowance?.windows.find((w) => w.id === "extra-usage"),
+    ).toMatchObject({ remaining: 0.01, unit: "currency" })
+  })
+
   test("reads standard + core windows and extra balance", () => {
     const parsed = parseFactoryQuota({
       limits: {

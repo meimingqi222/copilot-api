@@ -1,3 +1,4 @@
+import type { ProviderQuotaSnapshot } from "~/lib/quota/types"
 /**
  * Factory 订阅配额拉取。
  *
@@ -12,7 +13,6 @@
  * 有自己的窗口；extra usage 是美分余额。只填已用/总量，不编造 reset。
  */
 
-import type { QuotaSnapshot } from "~/lib/quota/types"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import {
@@ -23,8 +23,10 @@ import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
 import { asNumber, asRecord } from "~/lib/json-shape"
 import { FACTORY_CLI_VERSION, factoryApiBase } from "~/services/oauth/factory"
 import { snapshotFromWindows } from "~/lib/quota/snapshot"
+import { getFactoryFallbackModels } from "~/services/providers/model-catalogs/factory"
 
 interface FactoryQuotaWindow {
+  id: string
   name: string
   usedPercent: number
   /** 窗口跨度（毫秒），用于展示。 */
@@ -69,6 +71,7 @@ function readPool(
     if (used === undefined) continue
     const clamped = Math.min(Math.max(used, 0), 100)
     out.push({
+      id: `${prefix ? "core" : "standard"}:${key}`,
       name: `${prefix}${label}`,
       usedPercent: clamped,
       spanMs,
@@ -102,10 +105,51 @@ export function parseFactoryQuota(
 function buildSnapshot(
   parsed: ParsedFactoryQuota,
   host: string,
-): QuotaSnapshot {
+): ProviderQuotaSnapshot {
+  // The provider catalog and adapter explicitly distinguish hosted Chat models
+  // (Core) from vendor Messages/Responses models. Do not classify arbitrary new IDs.
+  const catalog = getFactoryFallbackModels()
+  const modelsForPool = (core: boolean) =>
+    catalog
+      .filter((model) =>
+        core ?
+          model.endpoints.includes("chat")
+        : model.endpoints.some(
+            (endpoint) => endpoint === "messages" || endpoint === "responses",
+          ),
+      )
+      .map((model) => model.upstreamId)
+  const extraAvailable = (parsed.extraBalanceCents ?? 0) > 0
   return snapshotFromWindows({
     provider: "factory",
     windows: parsed.windows,
+    allowance: {
+      state: parsed.windows.length > 0 || extraAvailable ? "known" : "unknown",
+      windows: [
+        ...parsed.windows.map((w) => ({
+          id: w.id,
+          used: w.usedPercent / 100,
+          remaining: 100 - w.usedPercent,
+          total: 100,
+          unit: "percent" as const,
+          spanMs: w.spanMs,
+          resetsAtMs: w.resetsAt,
+          scope: { models: modelsForPool(w.id.startsWith("core:")) },
+          // Extra usage is an alternative to subscription capacity, not another
+          // independent limit that an empty subscription window can veto.
+          aside: extraAvailable,
+        })),
+        ...(extraAvailable ?
+          [
+            {
+              id: "extra-usage",
+              remaining: parsed.extraBalanceCents,
+              unit: "currency" as const,
+            },
+          ]
+        : []),
+      ],
+    },
     details: {
       factory: {
         host,
@@ -118,7 +162,7 @@ function buildSnapshot(
 export async function fetchFactoryQuota(
   connection: ProviderConnection,
   signal?: AbortSignal,
-): Promise<QuotaSnapshot> {
+): Promise<ProviderQuotaSnapshot> {
   if (getConnectionProvider(connection) !== "factory") {
     throw new Error("fetchFactoryQuota requires a Factory connection")
   }

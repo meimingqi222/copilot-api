@@ -24,6 +24,11 @@ omits the generated code-review and additional-feature descriptors from ordinary
 coding routing evidence. Both fresh snapshots and new last-known readings use
 that conversion.
 
+New Codex snapshots declare independent feature meters as reporting-only typed
+allowance windows in the provider fetcher. The central descriptor exclusions
+remain only for old persisted snapshots. Disabled connections/credentials now
+skip live refresh entirely; the persisted repair/admission guard remains intact.
+
 `src/lib/plan-quota/store.ts` writes cache version 2 and discards Codex entries
 from v1 or unversioned files on load. Old windows lost their descriptor identity,
 so they cannot be safely repaired. Other providers' readings remain usable;

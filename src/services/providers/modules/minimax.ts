@@ -89,6 +89,7 @@ const refreshAuth = prepareOAuthRefresh(
 export function getMinimaxModule(): ProviderModule {
   return defineOAuthProviderModule({
     id: "minimax",
+    quota: { source: "poll" },
     fetchQuota: fetchMinimaxQuota,
     fallbackModels: getMinimaxFallbackModels,
     adapter: minimaxNativeAdapter,

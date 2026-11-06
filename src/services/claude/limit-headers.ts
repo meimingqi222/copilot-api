@@ -17,6 +17,9 @@ import {
   getProviderConnection,
 } from "~/lib/provider-connections"
 import { enrichQuotaDetails } from "~/lib/quota/cycles"
+import { applyOAuthQuotaSnapshot } from "~/lib/quota"
+import { claudeAllowance } from "~/lib/quota/fetchers/claude"
+import type { ClaudeUsagePayload } from "~/lib/quota/parsers"
 import type { UsageIdentity } from "~/lib/usage"
 
 /** 响应头里的窗口名 → 额度详情里的键。 */
@@ -78,7 +81,7 @@ export interface ClaudeRateLimitInfo {
 /**
  * Claude Code 每轮都会报一次额度（`rate_limit_event`），比定时刷新的快照新。
  * 把它记进凭据的额度详情，下一个请求的响应头和管理面板都用上新数字。
- * 只改内存，持久化交给下一次额度刷新。
+ * 只改内存，持久化交给下一次额度刷新；事件只能判定耗尽，解除等待只认轮询。
  */
 export function recordClaudeRateLimit(
   connectionId: string,
@@ -91,32 +94,57 @@ export function recordClaudeRateLimit(
   const credential =
     connection?.credentials.find((item) => item.id === credentialId)
     ?? connection?.credentials[0]
-  if (!credential) return
+  if (!connection || !credential) return
   const details: Record<string, unknown> = {
     ...credential.quota?.details,
   }
-  let changed = false
+  const measured: ClaudeUsagePayload = {}
   for (const [, key] of WINDOWS) {
     const window = windows[key]
-    if (
-      typeof window?.utilization !== "number"
-      || typeof window.resetsAt !== "number"
-    )
-      continue
+    if (!window) continue
+    const utilization =
+      (
+        typeof window.utilization === "number"
+        && Number.isFinite(window.utilization)
+      ) ?
+        window.utilization
+      : undefined
+    const reset =
+      typeof window.resetsAt === "number" && Number.isFinite(window.resetsAt) ?
+        new Date(window.resetsAt * 1000)
+      : undefined
+    const resetsAt =
+      reset && Number.isFinite(reset.getTime()) ?
+        reset.toISOString()
+      : undefined
+    if (utilization === undefined && resetsAt === undefined) continue
+    measured[key] = {
+      ...(utilization !== undefined ? { utilization } : {}),
+      ...(resetsAt !== undefined ? { resets_at: resetsAt } : {}),
+    }
     details[key] = {
       ...(details[key] as object | undefined),
-      utilization: window.utilization,
-      resets_at: new Date(window.resetsAt * 1000).toISOString(),
+      ...measured[key],
     }
-    changed = true
   }
-  if (!changed) return
+  if (Object.keys(measured).length === 0) return
   const { _quotaWindows: _stale, ...plain } = details
-  credential.quota = {
+  const snapshot = {
     ...credential.quota,
     unlimited: credential.quota?.unlimited ?? false,
+    // Keep the poll's timestamp: the poll interval runs from it, and only the
+    // poll reports the model-specific weekly windows.
     fetchedAt: credential.quota?.fetchedAt ?? Date.now(),
     provider: credential.quota?.provider ?? "claude",
     details: enrichQuotaDetails("claude", plain),
   }
+  // The quota apply path owns the primary credential; others keep display data.
+  if (credential !== connection.credentials[0]) {
+    credential.quota = snapshot
+    return
+  }
+  applyOAuthQuotaSnapshot(connection, {
+    ...snapshot,
+    allowance: { ...claudeAllowance(measured, connection), partial: true },
+  })
 }

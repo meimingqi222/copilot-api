@@ -1,4 +1,5 @@
 import type { PlanAllowance, PlanWindow } from "./types"
+import { quotaWindowApplies } from "~/lib/quota/allowance"
 
 /**
  * Advance windows to `now`: a window whose `resetsAtMs` has already passed is
@@ -7,29 +8,29 @@ import type { PlanAllowance, PlanWindow } from "./types"
  */
 export function elapsed(windows: PlanAllowance, now: number): PlanAllowance {
   return windows.map((window) => {
+    if (window.expiresAtMs !== undefined && window.expiresAtMs <= now) {
+      return { ...window, used: 1, remaining: 0 }
+    }
     if (window.resetsAtMs === undefined || window.resetsAtMs > now) {
       return window
     }
-    return { ...window, used: 0, resetsAtMs: undefined }
+    return {
+      ...window,
+      used: window.used === undefined ? undefined : 0,
+      remaining: window.total,
+      resetsAtMs: undefined,
+    }
   })
 }
 
 /**
  * Does a window count this model?
  *
- * A window with no `model` counts every model. A scoped window only counts a
- * model whose id contains that word (case-insensitive). Omitting the model
- * argument asks "could any model apply", so every window answers true.
+ * Typed scopes match exact native IDs, and an empty scope matches nothing.
+ * Only persisted legacy `model` scopes use case-insensitive substring matching.
  */
 export function windowApplies(window: PlanWindow, model?: string): boolean {
-  const scope = window.model?.trim().toLowerCase()
-  if (!scope) {
-    return true
-  }
-  if (!model) {
-    return true
-  }
-  return model.toLowerCase().includes(scope)
+  return quotaWindowApplies(window, model)
 }
 
 /**
@@ -43,15 +44,17 @@ export function allowanceFor(
   windows: PlanAllowance,
   model: string | undefined,
   now: number,
-): { used: number; renews: Array<number> } {
+): { used: number | undefined; renews: Array<number> } {
   const applying = elapsed(windows, now).filter((window) =>
     windowApplies(window, model),
   )
 
-  const used = applying.reduce(
-    (fullest, window) => Math.max(fullest, window.used),
-    0,
+  const fractions = applying.flatMap((window) =>
+    window.unlimited ? [0]
+    : window.used === undefined ? []
+    : [window.used],
   )
+  const used = fractions.length ? Math.max(...fractions) : undefined
 
   const renews = applying
     .filter(
@@ -79,7 +82,11 @@ export function allowanceFullAt(
 ): number | undefined {
   let latest: number | undefined
   for (const window of elapsed(windows, now)) {
-    if (!windowApplies(window, model) || window.used < share) {
+    if (
+      !windowApplies(window, model)
+      || window.used === undefined
+      || window.used < share
+    ) {
       continue
     }
     if (window.resetsAtMs === undefined) {

@@ -1,3 +1,4 @@
+import type { ProviderQuotaSnapshot } from "~/lib/quota/types"
 /**
  * Zed 配额拉取（最小实现）。
  *
@@ -5,7 +6,6 @@
  * 作为账号信息展示，不编造百分比窗口。
  */
 
-import type { QuotaSnapshot } from "~/lib/quota/types"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { getConnectionProvider } from "~/lib/provider-connections"
@@ -15,7 +15,7 @@ import { ZED_CLOUD, zedUserAgent } from "~/services/oauth/zed"
 export async function fetchZedQuota(
   connection: ProviderConnection,
   signal?: AbortSignal,
-): Promise<QuotaSnapshot> {
+): Promise<ProviderQuotaSnapshot> {
   if (getConnectionProvider(connection) !== "zed") {
     throw new Error("fetchZedQuota requires a Zed connection")
   }
@@ -52,7 +52,8 @@ export async function fetchZedQuota(
   return {
     fetchedAt: Date.now(),
     provider: "zed",
-    unlimited: true,
+    unlimited: false,
+    allowance: { state: "unknown", windows: [] },
     details: { zed: { host: ZED_CLOUD, plan } },
   }
 }

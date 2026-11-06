@@ -1,17 +1,20 @@
+import type { ProviderQuotaSnapshot } from "~/lib/quota/types"
 import type { ProviderId } from "~/lib/provider-config"
 import type {
   OAuthProviderStrategy,
   OAuthRefreshFn,
 } from "~/services/oauth/strategy-types"
 import type { ProtocolAdapter } from "~/services/protocols/types"
-import type { ProviderRuntime } from "~/services/providers/runtime"
+import type {
+  ProviderQuota,
+  ProviderRuntime,
+} from "~/services/providers/runtime"
 import { isOAuthProviderId, PROVIDER_PROTOCOL_MAP } from "~/lib/provider-config"
 import type { ProviderDescriptor } from "~/lib/provider-config"
 import type {
   ModelMapping,
   ProviderConnection,
 } from "~/lib/provider-connections"
-import type { QuotaSnapshot } from "~/lib/quota/types"
 import type { ProviderAccountCreation } from "~/services/providers/account-creation/types"
 import type { OAuthCallbackConfig } from "~/services/providers/callbacks/types"
 
@@ -20,6 +23,7 @@ export interface ProviderModule {
   id: ProviderId
   descriptor: ProviderDescriptor
   adapter: ProtocolAdapter
+  quota?: ProviderQuota
   createRuntime(): ProviderRuntime
   /** Login capability is independent of legacy OAuth account classification. */
   oauth?: OAuthProviderStrategy
@@ -43,7 +47,7 @@ export interface ProviderModule {
   fetchQuota?(
     connection: ProviderConnection,
     signal?: AbortSignal,
-  ): Promise<QuotaSnapshot | undefined>
+  ): Promise<ProviderQuotaSnapshot | undefined>
 }
 
 /** Check the whole set before registering anything. Shared adapter instances are valid. */

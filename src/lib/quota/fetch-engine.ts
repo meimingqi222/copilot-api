@@ -1,4 +1,4 @@
-import type { QuotaSnapshot } from "~/lib/quota/types"
+import type { ProviderQuotaSnapshot } from "~/lib/quota/types"
 import type { OAuthProviderId } from "~/lib/provider-config"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
@@ -12,7 +12,10 @@ export interface SimpleQuotaDescriptor {
   url: string
   headers: Record<string, string>
   /** Parse response body and assemble a QuotaSnapshot; throw on parse failure */
-  buildSnapshot(body: string, connection: ProviderConnection): QuotaSnapshot
+  buildSnapshot(
+    body: string,
+    connection: ProviderConnection,
+  ): ProviderQuotaSnapshot
 }
 
 /**
@@ -23,7 +26,7 @@ export async function fetchQuotaByDescriptor(
   connection: ProviderConnection,
   descriptor: SimpleQuotaDescriptor,
   signal?: AbortSignal,
-): Promise<QuotaSnapshot> {
+): Promise<ProviderQuotaSnapshot> {
   const { provider, displayName } = descriptor
   if (getConnectionProvider(connection) !== provider) {
     throw new Error(

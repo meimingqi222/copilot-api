@@ -71,6 +71,7 @@ const refreshAuth = prepareOAuthRefresh(
 export function getGeminiModule(): ProviderModule {
   return defineOAuthProviderModule({
     id: "gemini",
+    quota: { source: "none" },
     callback: geminiCallbackConfig,
     fetchQuota: fetchGeminiQuota,
     fallbackModels: () => [],

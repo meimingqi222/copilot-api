@@ -1,9 +1,9 @@
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import {
-  getMutableProviderConnection,
-  persistProviderConnections,
-} from "~/lib/provider-connections"
-import { refreshWindsurfQuota } from "~/lib/quota/fetchers/windsurf"
+  applyWindsurfQuotaSnapshot,
+  fetchWindsurfQuota,
+} from "~/lib/quota/fetchers/windsurf"
+import { refreshProviderQuota } from "~/lib/quota/refresh"
 import {
   fallbackWindsurfConnectionModelsForConnection,
   getWindsurfModelsForConnection,
@@ -14,6 +14,7 @@ import type { ProviderRuntime } from "~/services/providers/runtime"
 export const windsurfProviderRuntime: ProviderRuntime = {
   id: "windsurf",
   descriptor: getProviderDescriptor("windsurf"),
+  quota: { source: "poll" },
   supports(_connection, feature) {
     return this.descriptor.features.includes(feature)
   },
@@ -21,12 +22,11 @@ export const windsurfProviderRuntime: ProviderRuntime = {
     const models = await getWindsurfModelsForConnection(connection)
     return models
   },
-  async refreshQuota(connection, signal) {
-    const liveConnection = getMutableProviderConnection(connection.id)
-    if (!liveConnection) return undefined
-    const snapshot = await refreshWindsurfQuota(liveConnection, signal)
-    await persistProviderConnections()
-    return snapshot
+  async refreshQuota(connection, signal, options) {
+    return refreshProviderQuota(connection, fetchWindsurfQuota, signal, {
+      ...options,
+      applySnapshot: applyWindsurfQuotaSnapshot,
+    })
   },
   getFallbackModels(connection) {
     return fallbackWindsurfConnectionModelsForConnection(connection)

@@ -64,6 +64,7 @@ const windsurfStrategy: OAuthProviderStrategy = {
 export function getWindsurfModule(): ProviderModule {
   return {
     id: "windsurf",
+    quota: { source: "poll" },
     descriptor: getProviderDescriptor("windsurf"),
     accountCreation: windsurfAccountCreation,
     callback: windsurfCallbackConfig,

@@ -1,3 +1,4 @@
+import type { ProviderQuotaSnapshot } from "~/lib/quota/types"
 /**
  * LobsterAI（有道龙虾）积分/配额拉取。
  *
@@ -16,7 +17,6 @@
  * 归零才判耗尽。
  */
 
-import type { QuotaSnapshot } from "~/lib/quota/types"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { getConnectionProvider } from "~/lib/provider-connections"
@@ -119,7 +119,7 @@ function earliestCreditExpiry(
 export function buildLobsteraiSnapshot(
   parsed: ParsedLobsteraiQuota,
   host: string,
-): QuotaSnapshot {
+): ProviderQuotaSnapshot {
   const profile = parsed.profile
   const quota = parsed.quota
 
@@ -148,10 +148,23 @@ export function buildLobsteraiSnapshot(
       ),
   }
 
-  const base: QuotaSnapshot = {
+  const base: ProviderQuotaSnapshot = {
     fetchedAt: Date.now(),
     provider: "lobsterai",
     unlimited: false,
+    allowance: {
+      state: creditsRemainingRaw === undefined ? "unknown" : "known",
+      windows:
+        creditsRemainingRaw === undefined ?
+          []
+        : [
+            {
+              id: "credits",
+              remaining: Math.max(0, creditsRemainingRaw),
+              unit: "credits",
+            },
+          ],
+    },
     details: { lobsterai: details },
   }
 
@@ -191,7 +204,7 @@ async function getJson(
 export async function fetchLobsteraiQuota(
   connection: ProviderConnection,
   signal?: AbortSignal,
-): Promise<QuotaSnapshot> {
+): Promise<ProviderQuotaSnapshot> {
   if (getConnectionProvider(connection) !== "lobsterai") {
     throw new Error("fetchLobsteraiQuota requires a LobsterAI connection")
   }

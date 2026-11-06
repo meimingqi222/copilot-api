@@ -1,13 +1,13 @@
+import type { ProviderQuotaSnapshot } from "~/lib/quota/types"
 /**
  * DimAgent 配额拉取。
  *
  * 端点：`GET https://dimagent.cn/api/me/usage`，`Authorization: Bearer`。
  * 响应形状由上游定义（桌面端「用量」页读的就是它）；这里只做宽松解析：
- * 若给出数字型的已用/总量或百分比就填窗口，否则只报计划、标为 unlimited，
+ * 若给出数字型的已用/总量或百分比就填窗口，否则只报计划、标为 unknown，
  * 不编造 reset。
  */
 
-import type { QuotaSnapshot } from "~/lib/quota/types"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { getConnectionProvider } from "~/lib/provider-connections"
@@ -69,7 +69,7 @@ export function parseDimagentQuota(raw: unknown): {
 export async function fetchDimagentQuota(
   connection: ProviderConnection,
   signal?: AbortSignal,
-): Promise<QuotaSnapshot> {
+): Promise<ProviderQuotaSnapshot> {
   if (getConnectionProvider(connection) !== "dimagent") {
     throw new Error("fetchDimagentQuota requires a DimAgent connection")
   }
@@ -98,10 +98,20 @@ export async function fetchDimagentQuota(
     throw new Error(`DimAgent usage request failed (HTTP ${response.status})`)
   }
   const parsed = parseDimagentQuota(await response.json())
-  const base: QuotaSnapshot = {
+  const base: ProviderQuotaSnapshot = {
     fetchedAt: Date.now(),
     provider: "dimagent",
-    unlimited: parsed.windows.length === 0,
+    unlimited: false,
+    allowance: {
+      state: parsed.windows.length > 0 ? "known" : "unknown",
+      windows: parsed.windows.map((w) => ({
+        id: "usage",
+        used: w.usedPercent / 100,
+        remaining: 100 - w.usedPercent,
+        total: 100,
+        unit: "percent",
+      })),
+    },
     details: {
       dimagent: {
         host: DIMAGENT_BASE,

@@ -128,6 +128,21 @@ describe("fetchWindsurfQuota", () => {
     try {
       const snapshot = await fetchWindsurfQuota(connection)
       expect(snapshot.provider).toBe("windsurf")
+      expect(snapshot.allowance?.state).toBe("known")
+      expect(snapshot.allowance?.windows).toEqual([
+        expect.objectContaining({
+          id: "daily",
+          unit: "percent",
+          spanMs: 86_400_000,
+        }),
+        expect.objectContaining({
+          id: "weekly",
+          used: 0.4,
+          remaining: 60,
+          total: 100,
+          spanMs: 7 * 86_400_000,
+        }),
+      ])
       // weekly 剩余 60 → 剩余 60（premiumInteractionsRemaining 取剩余值）
       expect(snapshot.premiumInteractionsRemaining).toBe(60)
       expect(snapshot.unlimited).toBe(false)
@@ -220,6 +235,9 @@ describe("fetchWindsurfQuota", () => {
         )
         try {
           const snapshot = await refreshWindsurfQuota(connection)
+          expect(snapshot.allowance?.windows[0]?.resetsAtMs).toBe(
+            resetInSeconds * 1000,
+          )
           // 剩余取更紧张的窗口：日 0%
           expect(snapshot.premiumInteractionsRemaining).toBe(0)
           expect(getConnectionQuotaState(connection)).toBe("exhausted")

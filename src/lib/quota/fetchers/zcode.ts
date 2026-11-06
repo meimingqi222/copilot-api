@@ -1,3 +1,4 @@
+import type { ProviderQuotaSnapshot } from "~/lib/quota/types"
 /**
  * ZCode 配额拉取。
  *
@@ -10,7 +11,7 @@
  *   parseZcodeStartBalance 剔除（临时积分到期不显示）。
  */
 
-import type { QuotaSnapshot } from "~/lib/quota/types"
+import type { QuotaWindow } from "~/lib/quota/types"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import {
@@ -34,6 +35,7 @@ import {
 import { snapshotFromWindows } from "~/lib/quota/snapshot"
 
 interface ZcodeQuotaWindow {
+  allowance?: QuotaWindow
   name: string
   usedPercent: number
   resetsAt?: number
@@ -70,6 +72,15 @@ export function parseZcodeQuota(raw: unknown): ParsedZcodeQuota | undefined {
     const remaining = asNumber(x.remaining)
     const current = asNumber(x.currentValue)
     const percent = asNumber(x.percentage)
+    if (
+      percent === undefined
+      && !(
+        total !== undefined
+        && total > 0
+        && (remaining !== undefined || current !== undefined)
+      )
+    )
+      continue
     let used = percent ?? 0
     // 与 valueText/进度条的「剩余」口径一致：剩余 / 总量（或剩余%）。
     let display = `${(100 - used).toFixed(0)}%`
@@ -84,7 +95,22 @@ export function parseZcodeQuota(raw: unknown): ParsedZcodeQuota | undefined {
       }
     }
     const reset = asNumber(x.nextResetTime)
+    const type = typeof x.type === "string" ? x.type : ""
     windows.push({
+      allowance: {
+        id: `coding:${type}:${unit}:${number}`,
+        // TIME_LIMIT counts search/reader tool calls, not chat tokens.
+        ...(type !== "TOKENS_LIMIT" && { aside: true }),
+        used: Math.min(1, Math.max(0, used / 100)),
+        remaining: Math.max(0, 100 - used),
+        total: 100,
+        unit: "percent",
+        spanMs:
+          unit === 3 ? 5 * 3_600_000
+          : unit === 6 ? 7 * 86_400_000
+          : undefined,
+        resetsAtMs: reset !== undefined && reset > 0 ? reset : undefined,
+      },
       name: windowName(unit, number),
       usedPercent: Math.min(Math.max(used, 0), 100),
       resetsAt: reset !== undefined && reset > 0 ? reset : undefined,
@@ -95,7 +121,10 @@ export function parseZcodeQuota(raw: unknown): ParsedZcodeQuota | undefined {
   return { level, windows }
 }
 
-function buildSnapshot(parsed: ParsedZcodeQuota, host: string): QuotaSnapshot {
+function buildSnapshot(
+  parsed: ParsedZcodeQuota,
+  host: string,
+): ProviderQuotaSnapshot {
   const plan =
     parsed.level ?
       `GLM Coding ${parsed.level.charAt(0).toUpperCase()}${parsed.level.slice(1)}`
@@ -103,7 +132,21 @@ function buildSnapshot(parsed: ParsedZcodeQuota, host: string): QuotaSnapshot {
   return snapshotFromWindows({
     provider: "zcode",
     windows: parsed.windows,
-    details: { zcode: { host, plan, windows: parsed.windows } },
+    allowance: {
+      state: parsed.windows.length > 0 ? "known" : "unknown",
+      windows: parsed.windows.flatMap((w) =>
+        w.allowance ? [w.allowance] : [],
+      ),
+    },
+    details: {
+      zcode: {
+        host,
+        plan,
+        windows: parsed.windows.map(
+          ({ allowance: _allowance, ...window }) => window,
+        ),
+      },
+    },
   })
 }
 // ── Start Plan（billing/balance → 余额桶窗口） ──────────────────
@@ -147,7 +190,7 @@ function bucketPeriodMs(
 }
 
 /** Start Plan 余额 → 配额快照：每个余额桶一个窗口。 */
-function buildStartSnapshot(balance: ZcodeStartBalance): QuotaSnapshot {
+function buildStartSnapshot(balance: ZcodeStartBalance): ProviderQuotaSnapshot {
   const active = zcodeActiveStartPlan(balance)
   if (!active) {
     // A successful empty reading must replace stale credits, not preserve them as a fetch failure.
@@ -155,6 +198,7 @@ function buildStartSnapshot(balance: ZcodeStartBalance): QuotaSnapshot {
       fetchedAt: Date.now(),
       provider: "zcode",
       unlimited: false,
+      allowance: { state: "not-included", windows: [] },
       premiumInteractionsRemaining: 0,
       premiumInteractionsTotal: 100,
       chatRemaining: 0,
@@ -179,6 +223,7 @@ function buildStartSnapshot(balance: ZcodeStartBalance): QuotaSnapshot {
       used = total - left
     }
     const models = bucket.capabilities
+      .filter((c) => c.trim().startsWith("model:"))
       .map((c) =>
         c
           .trim()
@@ -187,29 +232,73 @@ function buildStartSnapshot(balance: ZcodeStartBalance): QuotaSnapshot {
       )
       .filter(Boolean)
     const name = bucket.showName || models.join(", ") || "Credits"
-    const w: ZcodeQuotaWindow = { name, usedPercent: 0, display: "" }
+    const periodMs = bucketPeriodMs(bucket, balance)
+    // A periodic bucket renews at its period end; an expiry at that same
+    // instant is the period boundary, not lost credit.
+    const periodEnd =
+      periodMs > 0 && bucket.periodEnd !== undefined && bucket.periodEnd > 0 ?
+        bucket.periodEnd * 1000
+      : undefined
+    const expiresAt =
+      bucket.expiresAt !== undefined && bucket.expiresAt > 0 ?
+        bucket.expiresAt * 1000
+      : undefined
+    const w: ZcodeQuotaWindow = {
+      name,
+      usedPercent: 0,
+      display: "",
+      allowance: {
+        id: `start:${bucket.userPlanId || bucket.planId}:${bucket.entitlement}:${models.join(",")}`,
+        used:
+          total !== undefined && total > 0 && used !== undefined ?
+            Math.min(1, Math.max(0, used / total))
+          : undefined,
+        remaining:
+          left !== undefined ? Math.max(0, left)
+          : total !== undefined && used !== undefined ?
+            Math.max(0, total - used)
+          : undefined,
+        total,
+        unit: "credits",
+        resetsAtMs: periodEnd,
+        expiresAtMs: expiresAt !== periodEnd ? expiresAt : undefined,
+        scope: { models },
+        aside: models.length === 0,
+      },
+    }
     if (total !== undefined && total > 0 && used !== undefined) {
       w.usedPercent = Math.min(100, Math.max(0, (100 * used) / total))
       const remaining = Math.max(0, total - used)
       w.display = `${remaining.toFixed(0)} / ${total.toFixed(0)}`
     }
-    if (bucket.expiresAt !== undefined && bucket.expiresAt > 0) {
-      w.resetsAt = bucket.expiresAt * 1000 // 余额接口给的是秒
-    }
-    const periodMs = bucketPeriodMs(bucket, balance)
     if (periodMs > 0) w.name = `${name} · ${periodLabel(periodMs)}`
     windows.push(w)
   }
-  const base: QuotaSnapshot = {
+  const base: ProviderQuotaSnapshot = {
     fetchedAt: Date.now(),
     provider: "zcode",
-    unlimited: windows.length === 0,
+    unlimited: false,
+    allowance: {
+      state:
+        (
+          windows.some(
+            (w) =>
+              w.allowance
+              && !w.allowance.aside
+              && (w.allowance.used !== undefined
+                || w.allowance.remaining !== undefined),
+          )
+        ) ?
+          "known"
+        : "unknown",
+      windows: windows.flatMap((w) => (w.allowance ? [w.allowance] : [])),
+    },
     details: {
       zcode: {
         host: "zcode.z.ai",
         plan: active.name,
         until: active.untilMs,
-        windows,
+        windows: windows.map(({ allowance: _allowance, ...window }) => window),
       },
     },
   }
@@ -228,7 +317,7 @@ function buildStartSnapshot(balance: ZcodeStartBalance): QuotaSnapshot {
 export async function fetchZcodeQuota(
   connection: ProviderConnection,
   signal?: AbortSignal,
-): Promise<QuotaSnapshot> {
+): Promise<ProviderQuotaSnapshot> {
   if (getConnectionProvider(connection) !== "zcode") {
     throw new Error("fetchZcodeQuota requires a ZCode connection")
   }

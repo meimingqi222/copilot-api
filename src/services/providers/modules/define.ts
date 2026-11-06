@@ -16,6 +16,7 @@ export function defineOAuthProviderModule(
   return {
     ...input,
     descriptor: getProviderDescriptor(input.id),
-    createRuntime: () => createOAuthProviderRuntime(input.id),
+    createRuntime: () =>
+      createOAuthProviderRuntime(input.id, { quota: input.quota }),
   }
 }

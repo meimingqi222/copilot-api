@@ -32,6 +32,10 @@ Existing accounts keep their explicit proxy settings; this change affects new
 UI imports. A destination server default proxy still applies when no account
 proxy is restored. Existing API clients keep their previous behavior.
 
+CodeBuddy's typed quota output and shared apply path preserve this transport
+boundary: proxy failures remain failed reads, never a zero-credit snapshot or
+an authentication transition.
+
 ## Verification
 
 Focused suites: `tests/admin-account-import.test.ts`, `tests/accounts-import-proxy-ui.test.ts`, `tests/codebuddy-quota.test.ts`.

@@ -46,6 +46,7 @@ function toMimoModels(): Array<ModelMapping> {
 export const mimoProviderRuntime: ProviderRuntime = {
   id: "mimo-aistudio",
   descriptor: getProviderDescriptor("mimo-aistudio"),
+  quota: { source: "none" },
   supports(_connection, feature) {
     return this.descriptor.features.includes(feature)
   },

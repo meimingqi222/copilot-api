@@ -77,6 +77,7 @@ const refreshAuth = prepareOAuthRefresh(
 export function getCodexModule(): ProviderModule {
   return defineOAuthProviderModule({
     id: "codex",
+    quota: { source: "poll" },
     callback: codexCallbackConfig,
     fetchQuota: fetchCodexQuota,
     fallbackModels: getCodexFallbackModels,

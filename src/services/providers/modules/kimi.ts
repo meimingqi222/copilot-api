@@ -95,6 +95,7 @@ const refreshAuth = prepareOAuthRefresh(
 export function getKimiModule(): ProviderModule {
   return defineOAuthProviderModule({
     id: "kimi",
+    quota: { source: "poll" },
     fetchQuota: fetchKimiQuota,
     fallbackModels: getKimiFallbackModels,
     adapter: kimiNativeAdapter,

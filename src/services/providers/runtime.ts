@@ -9,7 +9,7 @@ import type {
   ModelMapping,
   ProviderConnection,
 } from "~/lib/provider-connections"
-import type { QuotaSnapshot } from "~/lib/quota/types"
+import type { ProviderQuotaSnapshot } from "~/lib/quota/types"
 import type { ProtocolAdapter } from "~/services/protocols/types"
 
 export interface RequestExecutionContext {
@@ -58,9 +58,21 @@ export interface RequestExecutionContext {
   compact?: boolean
 }
 
+/** Numeric allowance observations exposed by a provider, not tier discovery. */
+export interface ProviderQuota {
+  source: "poll" | "response" | "poll-and-response" | "none"
+  refreshIntervalMs?: number
+}
+
+export interface ProviderQuotaRefreshOptions {
+  /** Compatibility callers may persist a batch themselves. */
+  skipSave?: boolean
+}
+
 export interface ProviderRuntime {
   id: ProviderId
   descriptor: ProviderDescriptor
+  quota?: ProviderQuota
   /** 对应的协议适配器。用于消除 provider↔protocol 手动映射表。 */
   adapter?: ProtocolAdapter
   supports(connection: ProviderConnection, feature: ProviderFeature): boolean
@@ -68,7 +80,8 @@ export interface ProviderRuntime {
   refreshQuota?(
     connection: ProviderConnection,
     signal?: AbortSignal,
-  ): Promise<QuotaSnapshot | undefined>
+    options?: ProviderQuotaRefreshOptions,
+  ): Promise<ProviderQuotaSnapshot | undefined>
   refreshAuth?(connection: ProviderConnection): Promise<void>
   getFallbackModels?(connection: ProviderConnection): Array<ModelMapping>
 }

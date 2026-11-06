@@ -1,3 +1,4 @@
+import type { ProviderQuotaSnapshot } from "~/lib/quota/types"
 /**
  * Gemini (Code Assist) 配额拉取（最小实现）。
  *
@@ -5,7 +6,6 @@
  * loadCodeAssist），不编造百分比窗口。
  */
 
-import type { QuotaSnapshot } from "~/lib/quota/types"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { getConnectionProvider } from "~/lib/provider-connections"
@@ -17,7 +17,7 @@ import {
 export async function fetchGeminiQuota(
   connection: ProviderConnection,
   signal?: AbortSignal,
-): Promise<QuotaSnapshot> {
+): Promise<ProviderQuotaSnapshot> {
   if (getConnectionProvider(connection) !== "gemini") {
     throw new Error("fetchGeminiQuota requires a Gemini connection")
   }
@@ -61,6 +61,7 @@ export async function fetchGeminiQuota(
   return {
     fetchedAt: Date.now(),
     provider: "gemini",
+    allowance: { state: "unknown", windows: [] },
     unlimited: true,
     details: { gemini: { host: GEMINI_CODE_ASSIST_BASE, plan } },
   }

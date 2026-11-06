@@ -174,6 +174,15 @@ describe("plan-quota store", () => {
         resetsAtMs: NOW + 3 * DAY,
         model: "opus",
       },
+      {
+        id: "wallet",
+        remaining: 0.01,
+        unit: "credits",
+        expiresAtMs: NOW + DAY,
+        scope: { models: ["native-a"] },
+        aside: true,
+      },
+      { id: "unknown-pressure", resetsAtMs: NOW + DAY, scope: { models: [] } },
     ]
 
     await keepReading("claude", "Alice@Example.com", windows, NOW)

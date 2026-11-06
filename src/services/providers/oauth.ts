@@ -1,33 +1,37 @@
+import type { ProviderQuotaSnapshot } from "~/lib/quota/types"
 import { isOAuthProviderId, type OAuthProviderId } from "~/lib/provider-config"
 import { getOAuthProviderDescriptor } from "~/lib/provider-config"
 import {
   getConnectionProvider,
   getMutableProviderConnection,
-  persistProviderConnections,
   setConnectionModels,
 } from "~/lib/provider-connections"
-import { applyOAuthQuotaSnapshot, fetchOAuthProviderQuota } from "~/lib/quota"
+import { fetchOAuthProviderQuota } from "~/lib/quota"
+import { refreshProviderQuota } from "~/lib/quota/refresh"
 import {
   discoverOAuthModelsForConnection,
   getOAuthCatalogModelsForConnection,
 } from "~/services/oauth/discover-models"
 import { refreshOAuthConnectionToken } from "~/services/oauth/refresh-scheduler"
-import type { QuotaSnapshot } from "~/lib/quota/types"
 import type {
   ModelMapping,
   ProviderConnection,
 } from "~/lib/provider-connections"
 
-import type { ProviderRuntime } from "~/services/providers/runtime"
+import type {
+  ProviderQuota,
+  ProviderRuntime,
+} from "~/services/providers/runtime"
 
 /** Provider-owned operations; defaults preserve the existing OAuth providers. */
 interface OAuthRuntimeOperations {
+  quota?: ProviderQuota
   discoverModels?(connection: ProviderConnection): Promise<Array<ModelMapping>>
   getFallbackModels?(connection: ProviderConnection): Array<ModelMapping>
   fetchQuota?(
     connection: ProviderConnection,
     signal?: AbortSignal,
-  ): Promise<QuotaSnapshot | undefined>
+  ): Promise<ProviderQuotaSnapshot | undefined>
 }
 
 export function createOAuthProviderRuntime(
@@ -39,6 +43,7 @@ export function createOAuthProviderRuntime(
   return {
     id: providerId,
     descriptor,
+    quota: operations.quota,
     supports(connection, feature) {
       const provider = getConnectionProvider(connection)
       if (provider !== providerId) return false
@@ -65,26 +70,14 @@ export function createOAuthProviderRuntime(
         operations.getFallbackModels ?? getOAuthCatalogModelsForConnection
       return getFallbackModels(connection)
     },
-    async refreshQuota(connection, signal) {
+    async refreshQuota(connection, signal, options) {
       const provider = getConnectionProvider(connection)
       if (provider !== providerId) {
         return undefined
       }
 
-      const liveConnection = getMutableProviderConnection(connection.id)
-      if (!liveConnection) {
-        return undefined
-      }
-
       const fetchQuota = operations.fetchQuota ?? fetchOAuthProviderQuota
-      const snapshot = await fetchQuota(liveConnection, signal)
-      if (!snapshot) {
-        return undefined
-      }
-
-      applyOAuthQuotaSnapshot(liveConnection, snapshot)
-      await persistProviderConnections()
-      return snapshot
+      return refreshProviderQuota(connection, fetchQuota, signal, options)
     },
     refreshAuth(connection) {
       const provider = getConnectionProvider(connection)

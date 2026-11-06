@@ -39,6 +39,10 @@ Retained legacy entries with explicit metadata or quoted names remain searchable
 Renamed or expired historical entries cannot be recovered; the UI says so and
 preserves the stored diagnostic summary without claiming it is an original log.
 
+Capability-driven quota scheduling still wraps each connection probe in its
+own log context; moving fetch/apply ownership into modules must not lose the
+parallel-attribution regression in `tests/quota-refresh.test.ts`.
+
 ## Verification
 
 - `tests/jobs.test.ts::connection`

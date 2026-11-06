@@ -73,6 +73,7 @@ const refreshAuth = prepareOAuthRefresh(
 export function getXaiModule(): ProviderModule {
   return defineOAuthProviderModule({
     id: "xai",
+    quota: { source: "poll" },
     callback: xaiCallbackConfig,
     fetchQuota: fetchXaiQuota,
     fallbackModels: getXaiFallbackModels,

@@ -11,6 +11,9 @@ import {
   getMutableProviderConnection,
 } from "~/lib/provider-connections"
 import { applyOAuthQuotaSnapshot } from "~/lib/quota"
+import { codexAllowance } from "~/lib/quota/fetchers/codex"
+import { xaiAllowance } from "~/lib/quota/fetchers/xai"
+import { quotaAvailability } from "~/lib/quota/allowance"
 import { buildCodexQuotaMeta, buildCodexQuotaWindows } from "~/lib/quota/codex"
 import {
   parseCodexUsagePayload,
@@ -282,6 +285,146 @@ describe("Responses SSE collector", () => {
 })
 
 describe("Codex and xAI quota parsers", () => {
+  test("canonical Codex preserves usage-only and reset-only meters without promoting features", () => {
+    const allowance = codexAllowance(
+      {
+        rateLimit: {
+          primaryWindow: { usedPercent: 25 },
+          secondaryWindow: { resetAfterSeconds: 60 },
+        },
+        codeReviewRateLimit: { primaryWindow: { usedPercent: 100 } },
+        additionalRateLimits: [
+          {
+            meteredFeature: "opaque",
+            rateLimit: { primaryWindow: { usedPercent: 100 } },
+          },
+        ],
+      },
+      1000,
+    )
+    expect(allowance.windows[0]).toMatchObject({
+      id: "shared-primary",
+      used: 0.25,
+    })
+    expect(allowance.windows[0]?.resetsAtMs).toBeUndefined()
+    expect(allowance.windows[1]).toMatchObject({
+      id: "shared-secondary",
+      resetsAtMs: 61_000,
+    })
+    expect(allowance.windows[1]?.used).toBeUndefined()
+    expect(
+      allowance.windows
+        .slice(2)
+        .every((window) => window.aside && window.used === 1),
+    ).toBe(true)
+    expect(codexAllowance({})).toEqual({ state: "unknown", windows: [] })
+    expect(codexAllowance({ rate_limit: { allowed: false } }).windows).toEqual([
+      { id: "shared-denied", remaining: 0, unit: "requests" },
+    ])
+    expect(
+      codexAllowance({ code_review_rate_limit: { limit_reached: true } })
+        .windows,
+    ).toEqual([
+      { id: "code-review-denied", remaining: 0, unit: "requests", aside: true },
+    ])
+  })
+
+  test("canonical xAI separates weekly ISO resets from optional monthly cents", () => {
+    const allowance = xaiAllowance({
+      config: {
+        creditUsagePercent: 23.12,
+        billingPeriodEnd: "2026-11-07T00:00:00Z",
+        monthlyLimit: { val: 0 },
+        used: { val: 0 },
+      },
+    })
+    expect(allowance.windows[0]).toMatchObject({
+      id: "credit-period",
+      resetsAtMs: Date.parse("2026-11-07T00:00:00Z"),
+    })
+    expect(allowance.windows[0]?.used).toBeCloseTo(0.2312)
+    expect(allowance.windows[0]?.spanMs).toBeUndefined()
+    expect(allowance.windows[1]).toMatchObject({
+      id: "monthly-spend",
+      remaining: 0,
+      total: 0,
+      aside: true,
+    })
+    expect(allowance.windows[1]?.used).toBeUndefined()
+    expect(xaiAllowance({}).state).toBe("unknown")
+  })
+
+  test("canonical xAI monthly-only usage retains its measured limit and billing reset", () => {
+    const allowance = xaiAllowance({
+      config: {
+        monthlyLimit: { val: 1000 },
+        used: { val: 800 },
+        billingPeriodEnd: "2099-12-01T00:00:00Z",
+      },
+    })
+    expect(allowance.windows).toHaveLength(1)
+    expect(allowance.windows[0]).toMatchObject({
+      id: "monthly-spend",
+      remaining: 200,
+      total: 1000,
+      used: 0.8,
+      resetsAtMs: Date.parse("2099-12-01T00:00:00Z"),
+    })
+    expect(allowance.windows[0]?.aside).toBeUndefined()
+    expect(allowance.windows[0]?.spanMs).toBeUndefined()
+  })
+
+  test("canonical xAI positive monthly and credit limits both constrain, while zero monthly cap does not", () => {
+    for (const [monthlyTotal, monthlyUsed, creditUsed, status] of [
+      [1000, 1000, 25, "exhausted"],
+      [1000, 100, 100, "exhausted"],
+      [0, 0, 25, "available"],
+      [1000, 900, 25, "available"],
+    ] as const) {
+      const allowance = xaiAllowance({
+        config: {
+          monthlyLimit: { val: monthlyTotal },
+          used: { val: monthlyUsed },
+          creditUsagePercent: creditUsed,
+          currentPeriod: {
+            type: "USAGE_PERIOD_TYPE_WEEKLY",
+            end: "2099-11-07T00:00:00Z",
+          },
+          monthlyBillingPeriodEnd: "2099-12-01T00:00:00Z",
+        },
+      })
+      expect(allowance.windows[0]?.spanMs).toBe(604_800_000)
+      expect(allowance.windows[1]?.aside === true).toBe(monthlyTotal === 0)
+      if (monthlyTotal > 0)
+        expect(allowance.windows[1]?.used).toBeCloseTo(
+          monthlyUsed / monthlyTotal,
+        )
+      expect(
+        quotaAvailability({
+          fetchedAt: Date.now(),
+          unlimited: false,
+          allowance,
+        }),
+      ).toBe(status)
+    }
+  })
+
+  test("canonical xAI derives a span only from an explicit period type or actual boundaries", () => {
+    const allowance = xaiAllowance({
+      config: {
+        creditUsagePercent: 50,
+        currentPeriod: {
+          start: "2099-11-01T00:00:00Z",
+          end: "2099-11-08T00:00:00Z",
+        },
+      },
+    })
+    expect(allowance.windows[0]?.spanMs).toBe(604_800_000)
+    expect(
+      xaiAllowance({ config: { creditUsagePercent: 50 } }).windows[0]?.spanMs,
+    ).toBeUndefined()
+  })
+
   test("summarizeCodexQuota picks lowest remaining window", () => {
     const payload = parseCodexUsagePayload({
       rate_limit: {

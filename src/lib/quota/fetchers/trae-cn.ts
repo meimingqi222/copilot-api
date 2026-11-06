@@ -1,3 +1,4 @@
+import type { ProviderQuotaSnapshot } from "~/lib/quota/types"
 /**
  * Trae CN 配额拉取。
  *
@@ -12,7 +13,7 @@
  * is_credits_billing 说账号是不是积分计费（否则显示 Free）。
  */
 
-import type { QuotaSnapshot } from "~/lib/quota/types"
+import type { QuotaWindow } from "~/lib/quota/types"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { HTTPError } from "~/lib/error"
@@ -39,13 +40,19 @@ interface TraeCreditPack {
 }
 
 function packLimit(pack: TraeCreditPack): number | undefined {
-  const n = Number(pack.entitlement_base_info?.quota?.credits_limit)
+  const raw = pack.entitlement_base_info?.quota?.credits_limit
+  if ((typeof raw !== "number" && typeof raw !== "string") || raw === "")
+    return undefined
+  const n = Number(raw)
   return Number.isFinite(n) ? n : undefined
 }
 
-function packUsed(pack: TraeCreditPack): number {
-  const n = Number(pack.usage?.credits_amount)
-  return Number.isFinite(n) && n > 0 ? n : 0
+function packUsed(pack: TraeCreditPack): number | undefined {
+  const raw = pack.usage?.credits_amount
+  if ((typeof raw !== "number" && typeof raw !== "string") || raw === "")
+    return undefined
+  const n = Number(raw)
+  return Number.isFinite(n) ? Math.max(0, n) : undefined
 }
 
 function packEnd(pack: TraeCreditPack): number {
@@ -59,7 +66,7 @@ function packEnd(pack: TraeCreditPack): number {
 export async function fetchTraeCnQuota(
   connection: ProviderConnection,
   signal?: AbortSignal,
-): Promise<QuotaSnapshot> {
+): Promise<ProviderQuotaSnapshot> {
   requireTraeCnProvider(connection)
   const credential = connection.credentials[0]
   if (!credential) {
@@ -120,6 +127,8 @@ export async function fetchTraeCnQuota(
   let limit = 0
   let used = 0
   let unlimited = false
+  let measured = true
+  const packWindows: Array<QuotaWindow> = []
   let soonest = 0
   const packs =
     Array.isArray(v.user_entitlement_pack_list) ?
@@ -127,34 +136,75 @@ export async function fetchTraeCnQuota(
     : []
   for (const pack of packs) {
     const l = packLimit(pack)
-    if (l === undefined) continue
+    if (l === undefined) {
+      measured = false
+      continue
+    }
     if (l === -1) unlimited = true
-    else if (l >= 0) limit += l
-    used += packUsed(pack)
+    else if (l >= 0) {
+      limit += l
+      const u = packUsed(pack)
+      if (u === undefined) measured = false
+      else used += u
+    }
     const end = packEnd(pack)
+    packWindows.push({
+      id: `pack:${end}:${l}`,
+      total: l >= 0 ? l : undefined,
+      unit: "credits",
+      expiresAtMs: end > 0 ? end : undefined,
+      unlimited: l === -1,
+      aside: true,
+    })
     if (end > 0 && (!soonest || end < soonest)) soonest = end
   }
 
   const plan = v.is_credits_billing ? "Credits" : "Free"
   const windows: Array<Record<string, unknown>> = []
   let remainingPercent: number | undefined
-  if (!unlimited && limit > 0) {
+  // Zero-limit packs (e.g. Free accounts) are not a measured, spent balance.
+  const counted = !unlimited && measured && limit > 0
+  if (counted) {
     const remaining = Math.max(0, limit - used)
     remainingPercent = Math.max(0, Math.min(100, (100 * remaining) / limit))
     windows.push({
       name: "Credits",
       usedPercent: Math.max(0, Math.min(100, (100 * used) / limit)),
       display: `${Math.round(remaining * 100) / 100} / ${Math.round(limit * 100) / 100}`,
-      // 这里其实是「最早到期的积分包过期时间」——UI/路由按窗口终止
-      // 时间读，语义上就是额度作废日，用 resetsAt 让显示一致。
-      ...(soonest > 0 ? { resetsAt: soonest } : {}),
+      ...(soonest > 0 ? { expiresAt: soonest } : {}),
     })
   }
 
-  const base: QuotaSnapshot = {
+  const base: ProviderQuotaSnapshot = {
     fetchedAt: Date.now(),
     provider: "trae-cn",
-    unlimited: unlimited || windows.length === 0,
+    unlimited,
+    allowance: {
+      state:
+        unlimited ? "unlimited"
+        : counted ? "known"
+        : "unknown",
+      windows: [
+        ...(counted ?
+          [
+            {
+              id: "credits",
+              remaining: Math.max(0, limit - used),
+              total: limit,
+              used: Math.min(1, used / limit),
+              unit: "credits" as const,
+              // A single pack has one real expiry. Multiple complementary packs
+              // retain their individual expiry hints below, not a fabricated reset.
+              expiresAtMs:
+                packWindows.length === 1 ?
+                  packWindows[0]?.expiresAtMs
+                : undefined,
+            },
+          ]
+        : []),
+        ...packWindows,
+      ],
+    },
     details: {
       "trae-cn": {
         host: TRAE_CN_AUTH_HOST,

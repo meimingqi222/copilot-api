@@ -108,6 +108,61 @@ function targetOf(conn: ProviderConnection): RouteTarget {
 }
 
 describe("quota strategy", () => {
+  test("provider-owned weekly allowance selects the earlier reset in reversed candidate order", async () => {
+    const early = await account("early")
+    const later = await account("later")
+    const now = Date.now()
+    for (const [connection, used, resetsIn] of [
+      [early, 0.26, 36],
+      [later, 0.66, 72],
+    ] as const) {
+      const credential = connection.credentials.at(0)!
+      credential.quota = {
+        fetchedAt: now,
+        unlimited: false,
+        allowance: {
+          state: "known",
+          windows: [
+            {
+              id: "weekly",
+              used,
+              spanMs: 7 * 24 * 3_600_000,
+              resetsAtMs: now + resetsIn * 3_600_000,
+            },
+          ],
+        },
+      }
+    }
+    state.routing.strategy = "quota"
+    expect(
+      selectRouteTarget([targetOf(later), targetOf(early)])?.connectionId,
+    ).toBe(early.id)
+    state.routing.sessionAffinity = true
+    commitRouteTargetAffinity(targetOf(later), "existing-session")
+    expect(
+      selectRouteTarget([targetOf(early), targetOf(later)], {
+        sessionId: "existing-session",
+      })?.connectionId,
+    ).toBe(later.id)
+  })
+
+  test("unknown allowance is not a permanent learner ahead of known capacity", async () => {
+    const unknown = await account("unknown")
+    const known = await account("known", {
+      chatRemaining: 50,
+      chatTotal: 100,
+      renewsInMs: 3_600_000,
+    })
+    state.routing.strategy = "quota"
+    expect(
+      selectRouteTarget([targetOf(unknown), targetOf(known)])?.connectionId,
+    ).toBe(known.id)
+    state.routing.strategy = "least-used"
+    expect(
+      selectRouteTarget([targetOf(unknown), targetOf(known)])?.connectionId,
+    ).toBe(known.id)
+  })
+
   test("keeps a healthy session binding even when an equally ranked lane is idle", async () => {
     state.routing.strategy = "quota"
     state.routing.sessionAffinity = true
@@ -212,7 +267,7 @@ describe("quota strategy", () => {
     expect(chosen?.connectionId).toBe(low92.id)
   })
 
-  test("a learner (unknown allowance) goes first in the fine band", async () => {
+  test("an unmeasured account does not outrank known healthy capacity", async () => {
     const learner = await account("a-learner") // no quota snapshot
     const known = await account("b-known", {
       chatRemaining: 50,
@@ -220,7 +275,7 @@ describe("quota strategy", () => {
     })
     state.routing.strategy = "quota"
     const chosen = selectRouteTarget([targetOf(known), targetOf(learner)])
-    expect(chosen?.connectionId).toBe(learner.id)
+    expect(chosen?.connectionId).toBe(known.id)
   })
 
   test("candidates with no allowance at all keep the incoming order", async () => {

@@ -53,6 +53,7 @@ const lobsteraiStrategy: OAuthProviderStrategy = {
 export function getLobsteraiModule(): ProviderModule {
   return {
     id: "lobsterai",
+    quota: { source: "poll" },
     descriptor: getProviderDescriptor("lobsterai"),
     accountCreation: lobsteraiAccountCreation,
     afterAuthentication: scheduleLobsteraiRefresh,

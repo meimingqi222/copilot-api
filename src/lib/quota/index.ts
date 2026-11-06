@@ -1,3 +1,4 @@
+import type { ProviderQuotaSnapshot } from "~/lib/quota/types"
 import type { ProviderConnection } from "~/lib/provider-connections"
 import type { QuotaSnapshot } from "~/lib/quota/types"
 
@@ -10,9 +11,10 @@ import {
 } from "~/lib/provider-connections"
 import { liftRestAfterQuotaRecovery } from "~/lib/quota/recovery"
 import { clearAccountPacingState } from "~/lib/rate-limit"
-
-const PERCENTAGE_QUOTA_EXHAUSTION_THRESHOLD = 0
-const COUNT_QUOTA_EXHAUSTION_THRESHOLD = 5
+import {
+  normalizeQuotaAllowance,
+  quotaAvailability,
+} from "~/lib/quota/allowance"
 
 /**
  * 拉取 OAuth provider 配额快照(connection 原生)。
@@ -22,7 +24,7 @@ const COUNT_QUOTA_EXHAUSTION_THRESHOLD = 5
 export async function fetchOAuthProviderQuota(
   connection: ProviderConnection,
   signal?: AbortSignal,
-): Promise<QuotaSnapshot | undefined> {
+): Promise<ProviderQuotaSnapshot | undefined> {
   const provider = getConnectionProvider(connection)
   if (!provider || !isOAuthProviderId(provider)) {
     return undefined
@@ -44,39 +46,81 @@ export function applyOAuthQuotaSnapshot(
   connection: ProviderConnection,
   snapshot: QuotaSnapshot,
 ): void {
+  const previous = connection.credentials.at(0)?.quota
+  if (previous && previous.fetchedAt > snapshot.fetchedAt) return
+  if (snapshot.allowance) {
+    const allowance = normalizeQuotaAllowance(snapshot.allowance)
+    if (allowance.partial && previous?.allowance) {
+      // An event updates only the fields it measured: a reset-only event keeps
+      // the stored usage, and a usage-only event keeps the stored reset.
+      const windows = new Map(
+        previous.allowance.windows.map((window) => [window.id, window]),
+      )
+      for (const window of allowance.windows)
+        windows.set(window.id, { ...windows.get(window.id), ...window })
+      allowance.windows = [...windows.values()]
+      if (allowance.state === "unknown")
+        allowance.state = previous.allowance.state
+    }
+    snapshot.allowance = allowance
+  }
   setConnectionQuotaInfo(connection, snapshot)
   // Keep the plan reading beside the snapshot: a later refresh that fails
   // transiently replays this one instead of losing the last known allowance.
   noteSnapshotReading(connection, snapshot)
 
-  const provider = snapshot.provider
-
-  // xAI's `chatRemaining` is monthly credit *cents*, not a message count, so
-  // the count threshold must not mark it exhausted when the user has no monthly
-  // limit (e.g. Grok CLI weekly-credit accounts). Exhaustion for xAI is
-  // already handled by the percentage threshold (weekly/credit usage percent).
-  // LobsterAI credits are a wallet balance: a few remaining points are still
-  // usable, so only 0 is exhausted (same as auto-checkin). Qoder is the same:
-  // leftover add-on / dedicated packs are still spendable after one window hits 0.
-  const countExhausted =
-    provider !== "xai"
-    && snapshot.chatRemaining !== undefined
-    && ((
-      provider === "lobsterai"
-      || provider === "qoder"
-      || provider === "qoder-cn"
-    ) ?
-      snapshot.chatRemaining <= 0
-    : snapshot.chatRemaining <= COUNT_QUOTA_EXHAUSTION_THRESHOLD)
-
-  const exhausted =
-    !snapshot.unlimited
-    && ((snapshot.premiumInteractionsRemaining !== undefined
-      && snapshot.premiumInteractionsRemaining
-        <= PERCENTAGE_QUOTA_EXHAUSTION_THRESHOLD)
-      || countExhausted)
-
+  // Legacy callers are accepted without guessing units or provider identity.
+  const remaining =
+    snapshot.premiumInteractionsRemaining ?? snapshot.chatRemaining
+  let status =
+    snapshot.allowance ? quotaAvailability(snapshot)
+    : snapshot.unlimited ? "available"
+    : remaining === undefined ? "unknown"
+    : remaining <= 0 ? "exhausted"
+    : "available"
+  // Scoped capacity can lift an old account-wide lock; admission still checks
+  // the requested model independently, including any other depleted pools.
+  if (status === "unknown" && snapshot.allowance?.state === "known") {
+    const models = snapshot.allowance.windows.flatMap(
+      (window) => window.scope?.models ?? [],
+    )
+    if (
+      models.some((model) => quotaAvailability(snapshot, model) === "available")
+    )
+      status = "available"
+  }
+  if (status === "unknown") return
+  const exhausted = status === "exhausted"
+  // Response events arrive on every turn, including from requests running
+  // beside a fresh 429. Only a poll is evidence that a local wait has ended.
+  if (!exhausted && snapshot.allowance?.partial) return
   setConnectionQuotaState(connection, exhausted ? "exhausted" : "available")
+  if (exhausted && snapshot.allowance) {
+    const resets = snapshot.allowance.windows
+      .filter(
+        (window) =>
+          !window.aside
+          && !window.scope
+          && (window.remaining === 0 || (window.used ?? 0) >= 1),
+      )
+      .flatMap((window) =>
+        window.resetsAtMs && window.resetsAtMs > Date.now() ?
+          [window.resetsAtMs]
+        : [],
+      )
+    if (resets.length) {
+      const now = Date.now()
+      // Bound the local retry wait, not the provider's actual quota window.
+      const until = Math.max(
+        now + 60_000,
+        Math.min(now + 86_400_000, Math.max(...resets)),
+      )
+      for (const credential of connection.credentials) {
+        if (credential.status === "quota_exhausted")
+          credential.cooldownUntil = until
+      }
+    }
+  }
   if (!exhausted) {
     // 配额恢复时同步清理内存限流器的残留冷却，否则即使 credential 已
     // 恢复为 ready，getRemainingCooldownSeconds 仍会报告旧的 24h 冷却，

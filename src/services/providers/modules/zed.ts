@@ -81,6 +81,7 @@ const refreshAuth = prepareOAuthRefresh(async () => {
 export function getZedModule(): ProviderModule {
   return defineOAuthProviderModule({
     id: "zed",
+    quota: { source: "none" },
     callback: zedCallbackConfig,
     fetchQuota: fetchZedQuota,
     fallbackModels: getZedFallbackModels,

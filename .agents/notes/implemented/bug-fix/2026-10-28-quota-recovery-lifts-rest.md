@@ -25,6 +25,13 @@ the credential. It is called only after a fresh quota read reports capacity, by
 every quota apply path: OAuth (Codex, Claude, xAI, ...), Copilot, Windsurf and
 CodeBuddy. `auth_error` is left alone, and a failed probe lifts nothing.
 
+These providers now share `applyOAuthQuotaSnapshot` with typed allowances.
+Trusted scoped capacity can remove an old whole-account lock, but model-specific
+depletion is still checked at admission. Unknown, cancelled and obsolete readings
+must not invoke recovery; they are not evidence that a wait has ended. Neither
+are Claude CLI per-turn `rate_limit_event`s (partial allowances): they can apply
+exhaustion, but recovery waits for the poll.
+
 `clearAccountPacingState` is split out of `clearAccountRateLimitState`: quota
 recovery clears only the per-account pacing state (429 counter, arrival clock,
 account cooldown), while lifecycle operations (account deletion, duplicate

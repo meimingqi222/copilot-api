@@ -15,6 +15,7 @@ import {
 import { setModelsDevCatalogForTest } from "~/lib/models-dev"
 import {
   fetchMinimaxQuota,
+  minimaxAllowance,
   parseMinimaxCredits,
   parseMinimaxQuota,
   parseMinimaxWorkspaceCredits,
@@ -502,6 +503,62 @@ describe("MiniMax Code quota", () => {
     expect(parsed!.model.name).toBe("general")
   })
 
+  test("canonical MiniMax does not infer consumption from ambiguous counts or display boosts", () => {
+    const body = {
+      ...remainsBody,
+      model_remains: [
+        {
+          ...remainsBody.model_remains[0],
+          weekly_boost_permille: 2000,
+          current_interval_remaining_percent: undefined,
+        },
+      ],
+    }
+    const allowance = minimaxAllowance(JSON.stringify(body), createConnection())
+    expect(allowance.windows[0]?.used).toBeUndefined()
+    expect(allowance.windows[0]?.remaining).toBeUndefined()
+    expect(allowance.windows[1]?.used).toBeCloseTo(0.2)
+    expect(allowance.windows[1]).toMatchObject({ remaining: 160, total: 200 })
+    const excluded = minimaxAllowance(
+      JSON.stringify({ model_remains: [remainsBody.model_remains[1]] }),
+      createConnection(),
+    )
+    // A video product not included in the plan cannot deny the coding account.
+    expect(excluded).toEqual({ state: "unknown", windows: [] })
+    expect(
+      minimaxAllowance(
+        JSON.stringify({
+          model_remains: [
+            { ...remainsBody.model_remains[1], model_name: "general" },
+          ],
+        }),
+        createConnection(),
+      ),
+    ).toEqual({ state: "not-included", windows: [] })
+  })
+
+  test("status 2 marks a plan window used up whatever its percentage says", () => {
+    const allowance = minimaxAllowance(
+      JSON.stringify({
+        model_remains: [
+          {
+            ...remainsBody.model_remains[0],
+            current_interval_status: 2,
+            current_interval_remaining_percent: 40,
+          },
+        ],
+      }),
+      createConnection(),
+    )
+    expect(allowance.state).toBe("known")
+    expect(
+      allowance.windows.find((w) => w.id === "general-interval"),
+    ).toMatchObject({ used: 1, remaining: 0 })
+    expect(
+      allowance.windows.find((w) => w.id === "general-weekly")?.used,
+    ).toBeCloseTo(0.2)
+  })
+
   test("fetch reads the api host for the connection's region", async () => {
     const urls: Array<string> = []
     globalThis.fetch = ((input: unknown) => {
@@ -520,6 +577,12 @@ describe("MiniMax Code quota", () => {
     expect(snapshot.chatRemaining).toBe(75)
     expect(snapshot.chatTotal).toBe(100)
     expect(snapshot.unlimited).toBe(false)
+    expect(snapshot.allowance?.windows[0]).toMatchObject({
+      id: "general-interval",
+      used: 0.25,
+      remaining: 75,
+      total: 100,
+    })
     const details = snapshot.details?.minimax as
       | { host?: string; windows?: Array<unknown> }
       | undefined
@@ -678,6 +741,10 @@ describe("MiniMax Code quota", () => {
     expect(snapshot.unlimited).toBe(false)
     expect(snapshot.chatRemaining).toBe(4799.408)
     expect(snapshot.chatTotal).toBe(undefined)
+    expect(snapshot.allowance).toEqual({
+      state: "known",
+      windows: [{ id: "credit-wallet", unit: "credits", remaining: 4799.408 }],
+    })
     // 积分不是窗口占比：不给头号百分比，免得编出一个 100% 的进度环。
     expect(snapshot.premiumInteractionsRemaining).toBe(undefined)
     const details = snapshot.details?.minimax as
@@ -737,6 +804,19 @@ describe("MiniMax Code quota", () => {
       | { credits?: { total?: number } }
       | undefined
     expect(details?.credits?.total).toBe(0)
+  })
+
+  test("a small positive wallet balance is not rounded to exhausted", async () => {
+    routeFetch([
+      { match: "/coding_plan/remains", body: noTokenPlanBody },
+      {
+        match: "/get_membership_info",
+        body: { op_credit_summary: { total_remaining_amount: "0.00001" } },
+      },
+    ])
+    const snapshot = await fetchMinimaxQuota(createConnection())
+    expect(snapshot.allowance?.windows[0]?.remaining).toBe(0.00001)
+    expect(snapshot.allowance?.windows[0]?.used).toBeUndefined()
   })
 
   test("the membership endpoint answers without a balance → fall back to the workspace", async () => {

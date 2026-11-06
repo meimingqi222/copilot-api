@@ -10,7 +10,8 @@ import {
   getConnectionProvider,
   setConnectionModels,
 } from "~/lib/provider-connections"
-import { refreshQuotaForConnection } from "~/lib/quota/scheduler"
+import { fetchCopilotQuota } from "~/lib/quota/fetchers/copilot"
+import { refreshProviderQuota } from "~/lib/quota/refresh"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { refreshCopilotTokenForConnection } from "~/services/copilot/token-refresh"
 import { getModelsForConnection } from "~/services/copilot/get-models"
@@ -25,6 +26,7 @@ function storedMappings(connection: ProviderConnection): Array<ModelMapping> {
 export const copilotProviderRuntime: ProviderRuntime = {
   id: "copilot",
   descriptor: getProviderDescriptor("copilot"),
+  quota: { source: "poll" },
   supports(_connection, feature) {
     return this.descriptor.features.includes(feature)
   },
@@ -64,8 +66,9 @@ export const copilotProviderRuntime: ProviderRuntime = {
     setConnectionModels(connection, mappings)
     return mappings
   },
-  async refreshQuota(connection, signal) {
-    return refreshQuotaForConnection(connection, false, signal)
+  async refreshQuota(connection, signal, options) {
+    if (getConnectionProvider(connection) !== "copilot") return undefined
+    return refreshProviderQuota(connection, fetchCopilotQuota, signal, options)
   },
   async refreshAuth(connection) {
     await refreshCopilotTokenForConnection(connection)

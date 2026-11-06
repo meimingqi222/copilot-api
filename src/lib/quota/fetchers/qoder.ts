@@ -1,3 +1,4 @@
+import type { ProviderQuotaSnapshot } from "~/lib/quota/types"
 /**
  * Qoder 订阅配额拉取。
  *
@@ -15,7 +16,6 @@
  * 续期失败如实报错，**不**把连接标成 auth_error。
  */
 
-import type { QuotaSnapshot } from "~/lib/quota/types"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import {
@@ -135,11 +135,16 @@ export function parseQoderQuota(raw: unknown): ParsedQoderQuota | undefined {
   return { displayMode, plan: planText, windows }
 }
 
-function buildSnapshot(parsed: ParsedQoderQuota, host: string): QuotaSnapshot {
-  const base: QuotaSnapshot = {
+function buildSnapshot(
+  parsed: ParsedQoderQuota,
+  host: string,
+  provider: string,
+): ProviderQuotaSnapshot {
+  const base: ProviderQuotaSnapshot = {
     fetchedAt: Date.now(),
-    provider: "qoder",
-    unlimited: parsed.windows.length === 0,
+    provider,
+    unlimited: false,
+    allowance: { state: "unknown", windows: [] },
     details: {
       qoder: {
         displayMode: parsed.displayMode,
@@ -161,6 +166,18 @@ function buildSnapshot(parsed: ParsedQoderQuota, host: string): QuotaSnapshot {
   const remainingPercent = total > 0 ? (100 * remaining) / total : 0
   return {
     ...base,
+    allowance: {
+      state: "known",
+      windows: [
+        {
+          id: "credits",
+          remaining,
+          total,
+          used: Math.min(1, Math.max(0, 1 - remaining / total)),
+          unit: "credits",
+        },
+      ],
+    },
     premiumInteractionsRemaining: Math.round(Math.max(0, remainingPercent)),
     premiumInteractionsTotal: 100,
     chatRemaining: Math.max(0, Math.round(remaining)),
@@ -193,7 +210,7 @@ async function requestUsage(
 export async function fetchQoderQuota(
   connection: ProviderConnection,
   signal?: AbortSignal,
-): Promise<QuotaSnapshot> {
+): Promise<ProviderQuotaSnapshot> {
   const provider = getConnectionProvider(connection)
   if (provider !== "qoder" && provider !== "qoder-cn") {
     throw new Error("fetchQoderQuota requires a Qoder connection")
@@ -252,5 +269,5 @@ export async function fetchQoderQuota(
   if (!parsed) {
     throw new Error("Qoder usage response carried an unknown display mode")
   }
-  return buildSnapshot(parsed, site.openapiHost)
+  return buildSnapshot(parsed, site.openapiHost, site.id)
 }

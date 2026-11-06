@@ -74,6 +74,7 @@ const refreshAuth = prepareOAuthRefresh(
 export function getClaudeModule(): ProviderModule {
   return defineOAuthProviderModule({
     id: "claude",
+    quota: { source: "poll-and-response", refreshIntervalMs: 15 * 60_000 },
     callback: claudeCallbackConfig,
     fetchQuota: fetchClaudeQuota,
     fallbackModels: getClaudeFallbackModels,

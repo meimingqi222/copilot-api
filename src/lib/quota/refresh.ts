@@ -1,9 +1,70 @@
+import type { ProviderQuotaSnapshot } from "~/lib/quota/types"
 import type { ProviderConnection } from "~/lib/provider-connections"
 import type { QuotaSnapshot } from "~/lib/quota/types"
+import type { ProviderQuotaRefreshOptions } from "~/services/providers/runtime"
 
 import { noteReadingFailure } from "~/lib/plan-quota/apply"
-import { accountManagedProvider } from "~/lib/provider-connections"
+import {
+  accountManagedProvider,
+  getMutableProviderConnection,
+  persistProviderConnections,
+} from "~/lib/provider-connections"
+import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import { getProviderRuntime } from "~/services/providers/registry"
+
+/** A poll may finish after deletion, auth rotation, or a response observation. */
+function quotaRefreshIsCurrent(connection: ProviderConnection): () => boolean {
+  const credential = connection.credentials.at(0)
+  const value = credential?.value
+  const context = JSON.stringify(credential?.context)
+  const fetchedAt = credential?.quota?.fetchedAt ?? -Infinity
+  return () =>
+    getMutableProviderConnection(connection.id) === connection
+    && connection.enabled
+    && credential !== undefined
+    && connection.credentials.at(0) === credential
+    && credential.enabled
+    && credential.status !== "disabled"
+    && credential.value === value
+    && JSON.stringify(credential.context) === context
+    // Response events keep the poll's `fetchedAt`; only a newer reading wins.
+    && (credential.quota?.fetchedAt ?? -Infinity) <= fetchedAt
+}
+
+/** Shared guarded fetch/apply boundary used by provider-owned runtimes. */
+export async function refreshProviderQuota(
+  connection: ProviderConnection,
+  fetchQuota: (
+    connection: ProviderConnection,
+    signal?: AbortSignal,
+  ) => Promise<ProviderQuotaSnapshot | undefined>,
+  signal?: AbortSignal,
+  options: ProviderQuotaRefreshOptions & {
+    applySnapshot?(
+      connection: ProviderConnection,
+      snapshot: QuotaSnapshot,
+    ): void
+    /** Renew the provider's own token first, so that renewal is not a rotation. */
+    prepare?(
+      connection: ProviderConnection,
+      signal?: AbortSignal,
+    ): Promise<void>
+  } = {},
+): Promise<ProviderQuotaSnapshot | undefined> {
+  let isCurrent = quotaRefreshIsCurrent(connection)
+  if (!isCurrent()) return undefined
+  if (options.prepare) {
+    await options.prepare(connection, signal)
+    isCurrent = quotaRefreshIsCurrent(connection)
+    if (!isCurrent()) return undefined
+  }
+  const snapshot = await fetchQuota(connection, signal)
+  if (!snapshot || signal?.aborted || !isCurrent()) return undefined
+  const applySnapshot = options.applySnapshot ?? applyOAuthQuotaSnapshot
+  applySnapshot(connection, snapshot)
+  if (!options.skipSave) await persistProviderConnections()
+  return snapshot
+}
 
 interface QuotaRefreshState {
   attemptedAt: number
@@ -24,13 +85,14 @@ export function refreshManagedQuota(
   const provider = accountManagedProvider(connection)
   const runtime = getProviderRuntime(provider)
   const refresh = runtime.refreshQuota?.bind(runtime)
-  if (!refresh || !runtime.supports(connection, "quota")) {
+  const source = runtime.quota?.source
+  if (!refresh || (source !== "poll" && source !== "poll-and-response")) {
     return Promise.resolve(undefined)
   }
   const now = options.now ?? Date.now()
   const previous = refreshState.get(connection)
   if (previous?.pending) return previous.pending
-  let interval = provider === "claude" ? 15 * 60_000 : 5 * 60_000
+  let interval = runtime.quota?.refreshIntervalMs ?? 5 * 60_000
   if (options.force) interval = 30_000
   const lastRead = Math.max(
     previous?.attemptedAt ?? 0,
@@ -40,11 +102,12 @@ export function refreshManagedQuota(
     return Promise.resolve(connection.credentials[0]?.quota)
   }
   const entry: QuotaRefreshState = { attemptedAt: now }
+  const isCurrent = quotaRefreshIsCurrent(connection)
   refreshState.set(connection, entry)
   entry.pending = Promise.resolve()
     .then(() => refresh(connection, AbortSignal.timeout(20_000)))
     .catch(async (error: unknown) => {
-      await noteReadingFailure(connection, error)
+      if (isCurrent()) await noteReadingFailure(connection, error)
       throw error
     })
     .finally(() => {

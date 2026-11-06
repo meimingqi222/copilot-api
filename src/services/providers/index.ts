@@ -16,6 +16,7 @@ export function initializeProviderRegistry(): void {
       throw new Error(`Provider runtime does not match module "${module.id}"`)
     }
     runtime.adapter = module.adapter
+    runtime.quota = module.quota ?? runtime.quota
     return runtime
   })
   for (const runtime of runtimes) registerProvider(runtime)

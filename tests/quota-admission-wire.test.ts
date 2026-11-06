@@ -27,11 +27,16 @@ import {
 import { resetProtectedRouteGuardForTest } from "~/lib/protected-route-guard"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { applyOAuthQuotaSnapshot } from "~/lib/quota"
+import type { QuotaSnapshot } from "~/lib/quota/types"
+import { createOAuthProviderRuntime } from "~/services/providers/oauth"
+import { publicAccountFromConnection } from "~/routes/admin/api/account-views"
 import { fetchCodexQuota } from "~/lib/quota/fetchers/codex"
+import { fetchXaiQuota } from "~/lib/quota/fetchers/xai"
 import {
   buildRouteTargets,
   clearRestRegistryForTest,
   routeEvidenceFor,
+  selectRouteTarget,
 } from "~/lib/route-target"
 import { state } from "~/lib/state"
 import { server } from "~/server"
@@ -94,6 +99,326 @@ async function setupConnection(
   }
   return conn
 }
+
+describe("provider-owned allowance admission", () => {
+  let allowanceWrite: ReturnType<
+    typeof spyOn<typeof planQuotaStore, "mergeWithLast">
+  >
+
+  beforeEach(() => {
+    allowanceWrite = spyOn(planQuotaStore, "mergeWithLast").mockResolvedValue({
+      windows: [],
+      stale: false,
+    })
+    __resetPlanAllowanceMirrorForTest()
+  })
+
+  afterEach(async () => {
+    await Promise.resolve()
+    allowanceWrite.mockRestore()
+    __resetPlanAllowanceMirrorForTest()
+  })
+
+  test("a module-supplied opaque budget drives refresh, admission and selection without a provider parser", async () => {
+    const early = await setupConnection(
+      "early-budget",
+      undefined,
+      "claude-native",
+    )
+    const late = await setupConnection(
+      "late-budget",
+      undefined,
+      "claude-native",
+    )
+    const now = Date.now()
+    const runtime = createOAuthProviderRuntime("claude", {
+      async fetchQuota(connection) {
+        const first = connection.id === early.id
+        return {
+          fetchedAt: now,
+          unlimited: false,
+          allowance: {
+            state: "known",
+            windows: [
+              {
+                id: "opaque-vendor-pool",
+                used: first ? 0.26 : 0.66,
+                spanMs: 604_800_000,
+                resetsAtMs: now + (first ? 36 : 72) * 3_600_000,
+              },
+            ],
+          },
+        }
+      },
+    })
+    await runtime.refreshQuota!(early)
+    await runtime.refreshQuota!(late)
+    const candidates = buildRouteTargets({
+      connections: [late, early],
+      publicModelId: "quota-model",
+      endpoint: "responses",
+    })
+    expect(candidates).toHaveLength(2)
+    const strategy = state.routing.strategy
+    try {
+      state.routing.strategy = "quota"
+      expect(selectRouteTarget(candidates)?.connectionId).toBe(early.id)
+    } finally {
+      state.routing.strategy = strategy
+    }
+    expect(
+      routeEvidenceFor(early.id, early.credentials.at(0)!.id).quota
+        ?.usedFraction,
+    ).toBe(0.26)
+    expect(publicAccountFromConnection(early).quotaInfo).not.toHaveProperty(
+      "allowance",
+    )
+  })
+
+  test("xAI billing percentages and ISO resets reach actual account selection", async () => {
+    const early = await setupConnection("xai-early", undefined, "xai-native")
+    const late = await setupConnection("xai-late", undefined, "xai-native")
+    const now = Date.now()
+    let used = 26
+    let reset = now + 36 * 3_600_000
+    const fetch = spyOn(globalThis, "fetch").mockImplementation(
+      Object.assign(
+        async () =>
+          Response.json({
+            config: {
+              monthlyLimit: 0,
+              used: 0,
+              creditUsagePercent: used,
+              currentPeriod: {
+                type: "weekly",
+                end: new Date(reset).toISOString(),
+              },
+            },
+          }),
+        { preconnect: globalThis.fetch.preconnect },
+      ),
+    )
+    const strategy = state.routing.strategy
+    try {
+      const runtime = createOAuthProviderRuntime("xai", {
+        fetchQuota: fetchXaiQuota,
+      })
+      await runtime.refreshQuota!(early)
+      used = 66
+      reset = now + 72 * 3_600_000
+      await runtime.refreshQuota!(late)
+      const candidates = buildRouteTargets({
+        connections: [late, early],
+        publicModelId: "quota-model",
+        endpoint: "responses",
+      })
+      expect(candidates).toHaveLength(2)
+      state.routing.strategy = "quota"
+      expect(selectRouteTarget(candidates)?.connectionId).toBe(early.id)
+      expect(
+        routeEvidenceFor(early.id, early.credentials.at(0)!.id).quota,
+      ).toMatchObject({
+        usedFraction: 0.26,
+        renewsAtMs: [now + 36 * 3_600_000],
+      })
+    } finally {
+      state.routing.strategy = strategy
+      fetch.mockRestore()
+    }
+  })
+
+  test("invalid values and malformed scopes never become account-wide depletion", async () => {
+    const conn = await setupConnection(
+      "invalid-allowance",
+      undefined,
+      "claude-native",
+    )
+    const reset = Date.now() + 86_400_000
+    applyOAuthQuotaSnapshot(conn, {
+      fetchedAt: Date.now(),
+      unlimited: false,
+      allowance: {
+        state: "known",
+        windows: [
+          { id: "nan", used: NaN, resetsAtMs: reset },
+          { id: "infinite", used: Infinity },
+          { id: "negative", remaining: -1 },
+          { id: "missing", total: 100 },
+          {
+            id: "bad-scope",
+            used: 1,
+            scope: { models: [123] as unknown as string[] },
+          },
+        ],
+      },
+    })
+    expect(buildRouteTargets({ connections: [conn] })).toHaveLength(1)
+    expect(
+      routeEvidenceFor(conn.id, conn.credentials.at(0)!.id).quota,
+    ).toMatchObject({
+      usedFraction: undefined,
+      renewsAtMs: [reset],
+    })
+  })
+
+  test("scoped depletion blocks its native model and aliases but leaves unrelated models routable", async () => {
+    const conn = await setupConnection(
+      "scoped-budget",
+      undefined,
+      "claude-native",
+    )
+    conn.models = [
+      {
+        publicId: "friendly-name",
+        aliases: ["another-alias"],
+        upstreamId: "native-a",
+        enabled: true,
+        endpoints: ["responses"],
+      },
+      {
+        publicId: "other-name",
+        upstreamId: "native-b",
+        enabled: true,
+        endpoints: ["responses"],
+      },
+    ]
+    applyOAuthQuotaSnapshot(conn, {
+      fetchedAt: Date.now(),
+      unlimited: false,
+      allowance: {
+        state: "known",
+        windows: [
+          { id: "all", used: 0.2 },
+          { id: "family-a", used: 1, scope: { models: ["native-a"] } },
+          { id: "independent-feature", used: 1, aside: true },
+        ],
+      },
+    })
+    expect(
+      buildRouteTargets({
+        connections: [conn],
+        publicModelId: "friendly-name",
+      }),
+    ).toEqual([])
+    expect(
+      buildRouteTargets({
+        connections: [conn],
+        publicModelId: "another-alias",
+      }),
+    ).toEqual([])
+    expect(
+      buildRouteTargets({ connections: [conn], publicModelId: "other-name" }),
+    ).toHaveLength(1)
+    expect(
+      routeEvidenceFor(conn.id, conn.credentials.at(0)!.id, "friendly-name")
+        .quota?.usedFraction,
+    ).toBe(1)
+    expect(
+      routeEvidenceFor(conn.id, conn.credentials.at(0)!.id, "native-b").quota
+        ?.usedFraction,
+    ).toBe(0.2)
+  })
+
+  test("positive wallet without a total is usable but has unknown pressure", async () => {
+    const conn = await setupConnection(
+      "small-wallet",
+      undefined,
+      "claude-native",
+    )
+    const snapshot: QuotaSnapshot = {
+      fetchedAt: Date.now(),
+      unlimited: false,
+      allowance: {
+        state: "known",
+        windows: [{ id: "wallet", remaining: 0.01, unit: "credits" }],
+      },
+    }
+    applyOAuthQuotaSnapshot(conn, snapshot)
+    expect(buildRouteTargets({ connections: [conn] })).toHaveLength(1)
+    expect(
+      routeEvidenceFor(conn.id, conn.credentials.at(0)!.id).quota?.usedFraction,
+    ).toBeUndefined()
+    applyOAuthQuotaSnapshot(conn, {
+      ...snapshot,
+      allowance: {
+        state: "known",
+        windows: [{ id: "wallet", remaining: 0, unit: "credits" }],
+      },
+    })
+    expect(buildRouteTargets({ connections: [conn] })).toEqual([])
+  })
+
+  test("expired credits never become renewed capacity and do not rank as a reset", async () => {
+    const conn = await setupConnection(
+      "expired-credits",
+      undefined,
+      "claude-native",
+    )
+    applyOAuthQuotaSnapshot(conn, {
+      fetchedAt: Date.now(),
+      unlimited: false,
+      allowance: {
+        state: "known",
+        windows: [
+          {
+            id: "pack",
+            remaining: 50,
+            total: 100,
+            expiresAtMs: Date.now() - 1,
+          },
+        ],
+      },
+    })
+    expect(buildRouteTargets({ connections: [conn] })).toEqual([])
+    expect(
+      routeEvidenceFor(conn.id, conn.credentials.at(0)!.id).quota?.renewsAtMs,
+    ).toEqual([])
+  })
+
+  test("partial observations retain other windows and delayed reads cannot undo exhaustion", async () => {
+    const conn = await setupConnection(
+      "partial-reading",
+      undefined,
+      "claude-native",
+    )
+    const now = Date.now()
+    applyOAuthQuotaSnapshot(conn, {
+      fetchedAt: now,
+      unlimited: false,
+      allowance: {
+        state: "known",
+        windows: [
+          { id: "daily", used: 0.2 },
+          { id: "weekly", used: 0.4 },
+        ],
+      },
+    })
+    applyOAuthQuotaSnapshot(conn, {
+      fetchedAt: now + 2,
+      unlimited: false,
+      allowance: {
+        state: "known",
+        partial: true,
+        windows: [{ id: "daily", used: 1 }],
+      },
+    })
+    applyOAuthQuotaSnapshot(conn, {
+      fetchedAt: now + 1,
+      unlimited: false,
+      allowance: { state: "known", windows: [{ id: "daily", used: 0 }] },
+    })
+    expect(buildRouteTargets({ connections: [conn] })).toEqual([])
+    expect(
+      conn.credentials.at(0)?.quota?.allowance?.windows.map((w) => w.id),
+    ).toEqual(["daily", "weekly"])
+    applyOAuthQuotaSnapshot(conn, {
+      fetchedAt: now + 3,
+      unlimited: true,
+      allowance: { state: "unknown", windows: [] },
+    })
+    expect(buildRouteTargets({ connections: [conn] })).toEqual([])
+  })
+})
 
 describe("exhausted price window", () => {
   test.each(["review", "feature"] as const)(

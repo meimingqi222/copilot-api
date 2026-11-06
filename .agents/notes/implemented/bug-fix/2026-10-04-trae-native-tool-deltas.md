@@ -21,6 +21,10 @@ Collect native tool events by upstream id and index until the stream finishes, t
 
 Native calls are emitted after upstream completion rather than exposing partial arguments. Text tool blocks retain their existing handling. The host's IR and credential persistence contracts remain unchanged. Malformed complete arguments now fail with invalid_tool_call under the successor note; native fragment assembly still waits for completion.
 
+Module quota capability declarations are independent of this import-cycle
+contract; the fresh-process module regression remains unchanged when numeric
+quota metadata is assembled onto runtimes.
+
 ## Verification
 
 - `tests/trae-cn-tool-stream.test.ts`

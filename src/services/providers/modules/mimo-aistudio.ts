@@ -7,6 +7,7 @@ import { mimoProviderRuntime } from "~/services/providers/mimo"
 export function getMimoModule(): ProviderModule {
   return {
     id: "mimo-aistudio",
+    quota: { source: "none" },
     descriptor: getProviderDescriptor("mimo-aistudio"),
     accountCreation: mimoAccountCreation,
     adapter: mimoNativeAdapter,

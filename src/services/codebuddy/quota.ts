@@ -1,3 +1,4 @@
+import type { ProviderQuotaSnapshot } from "~/lib/quota/types"
 /**
  * CodeBuddy 配额查询（积分余额）。
  *
@@ -16,18 +17,15 @@ import { HTTPError } from "~/lib/error"
 import {
   getConnectionProvider,
   getConnectionProxyUrl,
-  setConnectionQuotaInfo,
-  setConnectionQuotaState,
 } from "~/lib/provider-connections"
 import { persistProviderConnections } from "~/lib/provider-connections/state"
-import { liftRestAfterQuotaRecovery } from "~/lib/quota/recovery"
-import { clearAccountPacingState } from "~/lib/rate-limit"
+import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import { connectionFetchInit, getHeader } from "~/services/protocols/shared"
 
 import {
   ensureCodebuddyAccessToken,
   resolveCodebuddyDomain,
-} from "./token-refresh"
+} from "~/services/codebuddy/token-refresh"
 
 const CODEBUDDY_CN_BILLING_BASE = "https://www.codebuddy.cn"
 const CODEBUDDY_INTL_BILLING_BASE = "https://www.workbuddy.ai"
@@ -80,10 +78,8 @@ function formatUpstreamWallClock(date: Date): string {
     .replace("T", " ")
 }
 
-function toInt(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ?
-      Math.trunc(value)
-    : 0
+function toNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0
 }
 
 interface CodebuddyResourceAccount {
@@ -137,12 +133,12 @@ interface CodebuddyResourceSummary {
 function readAccount(raw: unknown): CodebuddyResourceAccount {
   const obj = (raw ?? {}) as Record<string, unknown>
   return {
-    CapacitySize: toInt(obj.CapacitySize),
-    CapacityRemain: toInt(obj.CapacityRemain),
-    CapacityUsed: toInt(obj.CapacityUsed),
-    CycleCapacitySize: toInt(obj.CycleCapacitySize),
-    CycleCapacityRemain: toInt(obj.CycleCapacityRemain),
-    CycleCapacityUsed: toInt(obj.CycleCapacityUsed),
+    CapacitySize: toNumber(obj.CapacitySize),
+    CapacityRemain: toNumber(obj.CapacityRemain),
+    CapacityUsed: toNumber(obj.CapacityUsed),
+    CycleCapacitySize: toNumber(obj.CycleCapacitySize),
+    CycleCapacityRemain: toNumber(obj.CycleCapacityRemain),
+    CycleCapacityUsed: toNumber(obj.CycleCapacityUsed),
   }
 }
 
@@ -157,7 +153,7 @@ export function parseCodebuddyResourceData(
   const response = (root.Response ?? {}) as Record<string, unknown>
   const inner = (response.Data ?? {}) as Record<string, unknown>
   const accounts = Array.isArray(inner.Accounts) ? inner.Accounts : []
-  const totalDosage = toInt(inner.TotalDosage)
+  const totalDosage = toNumber(inner.TotalDosage)
 
   let remain = 0
   let used = 0
@@ -196,7 +192,7 @@ interface CodebuddyEnvelope {
 export async function fetchCodebuddyQuota(
   connection: ProviderConnection,
   signal?: AbortSignal,
-): Promise<QuotaSnapshot> {
+): Promise<ProviderQuotaSnapshot> {
   const provider = getConnectionProvider(connection)
   if (provider !== "codebuddy" && provider !== "codebuddy-cn") {
     // 无 metadata 的旧连接：chat baseUrl 指向 codebuddy 系同样放行。
@@ -331,6 +327,24 @@ export async function fetchCodebuddyQuota(
     fetchedAt: Date.now(),
     provider: provider ?? "codebuddy-cn",
     unlimited: false,
+    allowance: {
+      state: summary.packs > 0 ? "known" : "unknown",
+      windows:
+        summary.packs > 0 ?
+          [
+            {
+              id: "credits",
+              remaining: Math.max(0, summary.remain),
+              total: summary.size > 0 ? summary.size : undefined,
+              used:
+                summary.size > 0 ?
+                  Math.min(1, Math.max(0, 1 - summary.remain / summary.size))
+                : undefined,
+              unit: "credits",
+            },
+          ]
+        : [],
+    },
     chatRemaining: summary.remain,
     chatTotal: summary.size,
     details: {
@@ -346,19 +360,16 @@ export async function fetchCodebuddyQuota(
 export async function refreshCodebuddyQuota(
   connection: ProviderConnection,
   signal?: AbortSignal,
-): Promise<QuotaSnapshot> {
+): Promise<ProviderQuotaSnapshot> {
   const snapshot = await fetchCodebuddyQuota(connection, signal)
-  setConnectionQuotaInfo(connection, snapshot)
-  // 余额耗尽（有套餐但剩余为 0）→ exhausted；空套餐不断言（trial/免费模型或可照常用）。
-  const details = snapshot.details as { remain?: unknown; packs?: unknown }
-  const remain = typeof details.remain === "number" ? details.remain : 0
-  const packs = typeof details.packs === "number" ? details.packs : 0
-  const exhausted = remain <= 0 && packs > 0
-  setConnectionQuotaState(connection, exhausted ? "exhausted" : "available")
-  if (!exhausted) {
-    clearAccountPacingState(connection.id)
-    liftRestAfterQuotaRecovery(connection)
-  }
+  applyCodebuddyQuotaSnapshot(connection, snapshot)
   await persistProviderConnections()
   return snapshot
+}
+
+export function applyCodebuddyQuotaSnapshot(
+  connection: ProviderConnection,
+  snapshot: QuotaSnapshot,
+): void {
+  applyOAuthQuotaSnapshot(connection, snapshot)
 }

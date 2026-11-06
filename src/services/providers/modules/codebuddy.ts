@@ -51,6 +51,7 @@ const codebuddyStrategy = createCodebuddyStrategy("codebuddy")
 export function getCodebuddyModule(): ProviderModule {
   return {
     id: "codebuddy",
+    quota: { source: "poll" },
     descriptor: getProviderDescriptor("codebuddy"),
     accountCreation: createCodebuddyAccountCreation("codebuddy"),
     afterAuthentication: scheduleCodebuddyRefresh,

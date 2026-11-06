@@ -6,6 +6,7 @@ import type { ProviderRuntime } from "~/services/providers/runtime"
 export const codebuffProviderRuntime: ProviderRuntime = {
   id: "codebuff",
   descriptor: getProviderDescriptor("codebuff"),
+  quota: { source: "none" },
   supports(_connection, feature) {
     return this.descriptor.features.includes(feature)
   },

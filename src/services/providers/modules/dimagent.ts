@@ -60,6 +60,7 @@ const refreshAuth = prepareOAuthRefresh(
 export function getDimagentModule(): ProviderModule {
   return defineOAuthProviderModule({
     id: "dimagent",
+    quota: { source: "poll" },
     callback: dimagentCallbackConfig,
     fetchQuota: fetchDimagentQuota,
     fallbackModels: () => [],

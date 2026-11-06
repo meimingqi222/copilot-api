@@ -67,6 +67,7 @@ const refreshAuth = prepareOAuthRefresh(async () => {
 export function getZcodeModule(): ProviderModule {
   return defineOAuthProviderModule({
     id: "zcode",
+    quota: { source: "poll" },
     fetchQuota: fetchZcodeQuota,
     fallbackModels: getZcodeFallbackModels,
     adapter: zcodeNativeAdapter,

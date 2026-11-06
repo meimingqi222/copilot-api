@@ -50,6 +50,9 @@ Fallback still requires an eligible target under the requested model/group.
 An unavailable model is retried after a short cooldown; no model mapping is
 permanently removed. Failover is possible before downstream streaming starts.
 
+CodeBuddy now delegates typed quota snapshots to the common host apply path;
+that path retains `clearAccountPacingState` and must not erase 6004 model waits.
+
 ## Verification
 
 Focused suites: `tests/codebuddy-model-cooldown.test.ts`.

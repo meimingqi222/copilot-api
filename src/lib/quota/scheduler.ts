@@ -16,27 +16,24 @@ import {
 import { createLogger } from "~/lib/logger"
 import { runWithLogContext } from "~/lib/log-context"
 import {
+  accountManagedProvider,
+  isAccountManagedConnection,
   listAccountManagedConnections,
   listProviderConnections,
   saveProviderConnections,
-  setConnectionQuotaInfo,
-  setConnectionQuotaState,
 } from "~/lib/provider-connections"
 import { refreshManagedQuota } from "~/lib/quota/refresh"
-import { liftRestAfterQuotaRecovery } from "~/lib/quota/recovery"
 import { autoResetExpiringCodexQuota } from "~/lib/quota/codex-reset"
 import { runAccountWarmups } from "~/lib/quota/warmup"
 import { initializeProviderRegistry } from "~/services/providers"
+import { getProviderRuntime } from "~/services/providers/registry"
 import { runZcodeClaimRound } from "~/services/zcode/claim"
-import { fetchCopilotQuota } from "~/lib/quota/fetchers/copilot"
-import { clearAccountPacingState } from "~/lib/rate-limit"
 import { emitStateChange } from "~/lib/state-events"
 import { everyMs, runJob } from "~/lib/jobs"
 import { globalTimers } from "~/lib/timer-registry"
 
 const logger = createLogger("quota")
 
-const QUOTA_EXHAUSTION_THRESHOLD = 5
 const QUOTA_RECHECK_INTERVAL_MS = 60 * 1000
 /**
  * ZCode 领取轮的节拍。轮内每个账号自己按 60 分钟去重（1005 名额等待期会
@@ -53,44 +50,20 @@ const BALANCE_PROBE_TIMEOUT_MS = 15_000
 const BALANCE_SYNC_MIN_INTERVAL_MS = 5 * 60 * 1000
 
 /**
- * copilot-native connection 的配额刷新。
- * 其它 protocol 返回 undefined，由各自 runtime 提供配额探测。
+ * Compatibility entry point; providers own fetching, application and persistence.
  */
 export async function refreshQuotaForConnection(
   connection: ProviderConnection,
   skipSave = false,
   signal?: AbortSignal,
 ): Promise<QuotaSnapshot | undefined> {
-  if (connection.protocol !== "copilot-native") {
-    return undefined
-  }
-
-  const snapshot = await fetchCopilotQuota(connection, signal)
-  const remaining = snapshot.premiumInteractionsRemaining ?? Infinity
-  const unlimited = snapshot.unlimited
-  const exhausted = !unlimited && remaining <= QUOTA_EXHAUSTION_THRESHOLD
-
-  setConnectionQuotaInfo(connection, snapshot)
-  const previousState = readQuotaState(connection)
-  setConnectionQuotaState(connection, exhausted ? "exhausted" : "available")
-  if (exhausted && previousState !== "exhausted") {
-    logger.warn(`Connection "${connection.name}" quota exhausted`)
-  } else if (!exhausted && previousState === "exhausted") {
-    logger.info(
-      `Connection "${connection.name}" quota refreshed — re-activating`,
-    )
-  }
-  if (!exhausted) {
-    // 配额恢复时同步清理内存限流器的残留冷却，否则路由仍会跳过该账号。
-    // credential 上持久化的 cooldownUntil 和 rest 注册表同样要解除。
-    clearAccountPacingState(connection.id)
-    liftRestAfterQuotaRecovery(connection)
-  }
-  if (!skipSave) {
-    await saveProviderConnections(listProviderConnections())
-    emitStateChange("models-stale")
-  }
-  return snapshot
+  if (!isAccountManagedConnection(connection)) return undefined
+  initializeProviderRegistry()
+  return getProviderRuntime(accountManagedProvider(connection)).refreshQuota?.(
+    connection,
+    signal,
+    { skipSave },
+  )
 }
 
 /**
@@ -272,11 +245,4 @@ export async function syncBalances(now: number = Date.now()): Promise<number> {
 /** Test-only: drop the balance read rate-limit bookkeeping. */
 export function __resetBalanceSyncForTest(): void {
   lastBalanceSyncAt.clear()
-}
-
-function readQuotaState(connection: ProviderConnection): string {
-  return (
-    (connection.metadata as { quotaState?: string } | undefined)?.quotaState
-    ?? "unknown"
-  )
 }

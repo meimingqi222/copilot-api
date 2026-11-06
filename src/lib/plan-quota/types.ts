@@ -15,18 +15,9 @@
  * window to a word it counts — empty/undefined means the window counts every
  * model. `aside` marks a window routing ignores (reporting-only windows).
  */
-export interface PlanWindow {
-  /** Share of the window already spent, 0..1. */
-  used: number
-  /** Full length of the window in ms; the longest applying window wins. */
-  spanMs?: number
-  /** Instant the window renews. A passed instant makes the window empty again. */
-  resetsAtMs?: number
-  /** A word the window counts (e.g. "opus"). Empty/undefined counts every model. */
-  model?: string
-  /** Routing ignores windows marked aside. */
-  aside?: boolean
-}
+export type { QuotaWindow as PlanWindow } from "~/lib/quota/types"
+
+import type { QuotaWindow as PlanWindow } from "~/lib/quota/types"
 
 /** Every window an account currently reports. */
 export type PlanAllowance = Array<PlanWindow>

@@ -97,6 +97,66 @@ OAuth runtime 与旧查询入口会读取这些操作。静态目录在
 固定端口和现有的 query/POST 回调模式通过模块配置接入。新的回调模式、特殊账号
 导入格式、私有模型规范化或新增公共协议能力，仍可能需要扩展相应子系统。
 
+## 额度输出与路由
+
+模块用 `quota.source` 声明 `poll`、`response`、`poll-and-response` 或 `none`；
+`none` 表示当前没有数值额度来源，不代表无限额度。轮询默认每五分钟一次，
+模块可用 `refreshIntervalMs` 覆盖（Claude 为十五分钟）。套餐名称、请求 token
+usage 都不算账户剩余额度来源。
+
+`fetchQuota` 与 `ProviderRuntime.refreshQuota` 返回 `ProviderQuotaSnapshot`，
+其中 `allowance` 是必填字段，类型定义在 `src/lib/quota/types.ts`；漏写会直接
+类型检查失败。量不到时写 `{ state: "unknown", windows: [] }`，不要省略。
+自己续期 access token 的 provider 在 `refreshProviderQuota` 的 `prepare` 里做，
+否则续期会被当成凭证轮换、读数被丢弃。
+原始 `details` 和旧计数继续服务现有管理 API，但新路由不再猜测其中的供应商字段。
+
+```typescript
+const allowance: QuotaAllowance = {
+  state: "known",
+  windows: [
+    {
+      id: "weekly-coding",
+      used: 0.26,
+      unit: "percent",
+      spanMs: 604_800_000,
+      resetsAtMs,
+      scope: { models: ["native-model-id"] },
+    },
+  ],
+}
+```
+
+- `state` 区分 `known`、`unknown`、`unsupported`、上游明确的 `unlimited`
+  和套餐明确不包含的 `not-included`。缺字段不能补成已用 0 或无限。
+- `used` 是 0–1 比例；仅 `remaining` 与正 `total` 都明确时，宿主才可推导比例。
+  钱包只给 `remaining` 也有效，不编造分母；内部保留精度，不把小额余额舍入为 0。
+  `unit` 保留各家实际口径；无法证明是请求数或 token 时使用 `units`。
+- `resetsAtMs`、`spanMs` 和使用比例独立可选。相对时间在采集时固化为绝对毫秒。
+  `expiresAtMs` 是作废时间，绝不能作为补充额度的 reset；套餐有效期留在原始详情，
+  不直接推断额度恢复。
+- 不写 `scope` 表示共享额度；有 scope 时只匹配精确原生模型 ID，空集合不匹配任何模型。
+  别名由宿主映射到原生 ID。未知池归属不能从展示名称猜测，可保留空 scope 或 `aside`。
+- `aside: true` 表示仅展示；日/周同时限额都应输出为约束。可互补的套餐和加购额度，
+  或额外付费容量，由 Provider 依据自身规则合并或解除旧池约束，宿主不猜多池业务关系。
+- 响应事件使用稳定窗口 ID 和 `partial: true`，只替换本次测到的窗口。
+  不完整事件不能清空同一账户的其他窗口。
+
+标准 OAuth runtime 通过 `refreshProviderQuota` 获取、校验并应用快照；其他 runtime
+也复用这个入口。它校验活动连接、凭据与读数身份，丢弃已取消、凭据轮换后或被
+新快照超越的刷新结果。响应学习走 `applyOAuthQuotaSnapshot`，不另写状态分支。
+宿主统一持久化和恢复等待；已确认模型专属额度恢复可解除旧整号锁定，但每个模型
+仍单独检查约束。未知读数不能解除已有耗尽等待。
+
+选路保持优先级、并发容量和健康会话亲和性。quota 策略在健康档优先消费较早
+重置的大周期；90%/98% 分档不是硬耗尽阈值。未知不再享有永久 learner 优先权，
+least-used 也不把未知当作已用 0。自定义端点没有读数时继续允许请求，保留其
+已有显式余额保护。旧 `_quotaWindows` 只用于历史持久化读取和现有周期展示。
+
+新增 Provider 不需要修改公共额度白名单、reset 字段扫描或模型家族匹配表。
+除自身 fixture 测试外，应验证标准快照经 runtime → admission → 路由证据 →
+`selectRouteTarget`，参考 `tests/quota-admission-wire.test.ts`。
+
 ## 验证
 
 `tests/provider-modules.test.ts` 验证所有内置模块、重复初始化、共享 adapter、

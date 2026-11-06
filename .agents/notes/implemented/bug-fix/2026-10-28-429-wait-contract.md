@@ -29,6 +29,10 @@ exhaustion as `rate_limit_exceeded`, never `insufficient_quota` or
 `billing_error`. A refusal with no reset instant keeps its original form rather
 than inventing a deadline.
 
+Typed allowance admission retains these wire semantics. A depleted scoped pool
+blocks only its native models, and an expiry is not exposed as a renewal;
+confirmed quota resets remain distinct from bounded local retry waits.
+
 Reset parsing has one implementation: `src/lib/reset-hint.ts` reads
 `resets_at` as seconds or milliseconds, `resets_in_seconds`, `retry_after`
 (seconds or HTTP-date), `retry_after_ms`, and the vendor's words. The

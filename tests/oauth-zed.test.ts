@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { __resetProviderConnectionsForTest } from "~/lib/provider-connections"
+import { fetchZedQuota } from "~/lib/quota/fetchers/zed"
 import {
   getOAuthProviderDescriptor,
   isOAuthProviderId,
@@ -37,6 +38,15 @@ function jsonResponse(body: unknown, status = 200): Response {
     headers: { "Content-Type": "application/json" },
   })
 }
+
+test("Zed plan tier is not evidence of unlimited allowance", async () => {
+  globalThis.fetch = (async () =>
+    jsonResponse({ plan: { plan_v3: "pro" } })) as unknown as typeof fetch
+  const snapshot = await fetchZedQuota(createConnection())
+  expect(snapshot.allowance).toEqual({ state: "unknown", windows: [] })
+  expect(snapshot.unlimited).toBe(false)
+  expect(snapshot.details?.zed).toMatchObject({ plan: "pro" })
+})
 
 function createConnection(): ProviderConnection {
   const now = Date.now()

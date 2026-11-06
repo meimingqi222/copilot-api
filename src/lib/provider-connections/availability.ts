@@ -14,6 +14,7 @@ import { parseResetAtFromBody, readUsageLimitRefusal } from "~/lib/reset-hint"
 import { parseRetryAfterMs } from "~/lib/retry-after"
 import { isResting } from "~/lib/route-target/resting"
 import { usageLimitResetMs } from "~/lib/usage-limit"
+import { quotaAvailability } from "~/lib/quota/allowance"
 
 import type { ApiCredential, ProviderConnection } from "./types"
 
@@ -107,6 +108,12 @@ export function isCredentialAvailable(
   scope?: { connection: ProviderConnection; modelId: string },
 ): boolean {
   if (!credential.enabled) return false
+  if (
+    credential.quota?.allowance
+    && !(scope && isCodebuddyModelFree(scope.connection, scope.modelId))
+    && quotaAvailability(credential.quota, scope?.modelId) === "exhausted"
+  )
+    return false
   // A live rest keeps the credential out even while its persisted status still
   // reads ready: the registry carries the richer reason (verify / credit /
   // quota window) and the instant it lifts, and the credential's own status is
@@ -174,6 +181,34 @@ export function getConnectionRoutability(
     || getConnectionAuthStatus(connection) === "error"
   if (authError) {
     return { routable: false, reason: "auth_error", retryAfterSeconds: 10 }
+  }
+  const snapshot = connection.credentials.at(0)?.quota
+  if (
+    snapshot?.allowance
+    && !isCodebuddyModelFree(connection, modelId)
+    && quotaAvailability(snapshot, modelId) === "exhausted"
+  ) {
+    const resets = snapshot.allowance.windows
+      .filter(
+        (window) =>
+          !window.aside
+          && (!window.scope
+            || (modelId !== undefined && window.scope.models.includes(modelId)))
+          && (window.remaining === 0 || (window.used ?? 0) >= 1),
+      )
+      .flatMap((window) =>
+        window.resetsAtMs && window.resetsAtMs > Date.now() ?
+          [window.resetsAtMs]
+        : [],
+      )
+    return {
+      routable: false,
+      reason: "quota_exhausted",
+      retryAfterSeconds:
+        resets.length ?
+          Math.ceil((Math.max(...resets) - Date.now()) / 1000)
+        : 0,
+    }
   }
   // 限流器冷却(内存 + credentials[0].cooldownUntil 同步)。
   const remainingCooldown = getRemainingCooldownSeconds(connection.id)

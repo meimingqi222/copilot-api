@@ -1,3 +1,4 @@
+import type { ProviderQuotaSnapshot } from "~/lib/quota/types"
 /**
  * MiniMax Code 配额拉取：Token Plan（订阅窗口）+ 积分（Credits 钱包）。
  *
@@ -24,7 +25,7 @@
  * 逐个候选尝试；401/403 是**对凭证**的判定（每个 host 都一样），立刻停。
  */
 
-import type { QuotaSnapshot } from "~/lib/quota/types"
+import type { QuotaAllowance, QuotaWindow } from "~/lib/quota/types"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { getConnectionProvider } from "~/lib/provider-connections"
@@ -107,6 +108,89 @@ function quotaBoostFactor(permille: unknown): number {
     ) ?
       permille / 1000
     : 1
+}
+
+/** Raw counts alone are ambiguous; only explicit percentages establish usage. */
+export function minimaxAllowance(
+  body: string,
+  connection: ProviderConnection,
+): QuotaAllowance {
+  const root = asRecord(JSON.parse(body) as unknown)
+  const windows: Array<QuotaWindow> = []
+  let notIncluded = false
+  for (const raw of Array.isArray(root?.model_remains) ?
+    root.model_remains
+  : []) {
+    const row = asRecord(raw)
+    if (!row) continue
+    const name = typeof row.model_name === "string" ? row.model_name : ""
+    const empty =
+      row.current_interval_total_count === 0
+      && row.current_weekly_total_count === 0
+    if (empty) {
+      if (
+        name === "general"
+        && (row.current_interval_status === 3
+          || row.current_weekly_status === 3)
+      )
+        notIncluded = true
+      continue
+    }
+    for (const key of ["interval", "weekly"] as const) {
+      const total = optionalNumber(row[`current_${key}_total_count`])
+      const percent = optionalNumber(row[`current_${key}_remaining_percent`])
+      const reported = optionalNumber(row[`current_${key}_usage_count`])
+      const unlimited = !empty && row[`current_${key}_status`] === 3
+      // Status 2 is "used up" whatever the percentage says (as in magpie).
+      const spent = row[`current_${key}_status`] === 2
+      const counts =
+        percent !== undefined && reported !== undefined && total !== undefined ?
+          resolveWindowCounts(reported, total, percent)
+        : undefined
+      const reset = optionalNumber(
+        row[key === "interval" ? "end_time" : "weekly_end_time"],
+      )
+      if (
+        total === undefined
+        && percent === undefined
+        && reset === undefined
+        && !unlimited
+        && !spent
+      )
+        continue
+      windows.push({
+        id: `${name || "unknown"}-${key}`,
+        unit: "requests",
+        unlimited,
+        ...(total !== undefined && total > 0 && !unlimited ? { total } : {}),
+        // weekly_boost_permille is a display multiplier, not a second spendable balance.
+        ...(percent !== undefined && !unlimited ?
+          { used: Math.max(0, Math.min(1, 1 - percent / 100)) }
+        : {}),
+        ...(counts && !unlimited ? counts : {}),
+        ...(spent && { used: 1, remaining: 0 }),
+        ...(reset !== undefined ? { resetsAtMs: reset } : {}),
+        spanMs: key === "interval" ? 18_000_000 : 604_800_000,
+        ...(name === "general" ?
+          {}
+        : {
+            scope: {
+              models: (connection.models ?? [])
+                .filter((model) => model.upstreamId === name)
+                .map((model) => model.upstreamId),
+            },
+          }),
+      })
+    }
+  }
+  return {
+    state:
+      windows.some((window) => window.used !== undefined || window.unlimited) ?
+        "known"
+      : windows.length === 0 && notIncluded ? "not-included"
+      : "unknown",
+    windows,
+  }
 }
 
 function buildWindow(input: {
@@ -397,8 +481,9 @@ function buildSnapshot(
   },
   host: string,
   region: string,
-  credits?: MinimaxCredits,
-): QuotaSnapshot {
+  credits: MinimaxCredits | undefined,
+  allowance: QuotaAllowance,
+): ProviderQuotaSnapshot {
   const { model } = parsed
   const windows = model.windows
   const intervalWindow = windows.find((window) => window.key === "interval")
@@ -412,6 +497,24 @@ function buildSnapshot(
   return {
     fetchedAt: Date.now(),
     provider: "minimax",
+    allowance: {
+      ...allowance,
+      windows: [
+        ...allowance.windows,
+        ...(credits ?
+          [
+            {
+              // Display only: like magpie, a spent plan window stops the
+              // account; credits are not treated as a routing fallback.
+              id: "credit-wallet",
+              unit: "credits" as const,
+              remaining: credits.total,
+              aside: true,
+            },
+          ]
+        : []),
+      ],
+    },
     unlimited: model.unlimited || windows.length === 0,
     premiumInteractionsRemaining: headline,
     premiumInteractionsTotal: 100,
@@ -454,11 +557,17 @@ function buildSnapshot(
 function buildCreditsSnapshot(
   reading: MinimaxCreditReading,
   region: string,
-): QuotaSnapshot {
+): ProviderQuotaSnapshot {
   const { credits } = reading
   return {
     fetchedAt: Date.now(),
     provider: "minimax",
+    allowance: {
+      state: "known",
+      windows: [
+        { id: "credit-wallet", unit: "credits", remaining: credits.total },
+      ],
+    },
     unlimited: false,
     chatRemaining: credits.total,
     details: {
@@ -484,7 +593,7 @@ function buildCreditsSnapshot(
 export async function fetchMinimaxQuota(
   connection: ProviderConnection,
   signal?: AbortSignal,
-): Promise<QuotaSnapshot> {
+): Promise<ProviderQuotaSnapshot> {
   if (getConnectionProvider(connection) !== "minimax") {
     throw new Error("fetchMinimaxQuota requires a MiniMax Code connection")
   }
@@ -541,7 +650,13 @@ export async function fetchMinimaxQuota(
     const credits = await fetchMinimaxCredits(connection, region, signal).catch(
       () => undefined,
     )
-    return buildSnapshot(parsed, host, region, credits?.credits)
+    return buildSnapshot(
+      parsed,
+      host,
+      region,
+      credits?.credits,
+      minimaxAllowance(response.body, connection),
+    )
   }
 
   if (planMissing) {

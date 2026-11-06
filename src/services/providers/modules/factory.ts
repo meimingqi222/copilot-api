@@ -66,6 +66,7 @@ const refreshAuth = prepareOAuthRefresh(
 export function getFactoryModule(): ProviderModule {
   return defineOAuthProviderModule({
     id: "factory",
+    quota: { source: "poll" },
     fetchQuota: fetchFactoryQuota,
     fallbackModels: getFactoryFallbackModels,
     adapter: factoryNativeAdapter,

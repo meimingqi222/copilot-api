@@ -178,6 +178,7 @@ async function discoverTraeCnModels(
 export function getTraeCnModule(): ProviderModule {
   return defineOAuthProviderModule({
     id: "trae-cn",
+    quota: { source: "poll" },
     callback: traeCnCallbackConfig,
     fetchQuota: fetchTraeCnQuota,
     fallbackModels: getTraeCnFallbackModels,

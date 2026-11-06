@@ -10,6 +10,11 @@ Commit 6c7c3d1 correctly treats either exhausted window as blocking, but selects
 
 Use the latest reported reset among exhausted windows. A non-exhausted window does not constrain recovery. Preserve the existing one-minute to twenty-four-hour recovery bounds and periodic quota refresh behavior.
 
+The typed-allowance migration moves this application into
+`src/lib/quota/index.ts`: Windsurf supplies separate daily/weekly constraints,
+while the host bounds the local wait without changing canonical reset times.
+The existing dual-exhaustion and abnormal-reset regressions remain authoritative.
+
 ## Alternatives considered
 
 **Wake at the first reset.** Credential availability treats cooldown expiry as ready; this is not merely a probe wakeup and can send traffic into a still-exhausted weekly window.

@@ -17,6 +17,11 @@ The existing OAuth quota application replaces the old snapshot and marks the
 credential exhausted. Keep the account enabled so periodic refresh and plan
 claims can restore it after renewal; do not turn expiry into an auth error.
 
+The typed allowance marks inactive plans `not-included`. A renewed plan carries
+exact model-capability scopes and real credit expiry, not a reset. The common
+apply path clears the previous account-wide lock on trusted scoped capacity;
+per-model admission still excludes models outside depleted applicable pools.
+
 `src/services/zcode/start-plan.ts` requires the successful balance payload to
 contain both plans and balances arrays. Missing/malformed payloads and HTTP or
 sign-in failures remain errors, rather than falsely exhausting the account.

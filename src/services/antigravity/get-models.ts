@@ -64,18 +64,16 @@ function parseAntigravityModelsPayload(body: string): Array<AccountModel> {
 }
 
 /**
- * Connection 原生版本:直接从 ProviderConnection 发现 antigravity 模型。
+ * POST `fetchAvailableModels` (daily first) and return the first successful
+ * body. Model discovery and the per-model quota both read this reply.
  */
-export async function getAntigravityModelsForConnection(
+export async function requestAntigravityAvailableModels(
   connection: ProviderConnection,
   signal?: AbortSignal,
-): Promise<Array<AccountModel>> {
-  const provider = getConnectionProvider(connection)
-  if (provider !== "antigravity") return []
-
+): Promise<string | undefined> {
   const cred = connection.credentials[0]
   const accessToken = cred?.value
-  if (!accessToken) return []
+  if (!accessToken) return undefined
 
   const projectId =
     typeof cred.context?.projectId === "string" ?
@@ -97,15 +95,24 @@ export async function getAntigravityModelsForConnection(
       lastError = `Antigravity models request failed (${response.statusCode}): ${response.body.slice(0, 200)}`
       continue
     }
-
-    const models = parseAntigravityModelsPayload(response.body)
-    if (models.length === 0) {
+    if (parseAntigravityModelsPayload(response.body).length === 0) {
       lastError = "Antigravity models response did not include any models"
       continue
     }
-
-    return models
+    return response.body
   }
 
   throw new Error(lastError)
+}
+
+/**
+ * Connection 原生版本:直接从 ProviderConnection 发现 antigravity 模型。
+ */
+export async function getAntigravityModelsForConnection(
+  connection: ProviderConnection,
+  signal?: AbortSignal,
+): Promise<Array<AccountModel>> {
+  if (getConnectionProvider(connection) !== "antigravity") return []
+  const body = await requestAntigravityAvailableModels(connection, signal)
+  return body ? parseAntigravityModelsPayload(body) : []
 }

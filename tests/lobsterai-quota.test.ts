@@ -96,6 +96,21 @@ const QUOTA = {
 }
 
 describe("buildLobsteraiSnapshot", () => {
+  test("canonical wallet preserves tiny balances without inventing a denominator", () => {
+    const snapshot = buildLobsteraiSnapshot(
+      { profile: { totalCreditsRemaining: 0.001 } },
+      "example",
+    )
+    expect(snapshot.allowance).toEqual({
+      state: "known",
+      windows: [{ id: "credits", remaining: 0.001, unit: "credits" }],
+    })
+    expect(buildLobsteraiSnapshot({}, "example").allowance).toEqual({
+      state: "unknown",
+      windows: [],
+    })
+  })
+
   test("reads the wallet balance and ignores the free-credit window", () => {
     const snapshot = buildLobsteraiSnapshot(
       { profile: PROFILE.data, quota: QUOTA.data },

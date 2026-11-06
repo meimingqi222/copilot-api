@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import type { TestAccount as OAuthAccount } from "./helpers/set-accounts"
 
 import { listTestAccounts as listAccounts } from "./helpers/set-accounts"
+import { claudeAllowance } from "~/lib/quota/fetchers/claude"
+import { kimiAllowance } from "~/lib/quota/fetchers/kimi"
 import {
   parseClaudeUsagePayload,
   parseKimiUsagePayload,
@@ -12,6 +14,7 @@ import {
 import {
   getConnectionAuthStatus,
   getMutableProviderConnection,
+  managedConnectionFromInput,
 } from "~/lib/provider-connections"
 import {
   buildClaudeAuthUrl,
@@ -181,10 +184,82 @@ describe("Kimi OAuth", () => {
 })
 
 describe("OAuth quota parsers", () => {
+  test("canonical Claude windows preserve unknown resets and exact native family scope", () => {
+    const connection = managedConnectionFromInput({
+      provider: "claude",
+      id: "claude-quota",
+      name: "quota",
+      credentials: { accessToken: "test" },
+    })
+    connection.models = ["claude-opus-4-6", "claude-sonnet-4-6"].map((id) => ({
+      publicId: `alias-${id}`,
+      upstreamId: id,
+      endpoints: ["messages"],
+      enabled: true,
+    }))
+    const allowance = claudeAllowance(
+      {
+        five_hour: { resets_at: "2026-11-07T00:00:00Z" },
+        seven_day_opus: { utilization: 1 },
+        seven_day_sonnet: { utilization: 0.2 },
+      },
+      connection,
+    )
+    expect(allowance.state).toBe("known")
+    expect(allowance.windows[0]?.used).toBeUndefined()
+    expect(allowance.windows[0]?.resetsAtMs).toBe(
+      Date.parse("2026-11-07T00:00:00Z"),
+    )
+    expect(allowance.windows[1]).toMatchObject({
+      used: 1,
+      scope: { models: ["claude-opus-4-6"] },
+    })
+    expect(allowance.windows[1]?.resetsAtMs).toBeUndefined()
+    expect(allowance.windows[2]).toMatchObject({
+      used: 0.2,
+      scope: { models: ["claude-sonnet-4-6"] },
+    })
+    expect(claudeAllowance({}, connection)).toEqual({
+      state: "unknown",
+      windows: [],
+    })
+    connection.models = []
+    expect(
+      claudeAllowance({ seven_day_opus: { utilization: 1 } }, connection)
+        .windows[0]?.scope,
+    ).toEqual({ models: [] })
+  })
+
+  test("canonical Kimi keeps independent ratios even when absolute remaining orders differently", () => {
+    const allowance = kimiAllowance(
+      {
+        limits: [
+          { name: "small", remaining: 2, limit: 10 },
+          { name: "large", remaining: 10, limit: 1000 },
+          { name: "unknown", window: { reset_in: 60 } },
+        ],
+      },
+      1000,
+    )
+    expect(allowance.windows[0]?.used).toBeCloseTo(0.8)
+    expect(allowance.windows.every((window) => window.unit === "units")).toBe(
+      true,
+    )
+    expect(allowance.windows[1]?.used).toBeCloseTo(0.99)
+    expect(allowance.windows[0]?.resetsAtMs).toBeUndefined()
+    expect(allowance.windows[2]).toMatchObject({
+      id: "limit-unknown",
+      resetsAtMs: 61_000,
+    })
+    expect(allowance.windows[2]?.used).toBeUndefined()
+    expect(kimiAllowance({}).state).toBe("unknown")
+  })
+
   test("summarizeClaudeQuota picks lowest remaining window", () => {
+    // /api/oauth/usage reports percent; the parser converts it to a 0..1 share.
     const payload = parseClaudeUsagePayload({
-      five_hour: { utilization: 0.2, resets_at: "2026-01-01T00:00:00Z" },
-      seven_day: { utilization: 0.8, resets_at: "2026-01-07T00:00:00Z" },
+      five_hour: { utilization: 20, resets_at: "2026-01-01T00:00:00Z" },
+      seven_day: { utilization: 80, resets_at: "2026-01-07T00:00:00Z" },
     })
     if (!payload) {
       throw new Error("expected Claude usage payload")
@@ -192,6 +267,7 @@ describe("OAuth quota parsers", () => {
     const summary = summarizeClaudeQuota(payload)
     expect(summary.remainingFraction).toBeCloseTo(0.2)
     expect(summary.unlimited).toBe(false)
+    expect(payload.five_hour?.utilization).toBeCloseTo(0.2)
   })
 
   test("summarizeKimiQuota uses remaining counts", () => {

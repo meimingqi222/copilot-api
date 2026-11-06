@@ -24,6 +24,10 @@ stop retaining chunks at the size limit and cancel the cloned stream without
 awaiting the original branch. ZCode probes share a 15s timeout, retain stale
 routes during refresh, and allow individual request cancellation.
 
+The typed quota migration retains the complete-connection dirty fingerprint,
+four-worker scheduling and cancellation boundaries; capability-driven polling
+must not replace these with a quota-only persistence comparison.
+
 ## Alternatives considered
 
 **TTL alone.** It returns stale data immediately after writes and resets.

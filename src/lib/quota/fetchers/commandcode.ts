@@ -1,3 +1,4 @@
+import type { ProviderQuotaSnapshot } from "~/lib/quota/types"
 /**
  * Command Code Plan 配额拉取。
  *
@@ -11,7 +12,6 @@
  * resetAt 是毫秒。used / cap 只做除法还原百分比。
  */
 
-import type { QuotaSnapshot } from "~/lib/quota/types"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { getConnectionProvider } from "~/lib/provider-connections"
@@ -21,6 +21,10 @@ import { COMMANDCODE_API } from "~/services/oauth/commandcode"
 import { snapshotFromWindows } from "~/lib/quota/snapshot"
 
 interface CommandCodeQuotaWindow {
+  id: string
+  spanMs: number
+  remaining: number
+  total: number
   name: string
   usedPercent: number
   resetsAt?: number
@@ -28,6 +32,7 @@ interface CommandCodeQuotaWindow {
 }
 
 interface ParsedCommandCodeQuota {
+  limited?: boolean
   planId?: string
   windows: Array<CommandCodeQuotaWindow>
   monthlyCredits?: number
@@ -37,15 +42,22 @@ interface ParsedCommandCodeQuota {
 function readWindow(
   raw: unknown,
   name: string,
+  id: string,
+  spanMs: number,
   out: Array<CommandCodeQuotaWindow>,
 ): void {
   const w = asRecord(raw)
   if (!w) return
-  const used = asNumber(w.used) ?? 0
-  const cap = asNumber(w.cap) ?? 0
+  const used = asNumber(w.used)
+  const cap = asNumber(w.cap)
+  if (used === undefined || cap === undefined || cap <= 0) return
   const percent = cap > 0 ? (100 * used) / cap : 0
   const reset = asNumber(w.resetAt)
   out.push({
+    id,
+    spanMs,
+    remaining: Math.max(0, cap - used),
+    total: cap,
     name,
     usedPercent: Math.min(Math.max(percent, 0), 100),
     resetsAt: reset !== undefined && reset > 0 ? reset : undefined,
@@ -66,9 +78,10 @@ export function parseCommandCodeQuota(
   const credits = asRecord(root.credits)
   const windows: Array<CommandCodeQuotaWindow> = []
   const limits = asRecord(root.windowLimits)
-  readWindow(limits?.fiveHour, "5 hours", windows)
-  readWindow(limits?.weekly, "7 days", windows)
+  readWindow(limits?.fiveHour, "5 hours", "five-hour", 5 * 3_600_000, windows)
+  readWindow(limits?.weekly, "7 days", "weekly", 7 * 86_400_000, windows)
   return {
+    limited: typeof limits?.limited === "boolean" ? limits.limited : undefined,
     planId: typeof credits?.planId === "string" ? credits.planId : undefined,
     windows,
     monthlyCredits: asNumber(credits?.monthlyCredits),
@@ -77,12 +90,29 @@ export function parseCommandCodeQuota(
   }
 }
 
-function buildSnapshot(parsed: ParsedCommandCodeQuota): QuotaSnapshot {
+function buildSnapshot(parsed: ParsedCommandCodeQuota): ProviderQuotaSnapshot {
   return snapshotFromWindows({
     provider: "commandcode-plan",
     windows: parsed.windows,
+    allowance: {
+      state:
+        parsed.limited === true && parsed.windows.length > 0 ?
+          "known"
+        : "unknown",
+      windows: parsed.windows.map((w) => ({
+        id: w.id,
+        used: w.usedPercent / 100,
+        remaining: w.remaining,
+        total: w.total,
+        unit: "credits",
+        spanMs: w.spanMs,
+        resetsAtMs: w.resetsAt,
+        aside: parsed.limited !== true,
+      })),
+    },
     details: {
       commandcode: {
+        limited: parsed.limited,
         planId: parsed.planId,
         windows: parsed.windows,
         monthlyCredits: parsed.monthlyCredits,
@@ -95,7 +125,7 @@ function buildSnapshot(parsed: ParsedCommandCodeQuota): QuotaSnapshot {
 export async function fetchCommandCodeQuota(
   connection: ProviderConnection,
   signal?: AbortSignal,
-): Promise<QuotaSnapshot> {
+): Promise<ProviderQuotaSnapshot> {
   if (getConnectionProvider(connection) !== "commandcode-plan") {
     throw new Error("fetchCommandCodeQuota requires a Command Code connection")
   }

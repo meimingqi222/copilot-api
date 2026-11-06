@@ -153,6 +153,7 @@ function getQoderModuleFor(site: QoderSite): ProviderModule {
   if (!module) {
     module = {
       id: site.id,
+      quota: { source: "poll" },
       descriptor: getProviderDescriptor(site.id),
       fetchQuota: fetchQoderQuota,
       fallbackModels: () => getQoderFallbackModels(site),

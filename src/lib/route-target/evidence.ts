@@ -26,7 +26,6 @@ import {
 import { allowanceFor, windowApplies } from "~/lib/plan-quota/windows"
 import {
   getProviderConnection,
-  isAccountManagedConnection,
   type ApiCredential,
   type ProviderConnection,
   type RouteTarget,
@@ -68,6 +67,7 @@ interface QuotaWindow {
    * when the window counts every model (a five-hour window, a plan-wide one).
    */
   scope?: string
+  models?: Array<string>
 }
 
 function normalizeResetMs(value: number): number {
@@ -86,7 +86,14 @@ function usedFractionOf(snapshot: QuotaSnapshot): number | undefined {
   let max = 0
   let seen = false
   for (const [remaining, total] of pairs) {
-    if (total === undefined || total <= 0) continue
+    if (
+      total === undefined
+      || !Number.isFinite(total)
+      || total <= 0
+      || remaining === undefined
+      || !Number.isFinite(remaining)
+    )
+      continue
     seen = true
     const used = 1 - Math.min(Math.max(remaining ?? 0, 0), total) / total
     if (used > max) max = used
@@ -150,6 +157,7 @@ export function quotaWindowsOf(snapshot: QuotaSnapshot): Array<QuotaWindow> {
     resetsAtMs: window.resetsAtMs,
     spanMs: window.spanMs,
     scope: window.model,
+    models: window.scope?.models,
   }))
 }
 
@@ -160,7 +168,11 @@ export function windowAppliesTo(
 ): boolean {
   // Same rule as the plan model (`window.model` is this shape's `scope`).
   return windowApplies(
-    { used: window.usedFraction ?? 0, model: window.scope },
+    {
+      used: window.usedFraction,
+      model: window.scope,
+      ...(window.models && { scope: { models: window.models } }),
+    },
     model,
   )
 }
@@ -170,7 +182,10 @@ export function usedFractionFor(
   snapshot: QuotaSnapshot,
   model?: string,
 ): number | undefined {
+  if (snapshot.allowance?.state === "unlimited") return 0
+  if (snapshot.allowance?.state === "not-included") return 1
   const windows = planWindowsFromSnapshot(snapshot)
+  if (snapshot.allowance) return allowanceFor(windows, model, Date.now()).used
   if (!windows.some((window) => windowApplies(window, model))) {
     // No window counts the model (or none was measured): fall back to the whole
     // snapshot's counters, so providers that only report an aggregate still
@@ -192,7 +207,11 @@ export function renewsAtFor(
   ).renews
   // No per-window reset (or no window list at all): fall back to the
   // heterogeneous details shapes some providers report instead.
-  return renews.length > 0 ? renews : quotaRenewsAt(snapshot)
+  return (
+    snapshot.allowance ? renews
+    : renews.length > 0 ? renews
+    : quotaRenewsAt(snapshot)
+  )
 }
 
 /**
@@ -248,6 +267,15 @@ function evidenceFrom(
   credential: ApiCredential | undefined,
   model?: string,
 ): RouteEvidence {
+  if (model && connection) {
+    model =
+      connection.models?.find(
+        (entry) =>
+          entry.publicId === model
+          || entry.upstreamId === model
+          || entry.aliases?.includes(model!),
+      )?.upstreamId ?? model
+  }
   const now = Date.now()
   const snapshot = credential?.quota
   const fromSnapshot: QuotaEvidence | undefined =
@@ -263,7 +291,9 @@ function evidenceFrom(
   // failed transiently replays it as stale instead of losing it. With a fresh
   // snapshot, the snapshot is the answer, as before.
   const snapshotStale =
-    snapshot === undefined || now - snapshot.fetchedAt > SNAPSHOT_STALE_MS
+    snapshot === undefined
+    || snapshot.allowance?.state === "unknown"
+    || now - snapshot.fetchedAt > SNAPSHOT_STALE_MS
   const quota =
     (snapshotStale ? planQuotaEvidenceFor(connection, model, now) : undefined)
     ?? fromSnapshot
@@ -330,8 +360,6 @@ interface WeighRow {
   /** Renewal instants, biggest window first. */
   renews: Array<number>
   served: number
-  /** Subscription that reports its allowance only as it answers. */
-  learning: boolean
 }
 
 function weighRowOf(target: RouteTarget): WeighRow {
@@ -342,7 +370,7 @@ function weighRowOf(target: RouteTarget): WeighRow {
   const evidence = evidenceFrom(
     connection,
     credential,
-    target.publicModelId || target.upstreamModelId,
+    target.upstreamModelId || target.publicModelId,
   )
   // Balance pressure is irrelevant to a zero-credit upstream model. Keep the
   // actual balance in trace evidence, but never demote this route because of it.
@@ -353,10 +381,6 @@ function weighRowOf(target: RouteTarget): WeighRow {
     used: free ? 0 : evidence.quota?.usedFraction,
     renews: free ? [] : (evidence.quota?.renewsAtMs ?? []),
     served: evidence.servedTokens,
-    learning:
-      !free
-      && evidence.quota?.usedFraction === undefined
-      && Boolean(connection && isAccountManagedConnection(connection)),
   }
 }
 
@@ -364,9 +388,10 @@ function hourOf(ms: number): number {
   return Math.floor(ms / 3_600_000) * 3_600_000
 }
 
-/** Fine band: learners first once, then soonest-renewing big window first. */
+/** Fine band: known capacity, then soonest-renewing big window first. */
 function compareFine(a: WeighRow, b: WeighRow): number {
-  if (a.learning !== b.learning) return a.learning ? -1 : 1
+  if ((a.used === undefined) !== (b.used === undefined))
+    return a.used === undefined ? 1 : -1
   const len = Math.max(a.renews.length, b.renews.length)
   for (let k = 0; k < len; k++) {
     const x = a.renews[k]
@@ -424,8 +449,8 @@ export function orderByQuota(targets: Array<RouteTarget>): Array<RouteTarget> {
 }
 
 /**
- * Order by allowance used, then by tokens served lately. Unknown allowances
- * count as unused (one not known counts as unused).
+ * Order known allowances by share used, then tokens served lately. Unknown
+ * allowances follow measured ones rather than pretending to be unused.
  */
 export function orderByLeastUsed(
   targets: Array<RouteTarget>,
@@ -433,6 +458,8 @@ export function orderByLeastUsed(
   if (targets.length < 2) return targets
   const rows = targets.map((target) => ({ target, row: weighRowOf(target) }))
   rows.sort((a, b) => {
+    if ((a.row.used === undefined) !== (b.row.used === undefined))
+      return a.row.used === undefined ? 1 : -1
     const used = (a.row.used ?? 0) - (b.row.used ?? 0)
     if (used !== 0) return used
     return a.row.served - b.row.served

@@ -67,6 +67,7 @@ const refreshAuth = prepareOAuthRefresh(
 export function getAntigravityModule(): ProviderModule {
   return defineOAuthProviderModule({
     id: "antigravity",
+    quota: { source: "poll" },
     callback: antigravityCallbackConfig,
     fetchQuota: fetchAntigravityQuota,
     fallbackModels: getAntigravityFallbackModels,

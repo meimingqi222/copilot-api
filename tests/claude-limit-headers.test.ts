@@ -108,6 +108,57 @@ test("Claude Code's rate_limit_event updates the account's windows for the next 
   expect(details?.seven_day_opus).toMatchObject({ utilization: 0.9 })
 })
 
+test("CLI events apply exhaustion but leave recovery, waits and the poll clock to the poll", () => {
+  const connection = connectionWithQuota()
+  const credentialId = connection.credentials[0]!.id
+  const polledAt = connection.credentials[0]!.quota!.fetchedAt
+  recordClaudeRateLimit(connection.id, credentialId, {
+    unifiedWindows: { five_hour: { utilization: 1 } },
+  })
+  let credential = getProviderConnection(connection.id)!.credentials[0]!
+  expect(credential.quota?.allowance).toMatchObject({
+    partial: true,
+    windows: [{ id: "five_hour", used: 1 }],
+  })
+  expect(credential.status).toBe("quota_exhausted")
+  // The poll interval runs from the poll; an event must not keep postponing it.
+  expect(credential.quota?.fetchedAt).toBe(polledAt)
+
+  // A reset-only event measured nothing: the stored exhaustion stands.
+  recordClaudeRateLimit(connection.id, credentialId, {
+    unifiedWindows: { five_hour: { resetsAt: Date.now() / 1000 + 3600 } },
+  })
+  credential = getProviderConnection(connection.id)!.credentials[0]!
+  expect(credential.quota?.allowance?.state).toBe("known")
+  expect(
+    credential.quota?.allowance?.windows.find((w) => w.id === "five_hour"),
+  ).toMatchObject({ used: 1 })
+  expect(credential.status).toBe("quota_exhausted")
+
+  // Capacity heard from a concurrent turn updates the numbers but lifts no wait.
+  credential.status = "cooldown"
+  credential.cooldownUntil = Date.now() + 60_000
+  recordClaudeRateLimit(connection.id, credentialId, {
+    unifiedWindows: {
+      five_hour: { utilization: 0.25 },
+      seven_day: { resetsAt: Date.now() / 1000 + 3600 },
+    },
+  })
+  credential = getProviderConnection(connection.id)!.credentials[0]!
+  expect(credential.status).toBe("cooldown")
+  expect(credential.cooldownUntil).toBeGreaterThan(Date.now())
+  expect(
+    credential.quota?.allowance?.windows.find((w) => w.id === "five_hour"),
+  ).toMatchObject({ used: 0.25 })
+  expect(
+    credential.quota?.allowance?.windows.find((w) => w.id === "seven_day")
+      ?.used,
+  ).toBeUndefined()
+  expect(credential.quota?.details?.seven_day_opus).toMatchObject({
+    utilization: 0.9,
+  })
+})
+
 test("the translator hands Claude Code's rate_limit_event over, not to the client", async () => {
   const seen: Array<unknown> = []
   async function* lines() {

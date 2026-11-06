@@ -11,7 +11,10 @@ import {
   OAUTH_PROVIDER_IDS,
   PROVIDER_PROTOCOL_MAP,
 } from "~/lib/provider-config"
-import { parseCommandCodeQuota } from "~/lib/quota/fetchers/commandcode"
+import {
+  fetchCommandCodeQuota,
+  parseCommandCodeQuota,
+} from "~/lib/quota/fetchers/commandcode"
 import {
   applyCommandCodeOAuthBundle,
   buildCommandCodeAuthUrl,
@@ -329,6 +332,49 @@ describe("commandcode model discovery", () => {
 })
 
 describe("commandcode quota parsing", () => {
+  test("canonical windows carry credit units, spans and reset instants without wallet guesses", async () => {
+    globalThis.fetch = (async () =>
+      jsonResponse({
+        credits: { monthlyCredits: 0, purchasedCredits: 0, freeCredits: 0 },
+        windowLimits: {
+          limited: true,
+          fiveHour: { used: 9.999, cap: 10, resetAt: 1790000000000 },
+          weekly: { used: 40, cap: 40 },
+        },
+      })) as unknown as typeof fetch
+    const connection = createConnection()
+    connection.credentials[0]!.value = "cc-key"
+    const snapshot = await fetchCommandCodeQuota(connection)
+    expect(snapshot.allowance?.state).toBe("known")
+    expect(snapshot.allowance?.windows[0]).toMatchObject({
+      id: "five-hour",
+      unit: "credits",
+      total: 10,
+      spanMs: 5 * 3_600_000,
+      resetsAtMs: 1790000000000,
+    })
+    expect(snapshot.allowance?.windows[0]?.remaining).toBeGreaterThan(0)
+    expect(snapshot.allowance?.windows[1]).toMatchObject({
+      id: "weekly",
+      remaining: 0,
+      spanMs: 7 * 86_400_000,
+    })
+    globalThis.fetch = (async () =>
+      jsonResponse({
+        credits: { monthlyCredits: 100 },
+        windowLimits: { limited: false },
+      })) as unknown as typeof fetch
+    expect((await fetchCommandCodeQuota(connection)).allowance).toEqual({
+      state: "unknown",
+      windows: [],
+    })
+    expect(
+      parseCommandCodeQuota({
+        windowLimits: { limited: true, fiveHour: { cap: 10 } },
+      })?.windows,
+    ).toEqual([])
+  })
+
   test("reads the 5h + weekly windows and credits", () => {
     const parsed = parseCommandCodeQuota({
       credits: {

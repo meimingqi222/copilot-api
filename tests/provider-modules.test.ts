@@ -34,6 +34,42 @@ import {
 } from "~/services/protocols"
 
 describe("internal provider modules", () => {
+  test("numeric quota capability is declared by all modules and assembled onto runtimes", () => {
+    initializeProviderRegistry()
+    const modules = listBuiltinProviderModules()
+    const unsupported = modules.filter(
+      (module) => module.quota?.source === "none",
+    )
+    const unsupportedIds = [
+      "gemini",
+      "zed",
+      "codebuff",
+      "mimo-aistudio",
+      "aistudio",
+    ] as const
+    expect(unsupported.map((module) => module.id).sort()).toEqual(
+      [...unsupportedIds].sort(),
+    )
+    expect(modules).toHaveLength(23)
+    expect(
+      modules.filter((module) => module.quota?.source.includes("poll")),
+    ).toHaveLength(18)
+    for (const module of modules) {
+      expect(module.quota, module.id).toBeDefined()
+      expect(getProviderRuntime(module.id).quota).toEqual(module.quota)
+      if (module.quota?.source.includes("poll")) {
+        expect(
+          getProviderRuntime(module.id).refreshQuota,
+          module.id,
+        ).toBeFunction()
+      }
+    }
+    expect(getProviderRuntime("claude").quota).toEqual({
+      source: "poll-and-response",
+      refreshIntervalMs: 15 * 60_000,
+    })
+  })
+
   test("every persisted provider has one complete module and a recognized protocol", () => {
     const modules = listBuiltinProviderModules()
     expect(modules.map((m) => m.id).sort()).toEqual([...PROVIDER_IDS].sort())

@@ -9,7 +9,10 @@ import {
   OAUTH_PROVIDER_IDS,
   PROVIDER_PROTOCOL_MAP,
 } from "~/lib/provider-config"
-import { parseDimagentQuota } from "~/lib/quota/fetchers/dimagent"
+import {
+  fetchDimagentQuota,
+  parseDimagentQuota,
+} from "~/lib/quota/fetchers/dimagent"
 import {
   applyDimagentOAuthBundle,
   buildDimagentAuthUrl,
@@ -159,6 +162,28 @@ describe("dimagent-native adapter", () => {
 })
 
 describe("dimagent quota parsing", () => {
+  test("a measured percentage is known even when no reset is reported", async () => {
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({ used_percent: 99.999 }),
+      )) as unknown as typeof fetch
+    const snapshot = await fetchDimagentQuota(createConnection())
+    expect(snapshot.allowance?.state).toBe("known")
+    expect(snapshot.allowance?.windows[0]).toMatchObject({
+      id: "usage",
+      unit: "percent",
+      total: 100,
+    })
+    expect(snapshot.allowance?.windows[0]?.remaining).toBeGreaterThan(0)
+    expect(snapshot.allowance?.windows[0]?.resetsAtMs).toBeUndefined()
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ plan: "Pro" }))) as unknown as typeof fetch
+    expect((await fetchDimagentQuota(createConnection())).allowance).toEqual({
+      state: "unknown",
+      windows: [],
+    })
+  })
+
   test("reads a percentage or used/total", () => {
     expect(
       parseDimagentQuota({ used_percent: 42 }).windows[0]!.usedPercent,

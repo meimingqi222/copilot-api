@@ -7,6 +7,7 @@ import {
   getConnectionRoutability,
 } from "~/lib/provider-connections"
 import { applyOAuthQuotaSnapshot } from "~/lib/quota"
+import { quotaAvailability } from "~/lib/quota/allowance"
 import {
   getOAuthProviderDescriptor,
   isOAuthProviderId,
@@ -241,6 +242,47 @@ describe("zcode quota parsing", () => {
     expect(names).toContain("7 days")
     const weekly = parsed!.windows.find((w) => w.name === "7 days")!
     expect(weekly.usedPercent).toBeCloseTo(60, 5)
+    expect(weekly.allowance).toMatchObject({
+      id: "coding:TOKENS_LIMIT:6:7",
+      used: 0.6,
+      unit: "percent",
+      spanMs: 7 * 86_400_000,
+    })
+    expect(
+      parseZcodeQuota({ limits: [{ unit: 3, number: 5 }] })?.windows,
+    ).toEqual([])
+  })
+
+  test("a spent monthly tool-call limit does not stop chat", () => {
+    const parsed = parseZcodeQuota({
+      limits: [
+        { type: "TOKENS_LIMIT", unit: 3, number: 5, percentage: 10 },
+        {
+          type: "TIME_LIMIT",
+          unit: 5,
+          number: 1,
+          usage: 1000,
+          remaining: 0,
+          percentage: 100,
+        },
+      ],
+    })!
+    const windows = parsed.windows.flatMap((w) =>
+      w.allowance ? [w.allowance] : [],
+    )
+    expect(windows.find((w) => w.id === "coding:TIME_LIMIT:5:1")?.aside).toBe(
+      true,
+    )
+    expect(
+      quotaAvailability(
+        {
+          fetchedAt: Date.now(),
+          unlimited: false,
+          allowance: { state: "known", windows },
+        },
+        "GLM-5.3",
+      ),
+    ).toBe("available")
   })
 })
 
@@ -296,6 +338,8 @@ describe("zcode Start Plan (temporary credits)", () => {
                     total_units: 100,
                     used_units: 0,
                     remaining_units: 100,
+                    capabilities: ["model:GLM-5.2"],
+                    expires_at: now + 3600,
                   },
                 ],
           },
@@ -315,6 +359,7 @@ describe("zcode Start Plan (temporary credits)", () => {
         unlimited: false,
         premiumInteractionsRemaining: 0,
         chatRemaining: 0,
+        allowance: { state: "not-included", windows: [] },
         details: { zcode: { planStatus: "inactive", windows: [] } },
       })
       const snapshot = await refresh
@@ -326,6 +371,13 @@ describe("zcode Start Plan (temporary credits)", () => {
 
       renewed = true
       const recovered = await fetchZcodeQuota(conn)
+      expect(recovered.allowance?.state).toBe("known")
+      expect(recovered.allowance?.windows[0]).toMatchObject({
+        scope: { models: ["GLM-5.2"] },
+        remaining: 100,
+        expiresAtMs: (now + 3600) * 1000,
+      })
+      expect(recovered.allowance?.windows[0]?.resetsAtMs).toBeUndefined()
       applyOAuthQuotaSnapshot(conn, recovered)
       expect(recovered.premiumInteractionsRemaining).toBe(100)
       expect(recovered.details?.zcode).not.toHaveProperty(
@@ -502,6 +554,52 @@ describe("zcode Start Plan (temporary credits)", () => {
     }) as unknown as typeof fetch
     const conn = startPlanConnection()
     expect(await resolveZcodeRoute(conn, conn.credentials[0]!)).toBe("start")
+  })
+
+  test("a spent daily bucket renews at its period end instead of expiring", async () => {
+    const now = Math.floor(Date.now() / 1000)
+    const periodEnd = now + 3600
+    globalThis.fetch = (async (url: string | URL) => {
+      if (String(url).includes("/api/biz/subscription/list")) {
+        return jsonResponse({ code: 0, data: [] })
+      }
+      return jsonResponse({
+        code: 0,
+        data: {
+          server_time: now,
+          plans: [
+            {
+              plan_id: "start-plan",
+              user_plan_id: "up1",
+              name: "Start Plan",
+              status: "active",
+              ends_at: now + 30 * 86400,
+              entitlements: [{ entitlement_id: "e1", period: "daily" }],
+            },
+          ],
+          balances: [
+            {
+              plan_id: "start-plan",
+              user_plan_id: "up1",
+              entitlement_id: "e1",
+              capabilities: ["model:GLM-5.2"],
+              total_units: 100,
+              used_units: 100,
+              remaining_units: 0,
+              period_end: periodEnd,
+              expires_at: periodEnd,
+            },
+          ],
+        },
+      })
+    }) as typeof fetch
+    const snapshot = await fetchZcodeQuota(startPlanConnection())
+    const window = snapshot.allowance?.windows.find((w) => !w.aside)
+    expect(window).toMatchObject({
+      remaining: 0,
+      resetsAtMs: periodEnd * 1000,
+    })
+    expect(window?.expiresAtMs).toBeUndefined()
   })
 
   test("no JWT never leaves the coding plan", async () => {

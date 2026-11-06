@@ -7,6 +7,7 @@ import { codebuffProviderRuntime } from "~/services/providers/codebuff"
 export function getCodebuffModule(): ProviderModule {
   return {
     id: "codebuff",
+    quota: { source: "none" },
     descriptor: getProviderDescriptor("codebuff"),
     accountCreation: codebuffAccountCreation,
     adapter: codebuffNativeAdapter,

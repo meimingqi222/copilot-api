@@ -205,7 +205,22 @@ export function parseClaudeUsagePayload(
   payload: unknown,
 ): ClaudeUsagePayload | null {
   const parsed = parseJsonPayload(payload)
-  return parsed as ClaudeUsagePayload | null
+  if (!parsed) return null
+  // `/api/oauth/usage` reports `utilization` as a percent (48.0 = 48%); the
+  // CLI `rate_limit_event`, response headers and every reader here use a 0..1
+  // share, so convert once at this boundary.
+  const out: Record<string, unknown> = { ...parsed }
+  for (const [key, value] of Object.entries(out)) {
+    if (
+      value
+      && typeof value === "object"
+      && typeof (value as ClaudeUsageWindow).utilization === "number"
+    ) {
+      const window = value as ClaudeUsageWindow
+      out[key] = { ...window, utilization: window.utilization! / 100 }
+    }
+  }
+  return out as ClaudeUsagePayload
 }
 
 export function parseKimiUsagePayload(

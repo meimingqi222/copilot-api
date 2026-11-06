@@ -296,10 +296,17 @@ describe("loadProviderConnections", () => {
         new Response("quota temporarily unavailable", { status: 503 }),
       )
       try {
-        await expect(refreshManagedQuota(connection)).rejects.toMatchObject({
-          response: { status: 503 },
-          responseBody: "quota temporarily unavailable",
-        })
+        if (
+          guard === "disabled-connection"
+          || guard === "disabled-credential"
+        ) {
+          await expect(refreshManagedQuota(connection)).resolves.toBeUndefined()
+        } else {
+          await expect(refreshManagedQuota(connection)).rejects.toMatchObject({
+            response: { status: 503 },
+            responseBody: "quota temporarily unavailable",
+          })
+        }
         expect(getConnectionRoutability(connection).routable).toBe(false)
         expect(
           buildRouteTargets({ publicModelId: "gpt-5", endpoint: "responses" }),

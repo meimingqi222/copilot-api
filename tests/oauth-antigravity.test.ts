@@ -17,6 +17,8 @@ import {
   summarizeAntigravityQuota,
 } from "~/lib/quota/parsers"
 import { translateOpenAiChatToAntigravity } from "~/services/antigravity/translate-request"
+import { quotaAvailability } from "~/lib/quota/allowance"
+import { antigravityAllowance } from "~/lib/quota/fetchers/antigravity"
 import {
   convertAntigravityNonStreamResponse,
   convertAntigravityStreamChunk,
@@ -333,6 +335,55 @@ describe("Antigravity Gemini translation", () => {
 })
 
 describe("Antigravity quota parsers", () => {
+  test("routing follows each model's quotaInfo; summary pools are reporting-only", () => {
+    // Shapes from magpie's fixtures (fetchAvailableModels + retrieveUserQuotaSummary).
+    const models = JSON.stringify({
+      models: {
+        "gemini-3-flash": {
+          quotaInfo: {
+            remainingFraction: 0.25,
+            resetTime: "2099-01-01T05:00:00Z",
+          },
+        },
+        // Antigravity leaves the fraction out once none is left.
+        "claude-opus-4-6": { quotaInfo: { resetTime: "2099-01-01T03:00:00Z" } },
+        // No quotaInfo at all says nothing.
+        "gpt-oss-120b": {},
+      },
+    })
+    const allowance = antigravityAllowance(models, {
+      groups: [
+        {
+          displayName: "Claude and GPT models",
+          buckets: [
+            {
+              bucketId: "3p-weekly",
+              window: "weekly",
+              resetTime: "2099-01-06T00:00:00Z",
+            },
+          ],
+        },
+      ],
+    })
+    expect(allowance.state).toBe("known")
+    const snapshot = { fetchedAt: Date.now(), unlimited: false, allowance }
+    expect(quotaAvailability(snapshot, "claude-opus-4-6")).toBe("exhausted")
+    expect(quotaAvailability(snapshot, "gemini-3-flash")).toBe("available")
+    // The spent 3p pool is display-only: it does not deny GPT on its own.
+    expect(quotaAvailability(snapshot, "gpt-oss-120b")).toBe("unknown")
+    expect(
+      allowance.windows.find((w) => w.id === "model:gemini-3-flash"),
+    ).toMatchObject({
+      used: 0.75,
+      resetsAtMs: Date.parse("2099-01-01T05:00:00Z"),
+      scope: { models: ["gemini-3-flash"] },
+    })
+    expect(
+      allowance.windows.find((w) => w.id?.endsWith("-3p-weekly")),
+    ).toMatchObject({ used: 1, aside: true })
+    expect(antigravityAllowance(undefined, undefined).state).toBe("unknown")
+  })
+
   test("summarizeAntigravityQuota picks lowest remaining bucket", () => {
     const payload = parseAntigravityQuotaPayload({
       groups: [

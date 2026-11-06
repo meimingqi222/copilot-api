@@ -443,10 +443,18 @@ export function enrichQuotaInfoForResponse(
   accountId: string,
   provider: string | undefined,
   quotaInfo:
-    | { fetchedAt?: number; details?: Record<string, unknown> }
+    | {
+        fetchedAt?: number
+        details?: Record<string, unknown>
+        allowance?: unknown
+      }
     | null
     | undefined,
 ): { details?: Record<string, unknown> } | null | undefined {
+  if (quotaInfo?.allowance !== undefined) {
+    const { allowance: _internal, ...publicInfo } = quotaInfo
+    quotaInfo = publicInfo
+  }
   if (!quotaInfo?.details || !supportsCycleUsage(provider)) {
     return quotaInfo
   }

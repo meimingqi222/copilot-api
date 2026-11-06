@@ -20,6 +20,13 @@ The browser polls cached GET data only while its relevant page is visible, with
 configurable intervals and separate page/snapshot timestamps. Routing remains
 memory-only and keeps its existing priority and quota policies.
 
+Numeric source and refresh cadence now come from each module's `quota`
+capability rather than descriptor/provider-name branches. The shared guarded
+refresh also discards results after deletion, disablement, credential rotation
+or an intervening reading; failed or obsolete probes cannot restore capacity.
+The typed-allowance migration changes unknown ranking, not polling cadence or
+browser visibility; that policy is owned by `2026-11-06-unknown-quota-routing.md`.
+
 ## Alternatives considered
 
 - Refresh upstream on every page tick: repeated browser tabs would amplify

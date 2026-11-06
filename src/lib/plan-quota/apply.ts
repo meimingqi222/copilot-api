@@ -14,6 +14,8 @@
  */
 
 import { isRecord } from "~/lib/json-shape"
+import { normalizeQuotaAllowance } from "~/lib/quota/allowance"
+import { logger } from "~/lib/logger"
 import type { ProviderConnection } from "~/lib/provider-connections"
 import type { QuotaSnapshot } from "~/lib/quota/types"
 
@@ -109,14 +111,19 @@ export function planAccountFor(
 /**
  * The allowance windows a quota snapshot carries, as plan windows.
  *
- * Only `details._quotaWindows` is read: it is the canonical window list (built
- * by lib/quota/cycles) and the only shape that carries a window's span beside
- * its share. A descriptor without a readable share is skipped rather than
- * recorded as empty — a window that was not measured is not a window at zero.
+ * New snapshots carry provider-owned typed allowances. `_quotaWindows` is a
+ * read-only compatibility path for persisted legacy snapshots; only that old
+ * format requires a readable share before a descriptor can be replayed.
  */
 export function planWindowsFromSnapshot(
   snapshot: QuotaSnapshot,
 ): PlanAllowance {
+  if (snapshot.allowance) {
+    return normalizeQuotaAllowance(snapshot.allowance).windows.filter(
+      (window) => !window.aside,
+    )
+  }
+  // Read-only compatibility for snapshots written before typed allowances.
   const details = snapshot.details
   if (!isRecord(details)) return []
   const raw = details["_quotaWindows"]
@@ -189,7 +196,10 @@ export async function recordAllowanceReading(
 ): Promise<MergedPlanAllowance> {
   const merged = await mergeWithLast(input, now)
   const key = readingKey(input.provider, input.user)
-  if (merged.windows.length > 0) {
+  const newer = mirror.get(key)
+  if (newer?.asOf !== undefined && newer.asOf > (merged.asOf ?? now))
+    return newer
+  if (merged.windows.length > 0 || input.windows !== undefined) {
     mirror.set(key, {
       windows: merged.windows,
       asOf: merged.asOf,
@@ -231,9 +241,26 @@ export function noteSnapshotReading(
   const account = planAccountFor(connection)
   if (!account) return
   const windows = planWindowsFromSnapshot(snapshot)
-  // Nothing window-shaped to remember; never overwrite a good reading with it.
-  if (windows.length === 0) return
-  void recordAllowanceReading({ ...account, windows }).catch(() => undefined)
+  // Unknown is not a measurement; explicit no-constraint readings supersede history.
+  if (
+    windows.length === 0
+    && (!snapshot.allowance || snapshot.allowance.state === "unknown")
+  )
+    return
+  // Publish synchronously: selection must see this reading before disk I/O.
+  mirror.set(readingKey(account.provider, account.user), {
+    windows,
+    asOf: snapshot.fetchedAt,
+    stale: false,
+  })
+  // Per-turn response events stay in memory; the next poll persists the reading.
+  if (snapshot.allowance?.partial) return
+  void recordAllowanceReading(
+    { ...account, windows },
+    snapshot.fetchedAt,
+  ).catch((error: unknown) =>
+    logger.warn("Could not persist quota allowance", error),
+  )
 }
 
 /**

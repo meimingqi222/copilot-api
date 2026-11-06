@@ -21,6 +21,10 @@ Removing caps or pacing loses upstream protection without fixing routing concent
 
 Pacing reservations count toward the existing cap. A saturated primary may use an available backup, and all-full enters the bounded queue described by the successor. WAL uses SQLite sidecars: live copies require a consistent SQLite backup/checkpoint. Large request objects and serialized wire bodies still consume memory; no global body memory budget is introduced.
 
+Typed quota evidence changes unknown ranking, not capacity reservations or
+healthy affinity. Equal known quota ranks must still prefer an idle lane;
+the existing load and affinity regressions remain separate from unknown policy.
+
 ## Superseded
 
 The all-full immediate-429 behavior is replaced by the bounded concurrency queue.

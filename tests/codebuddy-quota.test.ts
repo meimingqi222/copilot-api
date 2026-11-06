@@ -145,6 +145,51 @@ describe("parseCodebuddyResourceData", () => {
 })
 
 describe("fetchCodebuddyQuota", () => {
+  test.each(["codebuddy", "codebuddy-cn"] as const)(
+    "%s canonical balance sums credit packages without integer rounding",
+    async (provider) => {
+      const connection = await createConnection({
+        name: provider,
+        protocol: "codebuddy-native",
+        baseUrl:
+          provider === "codebuddy" ?
+            "https://www.workbuddy.ai/v2"
+          : "https://copilot.tencent.com/v2",
+        credentials: [{ value: "access-token", authMode: "bearer" }],
+        models: [],
+      })
+      ensureConnectionMetadata(connection).provider = provider
+      globalThis.fetch = mock(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              code: 0,
+              data: resourceData([
+                {
+                  CycleCapacitySize: 100,
+                  CycleCapacityRemain: 0,
+                  CycleCapacityUsed: 100,
+                },
+                { CapacitySize: 1, CapacityRemain: 0.01, CapacityUsed: 0.99 },
+              ]),
+            }),
+          ),
+        ),
+      ) as unknown as typeof fetch
+      const snapshot = await fetchCodebuddyQuota(connection)
+      expect(snapshot.provider).toBe(provider)
+      expect(snapshot.allowance?.state).toBe("known")
+      expect(snapshot.allowance?.windows).toHaveLength(1)
+      expect(snapshot.allowance?.windows[0]).toMatchObject({
+        id: "credits",
+        unit: "credits",
+        remaining: 0.01,
+        total: 101,
+      })
+      expect(snapshot.allowance?.windows[0]?.used).toBeLessThan(1)
+    },
+  )
+
   test("cn connection posts to codebuddy.cn v2 endpoint", async () => {
     __resetProviderConnectionsForTest()
     const connection = await createConnection({

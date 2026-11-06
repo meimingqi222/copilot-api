@@ -7,6 +7,7 @@ import { copilotProviderRuntime } from "~/services/providers/copilot"
 export function getCopilotModule(): ProviderModule {
   return {
     id: "copilot",
+    quota: { source: "poll" },
     descriptor: getProviderDescriptor("copilot"),
     accountCreation: copilotAccountCreation,
     adapter: copilotNativeAdapter,

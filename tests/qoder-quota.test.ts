@@ -126,6 +126,30 @@ describe("parseQoderQuota", () => {
 })
 
 describe("fetchQoderQuota", () => {
+  test("canonical credits combine complementary pools without rounding and preserve CN identity", async () => {
+    const connection = makeConnection()
+    connection.metadata = { provider: "qoder-cn" }
+    connection.baseUrl = "https://gateway.qoder.com.cn"
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        jsonResponse({
+          displayMode: "qoder",
+          qoderUsage: {
+            userQuota: { total: 100, used: 100 },
+            addOnQuota: { total: 1, remaining: 0.01 },
+          },
+        }),
+      ),
+    ) as unknown as typeof fetch
+    const snapshot = await fetchQoderQuota(connection)
+    expect(snapshot.provider).toBe("qoder-cn")
+    expect(snapshot.allowance?.state).toBe("known")
+    expect(snapshot.allowance?.windows).toHaveLength(1)
+    expect(snapshot.allowance?.windows[0]?.remaining).toBeCloseTo(0.01, 10)
+    expect(snapshot.allowance?.windows[0]?.used).toBeLessThan(1)
+    expect(snapshot.allowance?.windows[0]?.total).toBe(101)
+  })
+
   test("asks the usage endpoint with the device token and builds a snapshot", async () => {
     const seen: Array<{ url: string; auth: string }> = []
     globalThis.fetch = mock(

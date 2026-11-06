@@ -53,6 +53,10 @@ beforeEach(() => {
           unlimited: false,
           premiumInteractionsRemaining: 75,
           premiumInteractionsTotal: 100,
+          allowance: {
+            state: "known" as const,
+            windows: [{ id: "premium", remaining: 75, total: 100 }],
+          },
         }
         applyOAuthQuotaSnapshot(connection, snapshot)
         return snapshot
@@ -155,6 +159,38 @@ test("Claude background polling uses a longer interval", async () => {
   expect(reads).toBe(1)
   await refreshManagedQuota(connection, { now: now + 15 * 60_000 })
   expect(reads).toBe(2)
+})
+
+test("poll scheduling reads capability metadata rather than legacy quota features", async () => {
+  const connection = await account()
+  const runtime = getProviderRuntime("codex")
+  registerProvider({
+    ...runtime,
+    quota: { source: "poll", refreshIntervalMs: 7 * 60_000 },
+    supports: () => false,
+  })
+  await refreshManagedQuota(connection)
+  const now = Date.now()
+  await refreshManagedQuota(connection, { now: now + 5 * 60_000 })
+  expect(reads).toBe(1)
+  await refreshManagedQuota(connection, { now: now + 7 * 60_000 })
+  expect(reads).toBe(2)
+})
+
+test("response-only, unsupported and undeclared quota capabilities never poll", async () => {
+  const connection = await account()
+  const runtime = getProviderRuntime("codex")
+  for (const quota of [
+    undefined,
+    { source: "response" as const },
+    { source: "none" as const },
+  ]) {
+    registerProvider({ ...runtime, quota })
+    expect(
+      await refreshManagedQuota(connection, { force: true }),
+    ).toBeUndefined()
+  }
+  expect(reads).toBe(0)
 })
 
 test("quiet refresh does not persist or notify, but credential context changes do", async () => {

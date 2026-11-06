@@ -45,6 +45,7 @@ const refreshAuth = prepareOAuthRefresh(async () => {
 export function getCommandCodeModule(): ProviderModule {
   return {
     id: "commandcode-plan",
+    quota: { source: "poll" },
     descriptor: getProviderDescriptor("commandcode-plan"),
     callback: commandcodePlanCallbackConfig,
     fetchQuota: fetchCommandCodeQuota,

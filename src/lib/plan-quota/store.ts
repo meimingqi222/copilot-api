@@ -4,6 +4,7 @@ import path from "node:path"
 import { isRecord } from "~/lib/json-shape"
 import { logger } from "~/lib/logger"
 import { PATHS, assertWritableDataPath } from "~/lib/paths"
+import { normalizeQuotaWindow } from "~/lib/quota/allowance"
 
 import type {
   MergedPlanAllowance,
@@ -54,6 +55,8 @@ let filePathOverride: string | undefined
 let readings: Record<string, StoredReading> | undefined
 /** Serializes writes so two concurrent saves cannot interleave. */
 let writeQueue: Promise<unknown> = Promise.resolve()
+/** Separate store destinations must not inherit already-queued writes. */
+let storeGeneration = 0
 /**
  * Bumped whenever the file is rewritten or the store is re-pointed, so a read
  * that raced with that change discards its now-stale snapshot instead of
@@ -70,6 +73,7 @@ export function planQuotaFilePath(): string {
 export function setPlanQuotaFilePath(filePath: string | undefined): void {
   filePathOverride = filePath
   readings = undefined
+  storeGeneration++
   cacheEpoch++
 }
 
@@ -77,6 +81,7 @@ export function setPlanQuotaFilePath(filePath: string | undefined): void {
 export function resetPlanQuotaStore(): void {
   filePathOverride = undefined
   readings = undefined
+  storeGeneration++
   cacheEpoch++
 }
 
@@ -105,29 +110,7 @@ function matchesReadingKey(
 }
 
 function normalizeWindow(value: unknown): PlanWindow | undefined {
-  if (!isRecord(value)) {
-    return undefined
-  }
-  if (typeof value.used !== "number" || !Number.isFinite(value.used)) {
-    return undefined
-  }
-  const window: PlanWindow = { used: value.used }
-  if (typeof value.spanMs === "number" && Number.isFinite(value.spanMs)) {
-    window.spanMs = value.spanMs
-  }
-  if (
-    typeof value.resetsAtMs === "number"
-    && Number.isFinite(value.resetsAtMs)
-  ) {
-    window.resetsAtMs = value.resetsAtMs
-  }
-  if (typeof value.model === "string" && value.model.trim()) {
-    window.model = value.model
-  }
-  if (value.aside === true) {
-    window.aside = true
-  }
-  return window
+  return normalizeQuotaWindow(value)
 }
 
 function normalizeReading(value: unknown): StoredReading | undefined {
@@ -316,8 +299,12 @@ export async function keepReading(
   windows: PlanAllowance,
   now: number,
 ): Promise<void> {
+  const generation = storeGeneration
   await enqueueWrite(async () => {
+    if (generation !== storeGeneration) return
     const store = await loadReadings()
+    if (generation !== storeGeneration) return
+    if ((store[readingKey(provider, user)]?.asOf ?? -Infinity) > now) return
     store[readingKey(provider, user)] = { windows, asOf: now }
     await persist(store)
   }).catch((error: unknown) => {

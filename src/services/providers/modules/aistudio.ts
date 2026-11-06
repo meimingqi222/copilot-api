@@ -10,6 +10,7 @@ export function getAIStudioModule(): ProviderModule {
   const descriptor = getProviderDescriptor("aistudio")
   return {
     id: "aistudio",
+    quota: { source: "none" },
     descriptor,
     adapter: aistudioNativeAdapter,
     accountCreation: {
@@ -37,6 +38,7 @@ export function getAIStudioModule(): ProviderModule {
     },
     createRuntime: () => ({
       id: "aistudio",
+      quota: { source: "none" },
       descriptor,
       supports: (_connection, feature) => descriptor.features.includes(feature),
       async refreshModels(connection) {

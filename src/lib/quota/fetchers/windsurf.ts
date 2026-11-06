@@ -1,3 +1,4 @@
+import type { ProviderQuotaSnapshot } from "~/lib/quota/types"
 import type { QuotaSnapshot } from "~/lib/quota/types"
 import type { ProviderConnection } from "~/lib/provider-connections"
 
@@ -6,13 +7,8 @@ import {
   getConnectionProvider,
   getConnectionSettings,
   getConnectionWindsurfApiKey,
-  markCredentialQuotaExhausted,
-  setConnectionQuotaInfo,
-  setConnectionQuotaState,
 } from "~/lib/provider-connections"
-import { DEFAULTS } from "~/lib/provider-connections/types"
-import { liftRestAfterQuotaRecovery } from "~/lib/quota/recovery"
-import { clearAccountPacingState } from "~/lib/rate-limit"
+import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import { normalizeWindsurfBaseUrl } from "~/services/windsurf/base-url"
 import {
   buildWindsurfClientMetadata,
@@ -108,27 +104,10 @@ function toUsedPercent(remaining: number | undefined): number | undefined {
   return remaining === undefined ? undefined : Math.max(0, 100 - remaining)
 }
 
-/** 用尽窗口里最后的重置时刻（epoch ms）；没有可用信息时 undefined。 */
-function exhaustedWindowResetMs(
-  dailyRemainingPercent: number | undefined,
-  dailyResetSeconds: number | undefined,
-  weeklyRemainingPercent: number | undefined,
-  weeklyResetSeconds: number | undefined,
-): number | undefined {
-  const candidates: Array<number> = []
-  if (dailyRemainingPercent === 0 && dailyResetSeconds !== undefined) {
-    candidates.push(dailyResetSeconds * 1000)
-  }
-  if (weeklyRemainingPercent === 0 && weeklyResetSeconds !== undefined) {
-    candidates.push(weeklyResetSeconds * 1000)
-  }
-  return candidates.length > 0 ? Math.max(...candidates) : undefined
-}
-
 export async function fetchWindsurfQuota(
   connection: ProviderConnection,
   signal?: AbortSignal,
-): Promise<QuotaSnapshot> {
+): Promise<ProviderQuotaSnapshot> {
   if (getConnectionProvider(connection) !== "windsurf") {
     throw new Error("fetchWindsurfQuota requires a Windsurf connection")
   }
@@ -206,7 +185,38 @@ export async function fetchWindsurfQuota(
   return {
     fetchedAt: Date.now(),
     provider: "windsurf",
-    unlimited: remainingPercent === undefined,
+    unlimited: false,
+    allowance: {
+      state: remainingPercent === undefined ? "unknown" : "known",
+      windows: [
+        {
+          id: "daily",
+          usedPercent: parsed.dailyUsedPercent,
+          reset: parsed.dailyResetAt,
+          spanMs: 86_400_000,
+        },
+        {
+          id: "weekly",
+          usedPercent: parsed.weeklyUsedPercent,
+          reset: parsed.weeklyResetAt,
+          spanMs: 7 * 86_400_000,
+        },
+      ].flatMap((w) =>
+        w.usedPercent === undefined ?
+          []
+        : [
+            {
+              id: w.id,
+              used: w.usedPercent / 100,
+              remaining: 100 - w.usedPercent,
+              total: 100,
+              unit: "percent",
+              spanMs: w.spanMs,
+              resetsAtMs: w.reset === undefined ? undefined : w.reset * 1000,
+            },
+          ],
+      ),
+    },
     premiumInteractionsRemaining:
       remainingPercent !== undefined ? Math.round(remainingPercent) : undefined,
     details: {
@@ -223,50 +233,15 @@ export async function fetchWindsurfQuota(
 export async function refreshWindsurfQuota(
   connection: ProviderConnection,
   signal?: AbortSignal,
-): Promise<QuotaSnapshot> {
+): Promise<ProviderQuotaSnapshot> {
   const snapshot = await fetchWindsurfQuota(connection, signal)
-  setConnectionQuotaInfo(connection, snapshot)
-  const remaining = snapshot.premiumInteractionsRemaining
-  const exhausted = remaining !== undefined && remaining <= 0
-  setConnectionQuotaState(connection, exhausted ? "exhausted" : "available")
-  if (exhausted) {
-    // 恢复时间对齐到"用尽窗口"的重置时刻，而不是默认 24h 猜测（日额度的重置可能只有
-    // 几小时，猜 24h 会白白停摆）。夹在 1min~24h 之间，防上游字段异常把账号停摆过久。
-    // 窗口信息从 snapshot.details 读（refreshWindsurfQuota 不再持有解析中间量）。
-    const details = (snapshot.details ?? {}) as {
-      dailyUsedPercent?: number
-      weeklyUsedPercent?: number
-      dailyResetAt?: number
-      weeklyResetAt?: number
-    }
-    const windowRemaining = (used: number | undefined) =>
-      used === undefined ? undefined : Math.max(0, 100 - used)
-    const resetMs = exhaustedWindowResetMs(
-      windowRemaining(details.dailyUsedPercent),
-      details.dailyResetAt,
-      windowRemaining(details.weeklyUsedPercent),
-      details.weeklyResetAt,
-    )
-    const now = Date.now()
-    const recoveryMs =
-      resetMs === undefined ?
-        DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS
-      : Math.min(
-          Math.max(resetMs - now, 60_000),
-          DEFAULTS.QUOTA_EXHAUSTED_AUTO_RECOVERY_MS,
-        )
-    const credential = connection.credentials[0]
-    if (credential) {
-      markCredentialQuotaExhausted(
-        credential,
-        "windsurf quota exhausted",
-        recoveryMs,
-        now,
-      )
-    }
-  } else {
-    clearAccountPacingState(connection.id)
-    liftRestAfterQuotaRecovery(connection)
-  }
+  applyWindsurfQuotaSnapshot(connection, snapshot)
   return snapshot
+}
+
+export function applyWindsurfQuotaSnapshot(
+  connection: ProviderConnection,
+  snapshot: QuotaSnapshot,
+): void {
+  applyOAuthQuotaSnapshot(connection, snapshot)
 }

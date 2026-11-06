@@ -125,6 +125,7 @@ describe("CodeBuddy model discovery", () => {
     const credential = makeCredential()
     const connection = makeConnection(credential)
     const now = Date.now()
+    let balanceRestored = false
     const promotion = (id: string, schedule: Record<string, unknown>) => ({
       kind: "discount",
       modelIds: [id],
@@ -143,8 +144,8 @@ describe("CodeBuddy model discovery", () => {
                   Accounts: [
                     {
                       CycleCapacitySize: 100,
-                      CycleCapacityRemain: 0,
-                      CycleCapacityUsed: 100,
+                      CycleCapacityRemain: balanceRestored ? 100 : 0,
+                      CycleCapacityUsed: balanceRestored ? 0 : 100,
                     },
                   ],
                 },
@@ -258,7 +259,8 @@ describe("CodeBuddy model discovery", () => {
     ).toEqual([])
 
     // Balance restoration re-enables paid/unknown models, without changing prices.
-    setConnectionQuotaState(connection, "available")
+    balanceRestored = true
+    await refreshCodebuddyQuota(connection)
     clearRestRegistryForTest()
     expect(
       buildRouteTargets({
