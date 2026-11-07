@@ -37,11 +37,20 @@ tool_choice retains the caller's option or named function rather than always
 becoming auto. These are request contracts, not a guarantee that every model
 will generate semantically valid tool arguments.
 
-The native request has no structured response_format field. json_object and
-json_schema are rejected with LocalPayloadUnsupportedError before auth or
-upstream fetching, allowing existing same-model failover without credential
-cooldown. A Windsurf-only route returns 422; prompt instructions are not a
-substitute for a strict schema contract. Plain text remains supported.
+The inspected native request has no response_format field. The earlier local
+422 gate was an adapter limitation, not evidence that the model could not
+produce structured answers. `src/services/windsurf/structured-output.ts` now
+maps json_schema to a strict native output tool, collects its arguments, validates
+them with Ajv and returns JSON message.content rather than a tool call. json_object
+uses a strict string envelope and parses its JSON text: an unconstrained empty
+object tool schema produced {} in real SWE probes even with strict=false.
+Both formats validate before successful SSE or JSON is exposed; this deliberately
+buffers structured streaming responses. Ordinary streaming is unchanged.
+Existing real tools remain callable, including accompanying intermediate prose;
+only final answers or the synthetic output call are schema-validated. Named or
+required real tool choices are not replaced by the synthetic function.
+Invalid caller schemas fail with 400 before auth/fetch. Invalid model output
+fails with 502 rather than inventing missing query values or reporting success.
 
 ## Alternatives considered
 
@@ -63,9 +72,11 @@ target. The original live invalid_argument request had no stored body, so
 these confirmed defects do not prove which field caused that upstream failure.
 
 Silently omitting output caps or schemas can turn a bounded structured call
-into an unexpectedly long unconstrained generation. Rejecting unsupported
-formats is deliberate: it does not make schema-dependent callers work on
-Windsurf-only routes. Tool response normalization is separately owned by
+into an unexpectedly long unconstrained generation. A JSON prompt alone is not
+a strict schema contract: preserve native schema guidance plus local validation.
+Structured streaming trades incremental latency for validation before success;
+it retains the collector's memory bound and the existing signal/deadline path.
+No retries or fabricated arguments are added. Tool response normalization is separately owned by
 `2026-11-07-windsurf-tool-call-deltas.md`.
 
 ## Verification
@@ -79,11 +90,16 @@ Windsurf-only routes. Tool response normalization is separately owned by
 - `tests/windsurf-responses-translation.test.ts::Chat output caps and required tool schemas survive Windsurf encoding`
   verifies the final native limit, explicit-limit precedence, required query,
   strict flag and named tool choice through the real Chat route.
-- `tests/windsurf-responses-translation.test.ts::Windsurf rejects unsupported structured output before fetching without cooling credentials`
-  verifies 422 with zero fetches and a still-available route target.
-- `tests/windsurf-responses-translation.test.ts::structured Chat falls back from Windsurf without losing the schema`
-  verifies a compatible fallback receives the original schema and returns JSON
-  content rather than a native tool call, matching schema-based callers.
+- `tests/windsurf-responses-translation.test.ts::Windsurf structured output bridge returns validated`
+  verifies nested anyOf, nullable max_tokens and required query in both formats
+  and both response modes, with fragmented native arguments and no exposed
+  synthetic calls. json_object preserves arbitrary keys through its envelope.
+- `tests/windsurf-responses-translation.test.ts::Windsurf structured output rejects`
+  verifies missing query and malformed JSON fail before successful content/SSE.
+- `tests/windsurf-responses-translation.test.ts::Windsurf malformed structured schema fails before any fetch`
+  verifies invalid schemas return 400 with no auth or upstream request.
+- `tests/windsurf-responses-translation.test.ts::Windsurf structured output preserves real auto tool calls`
+  verifies real tool turns survive alongside structured final-answer capability.
 
 Proved: Before the role fix, both HTTP cases failed because developer text was
 present as a conversation prompt instead of system_prompt. Before the
@@ -102,3 +118,12 @@ Proved: Before the output-limit fix, the new Chat route regression received
 native max_tokens 64000 instead of its requested 123. After the fix the entire
 file passes (10 tests), and the 57-file affected run passes 677 tests. The natural
 red output is retained in `.agents/notes-evidence/windsurf-request-cap-red.log`.
+
+Proved: New valid-schema route tests run unchanged against the pre-bridge HEAD
+returned 422 instead of 200 in both modes. Evidence is retained in
+`.agents/notes-evidence/windsurf-structured-output-red.log`. The updated route
+file passes all 21 tests. Real SWE-2 Flash probes through the same bridge and a
+live upstream path passed 9/9 synthetic requests: nested tool-selection schema,
+forced-argument schema and json_object, each repeated three times including one
+streaming case. These are capability probes, not a replay of the private reflect
+history or proof that a multi-round agent always converges.

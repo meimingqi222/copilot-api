@@ -17,7 +17,7 @@ import {
 } from "~/lib/provider-connections"
 import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import { resetProtectedRouteGuardForTest } from "~/lib/protected-route-guard"
-import { buildRouteTargets } from "~/lib/route-target"
+import { buildRouteTargets, clearRestRegistryForTest } from "~/lib/route-target"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 import { cacheModels } from "~/lib/utils"
@@ -40,6 +40,7 @@ const originalDir = PATHS.APP_DIR
 const originalLogPersist = process.env.LOG_PERSIST
 let testDir: string
 let packets: Array<Array<ProtobufNode>>
+let structuredReply: string | undefined
 
 function fieldText(
   nodes: Array<ProtobufNode>,
@@ -120,9 +121,11 @@ beforeEach(async () => {
   redirectPathsToDir(testDir)
   __resetProviderConnectionsForTest()
   resetAdaptiveRateLimiterForTest()
+  clearRestRegistryForTest()
   resetProtectedRouteGuardForTest()
   clearDevinUserJwtCacheForTest()
   packets = []
+  structuredReply = undefined
   process.env.LOG_PERSIST = "0"
   state.legacyApiKey = undefined
   state.users = []
@@ -152,6 +155,23 @@ beforeEach(async () => {
         Bun.gunzipSync(Buffer.from(framed.subarray(5)))
       : framed.subarray(5)
     packets.push(parseMessage(bytes, 0, 6))
+    if (structuredReply !== undefined) {
+      const frames = [
+        structuredReply.slice(0, 8),
+        structuredReply.slice(8),
+      ].map((argumentsPart, index) => {
+        const call = new ProtobufEncoder()
+        call.writeString(1, "call_structured")
+        if (index === 0) call.writeString(2, "__structured_output")
+        call.writeString(3, argumentsPart)
+        const frame = new ProtobufEncoder()
+        frame.writeMessage(6, call)
+        return encodeConnectFrame(frame.toUint8Array(), false)
+      })
+      const trailer = encodeConnectFrame(new TextEncoder().encode("{}"), false)
+      trailer[0] = 2
+      return new Response(Buffer.concat([...frames, trailer]))
+    }
     const frame = new ProtobufEncoder()
     frame.writeString(9, "Synthetic reasoning")
     frame.writeString(3, "Synthetic answer")
@@ -179,6 +199,7 @@ afterEach(async () => {
   state.users = originalUsers
   __resetProviderConnectionsForTest()
   resetAdaptiveRateLimiterForTest()
+  clearRestRegistryForTest()
   clearDevinUserJwtCacheForTest()
   resetWindsurfConcurrencyForTest()
   statsStore.clearUsageStatsForTest()
@@ -262,51 +283,154 @@ test("Chat output caps and required tool schemas survive Windsurf encoding", asy
   }
 })
 
-test("Windsurf rejects unsupported structured output before fetching without cooling credentials", async () => {
-  let fetches = 0
-  globalThis.fetch = (async () => {
-    fetches++
-    throw new Error("unsupported payload must not reach upstream")
-  }) as unknown as typeof fetch
-  for (const response_format of [
-    { type: "json_object" },
-    {
-      type: "json_schema",
-      json_schema: {
-        name: "response",
-        strict: true,
-        schema: {
+const structuredSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["call"],
+  properties: {
+    call: {
+      anyOf: [
+        {
           type: "object",
           additionalProperties: false,
-          required: ["call"],
+          required: ["name", "arguments"],
           properties: {
-            call: {
-              anyOf: [
-                {
-                  type: "object",
-                  additionalProperties: false,
-                  required: ["name", "arguments"],
-                  properties: {
-                    name: { const: "search_observations" },
-                    arguments: {
-                      type: "object",
-                      additionalProperties: false,
-                      required: ["query", "max_tokens", "reason"],
-                      properties: {
-                        query: { type: "string" },
-                        max_tokens: { type: ["integer", "null"] },
-                        reason: { type: "string" },
-                      },
-                    },
-                  },
-                },
-              ],
+            name: { const: "search_observations" },
+            arguments: {
+              type: "object",
+              additionalProperties: false,
+              required: ["query", "max_tokens", "reason"],
+              properties: {
+                query: { type: "string" },
+                max_tokens: { type: ["integer", "null"] },
+                reason: { type: "string" },
+              },
             },
           },
         },
-      },
+        { type: "null" },
+      ],
     },
+  },
+}
+
+const schemaFormat = {
+  type: "json_schema",
+  json_schema: { name: "response", strict: true, schema: structuredSchema },
+}
+
+for (const stream of [false, true]) {
+  for (const type of ["json_schema", "json_object"]) {
+    test(`Windsurf structured output bridge returns validated ${type} content (stream=${stream})`, async () => {
+      const expected =
+        type === "json_schema" ?
+          '{ "call": {"name":"search_observations","arguments":{"query":"amethyst","max_tokens":null,"reason":"lookup"}}}'
+        : '{ "query": "amethyst", "nested": {"ok":true} }'
+      structuredReply =
+        type === "json_schema" ? expected : JSON.stringify({ json: expected })
+      const response = await server.request(
+        "http://localhost/v1/chat/completions",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "deepseek-v4-1-flash",
+            messages: [{ role: "user", content: "Return JSON" }],
+            response_format: type === "json_schema" ? schemaFormat : { type },
+            stream,
+          }),
+        },
+      )
+      expect(response.status).toBe(200)
+      const body = await response.text()
+      expect(body).not.toContain("__structured_output")
+      if (stream) {
+        expect(response.headers.get("content-type")).toContain(
+          "text/event-stream",
+        )
+        expect(body).toContain("data: [DONE]")
+        const chunks = body
+          .split("\n")
+          .filter(
+            (line) => line.startsWith("data: ") && line !== "data: [DONE]",
+          )
+          .map((line) => JSON.parse(line.slice(6)) as ChatCompletionChunk)
+        const choices = chunks.flatMap((chunk) => chunk.choices)
+        expect(
+          choices.map((choice) => choice.delta.content ?? "").join(""),
+        ).toBe(expected)
+        expect(
+          choices.every((choice) => !choice.delta.tool_calls?.length),
+        ).toBe(true)
+        expect(
+          choices
+            .filter((choice) => choice.finish_reason)
+            .map((choice) => choice.finish_reason),
+        ).toEqual(["stop"])
+      } else {
+        const result = JSON.parse(body) as ChatCompletionResponse
+        expect(result.choices[0].message.content).toBe(expected)
+        expect(result.choices[0].message.tool_calls?.length ?? 0).toBe(0)
+        expect(result.choices[0].finish_reason).toBe("stop")
+      }
+      expect(packets).toHaveLength(1)
+      const tools = packets[0].filter((node) => node.field === 10)
+      expect(tools).toHaveLength(1)
+      const tool = tools[0].sub!
+      expect(fieldText(tool, 1)).toBe("__structured_output")
+      expect(JSON.parse(fieldText(tool, 3)!)).toEqual(
+        type === "json_schema" ? structuredSchema : (
+          {
+            type: "object",
+            properties: {
+              json: {
+                type: "string",
+                description:
+                  "The complete JSON object answer, encoded as JSON text.",
+              },
+            },
+            required: ["json"],
+            additionalProperties: false,
+          }
+        ),
+      )
+      expect(tool.find((node) => node.field === 12)?.varint).toBe(1)
+      const choice = packets[0].find((node) => node.field === 12)!.sub!
+      expect(fieldText(choice, 2)).toBe("__structured_output")
+    })
+  }
+
+  for (const invalid of [
+    '{"call":{"name":"search_observations","arguments":{"max_tokens":null,"reason":"missing query"}}}',
+    '{"call":',
   ]) {
+    test(`Windsurf structured output rejects ${invalid.endsWith(":") ? "invalid JSON" : "missing required query"} before success (stream=${stream})`, async () => {
+      structuredReply = invalid
+      const response = await server.request(
+        "http://localhost/v1/chat/completions",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "deepseek-v4-1-flash",
+            messages: [{ role: "user", content: "Return JSON" }],
+            response_format: schemaFormat,
+            stream,
+          }),
+        },
+      )
+      expect(response.status).not.toBe(200)
+      expect(response.status).toBe(502)
+      const body = await response.text()
+      expect(body).not.toContain('"object":"chat.completion')
+      expect(body).not.toContain("data: [DONE]")
+      expect(body).not.toContain('"finish_reason":"stop"')
+      expect(packets).toHaveLength(1)
+    })
+  }
+
+  test(`Windsurf json_object rejects an array inside a valid envelope (stream=${stream})`, async () => {
+    structuredReply = JSON.stringify({ json: '["not an object"]' })
     const response = await server.request(
       "http://localhost/v1/chat/completions",
       {
@@ -315,70 +439,94 @@ test("Windsurf rejects unsupported structured output before fetching without coo
         body: JSON.stringify({
           model: "deepseek-v4-1-flash",
           messages: [{ role: "user", content: "Return JSON" }],
-          response_format,
+          response_format: { type: "json_object" },
+          stream,
         }),
       },
     )
-    expect(response.status).toBe(422)
-    expect(await response.text()).toContain("structured")
-  }
-  expect(fetches).toBe(0)
-  expect(
-    buildRouteTargets({
-      publicModelId: "deepseek-v4-1-flash",
-      endpoint: "chat",
-    }),
-  ).toHaveLength(1)
-})
-
-test("structured Chat falls back from Windsurf without losing the schema", async () => {
-  upsertProviderConnection({
-    ...structuredClone(connection),
-    id: "schema-fallback",
-    protocol: "openai-compatible",
-    baseUrl: "https://schema.test/v1",
-    priority: 99,
-    metadata: {},
+    expect(response.status).toBe(502)
+    expect(await response.text()).not.toContain("data: [DONE]")
   })
-  cacheModels()
-  const response_format = {
-    type: "json_schema",
-    json_schema: {
-      name: "response",
-      strict: true,
-      schema: {
-        type: "object",
-        properties: { query: { type: "string" } },
-        required: ["query"],
-        additionalProperties: false,
+
+  test(`Windsurf structured output preserves real auto tool calls (stream=${stream})`, async () => {
+    const response = await server.request(
+      "http://localhost/v1/chat/completions",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "deepseek-v4-1-flash",
+          messages: [
+            { role: "user", content: "Read a file before returning JSON" },
+          ],
+          response_format: schemaFormat,
+          stream,
+          tools: [
+            {
+              type: "function",
+              function: {
+                name: "functions__read_file",
+                parameters: {
+                  type: "object",
+                  properties: { path: { type: "string" } },
+                  required: ["path"],
+                },
+              },
+            },
+          ],
+          tool_choice: "auto",
+        }),
       },
-    },
-  }
-  let fetches = 0
-  globalThis.fetch = (async (input, init) => {
-    fetches++
-    expect(String(input)).toBe("https://schema.test/v1/chat/completions")
-    expect(JSON.parse(init!.body as string).response_format).toEqual(
-      response_format,
     )
-    return Response.json({
-      id: "schema-result",
-      object: "chat.completion",
-      created: 0,
-      model: "deepseek-v4-1-flash-high",
-      choices: [
-        {
-          index: 0,
-          finish_reason: "stop",
-          logprobs: null,
-          message: {
-            role: "assistant",
-            content: '{"query":"amethyst"}',
-          },
+    expect(response.status).toBe(200)
+    const body = await response.text()
+    expect(body).not.toContain("__structured_output")
+    if (stream) {
+      const chunks = body
+        .split("\n")
+        .filter((line) => line.startsWith("data: ") && line !== "data: [DONE]")
+        .map((line) => JSON.parse(line.slice(6)) as ChatCompletionChunk)
+      const choices = chunks.flatMap((chunk) => chunk.choices)
+      const calls = choices.flatMap((choice) => choice.delta.tool_calls ?? [])
+      expect(calls.map((call) => call.function?.name ?? "").join("")).toBe(
+        "functions__read_file",
+      )
+      expect(calls.map((call) => call.function?.arguments ?? "").join("")).toBe(
+        '{"path":"next.txt"}',
+      )
+      expect(choices.at(-1)?.finish_reason).toBe("tool_calls")
+    } else {
+      const result = JSON.parse(body) as ChatCompletionResponse
+      expect(result.choices[0].message.tool_calls?.[0]).toMatchObject({
+        id: "call_next",
+        type: "function",
+        function: {
+          name: "functions__read_file",
+          arguments: '{"path":"next.txt"}',
         },
-      ],
-    })
-  }) as typeof fetch
+      })
+      expect(result.choices[0].finish_reason).toBe("tool_calls")
+    }
+    expect(packets).toHaveLength(1)
+    expect(
+      packets[0]
+        .filter((node) => node.field === 10)
+        .map((node) => fieldText(node.sub!, 1)),
+    ).toEqual(
+      expect.arrayContaining(["functions__read_file", "__structured_output"]),
+    )
+    const choice = packets[0].find((node) => node.field === 12)!.sub!
+    expect(fieldText(choice, 1)).toBe("auto")
+    expect(fieldText(choice, 2)).toBeUndefined()
+  })
+}
+
+test("Windsurf malformed structured schema fails before any fetch", async () => {
+  let fetches = 0
+  globalThis.fetch = (async () => {
+    fetches++
+    throw new Error("malformed schema must not reach auth or upstream")
+  }) as unknown as typeof fetch
   const response = await server.request(
     "http://localhost/v1/chat/completions",
     {
@@ -386,15 +534,20 @@ test("structured Chat falls back from Windsurf without losing the schema", async
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         model: "deepseek-v4-1-flash",
-        messages: [{ role: "user", content: "Search for amethyst" }],
-        response_format,
+        messages: [{ role: "user", content: "Return JSON" }],
+        response_format: {
+          ...schemaFormat,
+          json_schema: {
+            ...schemaFormat.json_schema,
+            schema: { type: "not-a-json-schema-type" },
+          },
+        },
       }),
     },
   )
-  expect(response.status).toBe(200)
-  const result = (await response.json()) as ChatCompletionResponse
-  expect(result.choices[0].message.content).toBe('{"query":"amethyst"}')
-  expect(fetches).toBe(1)
+  expect(response.status).toBe(400)
+  expect(fetches).toBe(0)
+  expect(packets).toHaveLength(0)
 })
 
 loopbackTest(

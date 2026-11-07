@@ -39,6 +39,12 @@ Chat 的翻译候选按 Responses、Messages 顺序尝试。候选的语义拒�
 `responses/sse-collector.ts`），IR 不设通用 collector。usage、stop reason 和 error 保留来源信息，
 缺失计数不能假装成精确的 0。
 
+Windsurf 的结构化输出是 adapter 内的特例：它把 `response_format` 映射为
+原生工具 Schema，再把工具参数转回 JSON 内容并执行本地 Schema 校验。
+这一路径有意缓冲到校验完成才输出 SSE，避免不合约束的 JSON 已作为成功
+内容送出；普通文本和普通工具流不受影响。`json_object` 用字符串 envelope
+承载任意 JSON 对象，不能用空工具 Schema 代替，否则 SWE 会返回空对象。
+
 reasoning 的三个顶层别名 `reasoning_text`、`reasoning_content`、`reasoning`
 按相同优先级读取；空字符串视为缺失。已由别名提供的文本，不再从 details 或
 content parts 重复拼接。多个带签名 thinking 块保持独立，签名只用于其原文。

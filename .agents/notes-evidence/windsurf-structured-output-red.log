@@ -1,0 +1,62 @@
+Baseline: git HEAD source snapshot, new route regression copied unchanged.
+bun test v1.4.4 (38afee6c8)
+
+tests/windsurf-responses-translation.test.ts:
+<-- POST /v1/chat/completions
+[error] Error occurred: Windsurf does not support structured response_format (json_object or json_schema)
+  at createWindsurfChatCompletionsOnce (src/services/windsurf/create-chat-completions.ts:659:15)
+  at <anonymous> (src/services/protocols/once-adapter.ts:71:30)
+  at <anonymous> (src/services/protocols/registry.ts:82:34)
+  at run (node:async_hooks:144:29)
+  at withStreamDiagnosticAttempt (src/lib/stream-diagnostics.ts:517:30)
+  at execute (src/services/dispatch/shared.ts:416:7)
+  at run (node:async_hooks:144:29)
+  at executeWithFailover (src/services/dispatch/failover.ts:296:30)
+[error] HTTP error: Windsurf does not support structured response_format (json_object or json_schema)
+--> POST /v1/chat/completions 422 13ms
+338 |             response_format: type === "json_schema" ? schemaFormat : { type },
+339 |             stream,
+340 |           }),
+341 |         },
+342 |       )
+343 |       expect(response.status).toBe(200)
+                                    ^
+error: expect(received).toBe(expected)
+
+Expected: 200
+Received: 422
+
+      at <anonymous> (<HOME>/Developer/amp-workspace/copilot-api/temp/windsurf-structured-baseline-agetWa/tests/windsurf-responses-translation.test.ts:343:31)
+(fail) Windsurf structured output bridge returns validated json_schema content (stream=false) [38.38ms]
+<-- POST /v1/chat/completions
+[error] Error occurred: Windsurf does not support structured response_format (json_object or json_schema)
+  at createWindsurfChatCompletionsOnce (src/services/windsurf/create-chat-completions.ts:659:15)
+  at <anonymous> (src/services/protocols/once-adapter.ts:71:30)
+  at <anonymous> (src/services/protocols/registry.ts:82:34)
+  at run (node:async_hooks:144:29)
+  at withStreamDiagnosticAttempt (src/lib/stream-diagnostics.ts:517:30)
+  at execute (src/services/dispatch/shared.ts:416:7)
+  at run (node:async_hooks:144:29)
+  at executeWithFailover (src/services/dispatch/failover.ts:296:30)
+[error] HTTP error: Windsurf does not support structured response_format (json_object or json_schema)
+--> POST /v1/chat/completions 422 2ms
+338 |             response_format: type === "json_schema" ? schemaFormat : { type },
+339 |             stream,
+340 |           }),
+341 |         },
+342 |       )
+343 |       expect(response.status).toBe(200)
+                                    ^
+error: expect(received).toBe(expected)
+
+Expected: 200
+Received: 422
+
+      at <anonymous> (<HOME>/Developer/amp-workspace/copilot-api/temp/windsurf-structured-baseline-agetWa/tests/windsurf-responses-translation.test.ts:343:31)
+(fail) Windsurf structured output bridge returns validated json_schema content (stream=true) [9.63ms]
+
+ 0 pass
+ 17 filtered out
+ 2 fail
+ 2 expect() calls
+Ran 2 tests across 1 file. [249.00ms]

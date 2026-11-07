@@ -11,7 +11,7 @@ import type {
 } from "~/services/protocols/chat/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
-import { HTTPError, LocalPayloadUnsupportedError } from "~/lib/error"
+import { HTTPError } from "~/lib/error"
 import { currentLogContext } from "~/lib/log-context"
 import { WindsurfAttemptDiagnostics } from "~/services/windsurf/diagnostics"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
@@ -62,6 +62,7 @@ import {
   parseChatStreamFrame,
 } from "./response-parsers"
 import { resolveWindsurfRuntimeSettings } from "./settings"
+import { createWindsurfStructuredOutput } from "~/services/windsurf/structured-output"
 import {
   primeWindsurfStream,
   WindsurfFirstFrameTimeoutError,
@@ -656,8 +657,15 @@ export async function createWindsurfChatCompletionsOnce(
     payload.response_format?.type === "json_object"
     || payload.response_format?.type === "json_schema"
   ) {
-    throw new LocalPayloadUnsupportedError(
-      "Windsurf does not support structured response_format (json_object or json_schema)",
+    return createWindsurfStructuredOutput(
+      payload,
+      async (nativePayload) =>
+        (await createWindsurfChatCompletionsOnce(
+          { connection, credential },
+          nativePayload,
+          signal,
+          ctx,
+        )) as ChatCompletionResponse,
     )
   }
   const settings = resolveWindsurfRuntimeSettings(connection, credential)
