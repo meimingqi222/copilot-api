@@ -29,6 +29,17 @@ const logger = createLogger("auth")
 const DEFAULT_REFRESH_LEAD_MS = 5 * 60 * 1000
 const INITIAL_RETRY_DELAY_MS = 60_000
 const MAX_RETRY_DELAY_MS = 30 * 60 * 1000
+/**
+ * `setTimeout` 的延迟是 32 位有符号整数。有效期 30 天的 token 会算出
+ * 25.8 亿毫秒，运行时把它截成 1ms 并抛 `TimeoutOverflowWarning`，
+ * 长期有效的凭据于是被立刻刷新一次。分段续排即可。
+ */
+export const MAX_TIMER_DELAY_MS = 2_147_483_647
+
+/** 把任意延迟收进 `setTimeout` 能表达的范围，并保留 1 秒下限。 */
+export function timerDelayFor(delayMs: number): number {
+  return Math.min(Math.max(delayMs, 1_000), MAX_TIMER_DELAY_MS)
+}
 
 const oauthRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const oauthRetryCounts = new Map<string, number>()
@@ -198,64 +209,72 @@ function scheduleOAuthRefreshAttempt(
 ): void {
   cancelOAuthRefreshTimer(accountId)
 
-  const timer = setTimeout(
-    () => {
-      void (async () => {
-        const connection = getMutableProviderConnection(accountId)
-        // Disabled accounts still get token refresh — disabling only removes
-        // them from request routing, not from token lifecycle.
-        if (!connection || !getOAuthConnectionProvider(connection)) {
-          cancelOAuthRefreshTimer(accountId)
-          oauthRetryCounts.delete(accountId)
+  const timer = setTimeout(() => {
+    void (async () => {
+      // 上游给的有效期超过 setTimeout 上限时，到点续排剩余时间，
+      // 而不是让运行时把延迟截成 1ms 提前刷新。
+      if (delayMs > MAX_TIMER_DELAY_MS) {
+        scheduleOAuthRefreshAttempt(
+          accountId,
+          delayMs - MAX_TIMER_DELAY_MS,
+          reason,
+        )
+        return
+      }
+
+      const connection = getMutableProviderConnection(accountId)
+      // Disabled accounts still get token refresh — disabling only removes
+      // them from request routing, not from token lifecycle.
+      if (!connection || !getOAuthConnectionProvider(connection)) {
+        cancelOAuthRefreshTimer(accountId)
+        oauthRetryCounts.delete(accountId)
+        return
+      }
+
+      try {
+        await runJob(
+          `oauth-refresh:${accountId}`,
+          () => refreshOAuthConnectionToken(connection, reason),
+          {
+            label: `OAuth token refresh · ${connection.name}`,
+            connectionId: accountId,
+          },
+        )
+        // Success — reset retry count
+        oauthRetryCounts.delete(accountId)
+      } catch (error: unknown) {
+        // Check if this is a terminal (permanent) error
+        if (isOAuthTerminalError(error)) {
+          await markOAuthConnectionAuthError(
+            connection,
+            `Terminal OAuth error: ${error instanceof Error ? error.message : String(error)}`,
+          )
           return
         }
 
-        try {
-          await runJob(
-            `oauth-refresh:${accountId}`,
-            () => refreshOAuthConnectionToken(connection, reason),
-            {
-              label: `OAuth token refresh · ${connection.name}`,
-              connectionId: accountId,
-            },
-          )
-          // Success — reset retry count
-          oauthRetryCounts.delete(accountId)
-        } catch (error: unknown) {
-          // Check if this is a terminal (permanent) error
-          if (isOAuthTerminalError(error)) {
-            await markOAuthConnectionAuthError(
-              connection,
-              `Terminal OAuth error: ${error instanceof Error ? error.message : String(error)}`,
-            )
-            return
-          }
-
-          // Transient network/server failures must not permanently revoke an
-          // otherwise recoverable credential. Keep retrying with capped
-          // exponential backoff; only explicit OAuth terminal errors above
-          // require a new login.
-          const retryCount = (oauthRetryCounts.get(accountId) ?? 0) + 1
-          oauthRetryCounts.set(accountId, retryCount)
-          const backoffMs = Math.min(
-            INITIAL_RETRY_DELAY_MS * Math.pow(2, retryCount - 1),
-            MAX_RETRY_DELAY_MS,
-          )
-          logger.warn(
-            `OAuth refresh failed for "${connection.name}" (attempt ${retryCount}), `
-              + `retrying in ${backoffMs / 1000}s:`,
-            error,
-          )
-          scheduleOAuthRefreshAttempt(accountId, backoffMs, "retry")
-        }
-      })()
-    },
-    Math.max(delayMs, 1_000),
-  )
+        // Transient network/server failures must not permanently revoke an
+        // otherwise recoverable credential. Keep retrying with capped
+        // exponential backoff; only explicit OAuth terminal errors above
+        // require a new login.
+        const retryCount = (oauthRetryCounts.get(accountId) ?? 0) + 1
+        oauthRetryCounts.set(accountId, retryCount)
+        const backoffMs = Math.min(
+          INITIAL_RETRY_DELAY_MS * Math.pow(2, retryCount - 1),
+          MAX_RETRY_DELAY_MS,
+        )
+        logger.warn(
+          `OAuth refresh failed for "${connection.name}" (attempt ${retryCount}), `
+            + `retrying in ${backoffMs / 1000}s:`,
+          error,
+        )
+        scheduleOAuthRefreshAttempt(accountId, backoffMs, "retry")
+      }
+    })()
+  }, timerDelayFor(delayMs))
 
   oauthRefreshTimers.set(accountId, timer)
   describeJob(`oauth-refresh:${accountId}`, {
-    nextRunAt: Date.now() + Math.max(delayMs, 1_000),
+    nextRunAt: Date.now() + timerDelayFor(delayMs),
   })
 }
 
