@@ -1,8 +1,10 @@
 import { defineProviderMetadata } from "~/lib/provider-descriptors/metadata"
+import { providerMetadata as qoderMetadata } from "~/lib/provider-descriptors/qoder"
 
 export const providerMetadata = defineProviderMetadata({
   protocol: "qoder-native",
   oauth: true,
+  credentials: qoderMetadata.credentials,
   descriptor: {
     id: "qoder-cn",
     presentation: {

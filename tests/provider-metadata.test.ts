@@ -88,6 +88,27 @@ describe("pure provider metadata", () => {
     expect(PROVIDER_METADATA["commandcode-plan"].planBased).toBe(true)
   })
 
+  test("required credential context is automatically portable", () => {
+    const entry = defineProviderMetadata({
+      protocol: "example-native",
+      oauth: true,
+      credentials: {
+        primaryKey: "accessToken",
+        requiredContextKeys: ["machineId"],
+      },
+      descriptor: {
+        id: "example",
+        name: "Example",
+        icon: "example",
+        authMode: "oauth",
+        accountFields: [],
+        features: ["oauth"],
+      },
+    })
+    expect(entry.credentials?.contextStringKeys).toContain("machineId")
+    expect(entry.credentials?.contextStringKeys).toContain("refreshToken")
+  })
+
   // Routing and the pacing limiter read this feature instead of matching the
   // protocol id, so dropping it would silently disable model-scoped rest.
   test("every CodeBuddy domain declares model-scoped quota", () => {

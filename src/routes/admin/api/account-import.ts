@@ -410,6 +410,17 @@ importAccountRoutes.post("/import", async (c) => {
     const provider: ProviderId =
       isProviderId(providerStr) ? providerStr : "copilot"
 
+    const missingContext = (
+      PROVIDER_METADATA[provider].credentials?.requiredContextKeys ?? []
+    ).filter((key) => !credentialString(raw, key))
+    if (missingContext.length > 0) {
+      failed.push({
+        label,
+        reason: `Missing ${missingContext.join(", ")} in credentials. Re-authenticate the source account and export it again.`,
+      })
+      continue
+    }
+
     // 检查是否存在同 label+provider 的 connection
     const duplicate = listAccountManagedConnections().find((conn) => {
       const connProvider = accountManagedProvider(conn)

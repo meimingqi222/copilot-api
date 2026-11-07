@@ -1,0 +1,84 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/qoder-provider.test.ts:
+240 | 
+241 |     const models = await qoderNativeAdapter.discoverModels?.({
+242 |       connection: makeConnection(),
+243 |       credential: makeCredential(),
+244 |     })
+245 |     expect(models?.map((model) => model.publicId)).toEqual(["lmodel"])
+                                                         ^
+error: expect(received).toEqual(expected)
+
+  [
+-   "lmodel",
++   "claude-sonnet-4-6",
+  ]
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (<repo>/tests/qoder-provider.test.ts:245:52)
+(fail) qoderNativeAdapter.discoverModels > uses app models and their configuration instead of the chat scene [26.48ms]
+248 |     expect(models?.[0]?.metadata?.qoderSource).toBe("system")
+249 |     expect(models?.[0]?.metadata?.contextWindow).toBe(180000)
+250 |   })
+251 | 
+252 |   test("an empty app scene does not resurrect chat models", () => {
+253 |     expect(parseQoderModelList({ ...MODEL_LIST, app: [] })).toEqual([])
+                                                                  ^
+error: expect(received).toEqual(expected)
+
+- []
++ [
++   {
++     "alwaysThinks": true,
++     "config": {
++       "display_name": "Claude Sonnet 4.6",
++       "enable": true,
++       "is_reasoning": true,
++       "is_vl": true,
++       "key": "claude-sonnet-4-6",
++       "max_input_tokens": 200000,
++       "source": "anthropic",
++       "thinking_config": {
++         "enabled": {
++           "efforts": {
++             "high": {},
++             "low": {},
++             "medium": {
++               "is_default": true,
++             },
++           },
++         },
++       },
++     },
++     "defaultEffort": "medium",
++     "displayName": "Claude Sonnet 4.6",
++     "efforts": [
++       "low",
++       "medium",
++       "high",
++     ],
++     "free": false,
++     "isVl": true,
++     "key": "claude-sonnet-4-6",
++     "maxInputTokens": 200000,
++     "rate": 0,
++     "rateWas": 0,
++     "source": "anthropic",
++     "thinks": true,
++   },
++ ]
+
+- Expected  - 1
++ Received  + 40
+
+      at <anonymous> (<repo>/tests/qoder-provider.test.ts:253:61)
+(fail) qoderNativeAdapter.discoverModels > an empty app scene does not resurrect chat models [1.46ms]
+
+ 0 pass
+ 21 filtered out
+ 2 fail
+ 2 expect() calls
+Ran 2 tests across 1 file. [447.00ms]

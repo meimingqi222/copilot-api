@@ -226,6 +226,33 @@ describe("detectQoderStreamError", () => {
 // ── 模型发现 ────────────────────────────────────────────────────────
 
 describe("qoderNativeAdapter.discoverModels", () => {
+  test("uses app models and their configuration instead of the chat scene", async () => {
+    const appModel = {
+      ...MODEL_LIST.chat[0],
+      key: "lmodel",
+      source: "system",
+      display_name: "QoDuck",
+      max_input_tokens: 180000,
+    }
+    globalThis.fetch = mock(() =>
+      Promise.resolve(jsonResponse({ ...MODEL_LIST, app: [appModel] })),
+    ) as unknown as typeof fetch
+
+    const models = await qoderNativeAdapter.discoverModels?.({
+      connection: makeConnection(),
+      credential: makeCredential(),
+    })
+    expect(models?.map((model) => model.publicId)).toEqual(["lmodel"])
+    expect(models?.[0]?.name).toBe("QoDuck")
+    expect(models?.[0]?.metadata?.qoderModelConfig).toEqual(appModel)
+    expect(models?.[0]?.metadata?.qoderSource).toBe("system")
+    expect(models?.[0]?.metadata?.contextWindow).toBe(180000)
+  })
+
+  test("an empty app scene does not resurrect chat models", () => {
+    expect(parseQoderModelList({ ...MODEL_LIST, app: [] })).toEqual([])
+  })
+
   test("maps model/list into chat mappings with config metadata", async () => {
     const seen: Array<{ url: string; headers: Record<string, string> }> = []
     globalThis.fetch = mock(

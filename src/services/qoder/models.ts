@@ -3,7 +3,7 @@
  *
  * Qoder 没有静态模型表：登录后用 `GET /algo/api/v2/model/list?Encode=1` 实时拉取：
  *
- *   { chat: [ { key, source, enable, display_name, is_vl, is_reasoning,
+ *   { app: [ { key, source, enable, display_name, is_vl, is_reasoning,
  *               max_input_tokens, thinking_config: { enabled: { efforts: {
  *                 <name>: { is_default } } }, disabled? } } ] }
  *
@@ -179,14 +179,15 @@ function isRoutableQoderModel(key: string): boolean {
   return trimmed !== "" && trimmed !== "auto" && trimmed !== "default"
 }
 
-/** 解析 model/list 文档，只保留启用且可路由的 chat 模型。 */
+/** 与推理的 app 场景一致；旧版响应缺少 app 时才回退到 chat。 */
 export function parseQoderModelList(raw: unknown): Array<QoderModelEntry> {
-  const chat = asRecord(raw)?.chat
-  if (!Array.isArray(chat)) {
+  const listing = asRecord(raw)
+  const models = listing?.app ?? listing?.chat
+  if (!Array.isArray(models)) {
     throw new Error("Qoder: invalid models response")
   }
   const out: Array<QoderModelEntry> = []
-  for (const item of chat) {
+  for (const item of models) {
     const entry = asRecord(item)
     if (!entry) continue
     const key = stringOr(entry.key).trim()

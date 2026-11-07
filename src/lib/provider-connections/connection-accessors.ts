@@ -103,6 +103,9 @@ export function connectionHasCredentials(conn: ProviderConnection): boolean {
     isOAuthProviderId(provider) && getCredentialContextString(conn, "apiKey")
   return (
     Boolean(primary || alternate)
+    && (schema.requiredContextKeys ?? []).every((key) =>
+      Boolean(getCredentialContextString(conn, key)?.trim()),
+    )
     && (schema.requiredExtras ?? []).every((key) =>
       Boolean(getCredentialExtraString(conn, key)),
     )

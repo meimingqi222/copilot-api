@@ -19,6 +19,13 @@ Provider 随应用编译、发布，通过 `services/providers/modules/<id>.ts` 
   和固定导出字段；OAuth 分类默认主字段为 `accessToken`。连接构造、凭据存在性
   和导出共用此描述，不再各加一份 Provider 分支。Copilot 的 GitHub 刷新源与
   运行态 JWT 仍区分处理，凭据存在不等于当前可发送或额度可用。
+  OAuth 的额外可迁移字段由 `contextStringKeys` / `contextValueKeys` 声明；
+  必需的非空身份字符串由 `requiredContextKeys` 声明，并自动纳入可迁移字段。
+  标准账号导入在覆盖旧账号前验证这些必需字段，凭据存在性判断也读取同一声明。
+  同一服务的不同账号域应共享凭据描述，避免某个地区遗漏设备身份或刷新字段。
+  新增 Provider 时，除通用声明字段往返测试外，还应使用真实登录 bundle 的形状
+  测试「应用 bundle → 导出 → 标准导入 → 请求身份读取」；通用测试无法发现
+  根本未声明的字段。不要为避免遗漏而导出整个内部 context。
 - `services/providers/module.ts`：模块契约与注册前校验。
 - `services/providers/modules/`：各家的 adapter、runtime 工厂、登录策略、
   OAuth 凭证刷新、提前刷新时间、模型发现、fallback 目录与额度拉取。

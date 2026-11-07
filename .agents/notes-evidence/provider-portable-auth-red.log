@@ -1,0 +1,282 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/admin-account-import.test.ts:
+<-- POST /admin/api/accounts/import
+[warn] Import: failed to init quota for "qoder-device": Qoder usage request failed (HTTP 404)
+  at fetchQoderQuota (src/lib/quota/fetchers/qoder.ts:259:15)
+--> POST /admin/api/accounts/import 200 12ms
+464 |   expect(context.uid).toBe("uid-1")
+465 |   expect(context.machineId).toBe("machine-1")
+466 |   expect(context.deviceToken).toBe("device-token")
+467 |   expect(context.deviceRefreshToken).toBe("device-refresh")
+468 |   expect(context.chatTokenKind).toBe("device")
+469 |   expect(qoderUserFromConnection(restored)).toEqual({
+                                                  ^
+error: expect(received).toEqual(expected)
+
+  {
+    "deviceRefreshToken": "device-refresh",
+    "deviceToken": "device-token",
+    "email": "qoder@example.com",
+    "machineId": "machine-1",
+-   "name": "Qoder Test User",
++   "name": "",
+    "uid": "uid-1",
+  }
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (<repo>/tests/admin-account-import.test.ts:469:45)
+(fail) qoder export/import preserves the device identity used for COSY signing [65.58ms]
+444 |     chatTokenKind: "device",
+445 |     name: "Qoder Test User",
+446 |     email: "qoder@example.com",
+447 |   })
+448 |   const exported = serializeConnectionForExport(original)
+449 |   expect(exported.credentials).toMatchObject({
+                                     ^
+error: expect(received).toMatchObject(expected)
+
+  {
+-   "chatTokenKind": "device",
+-   "deviceRefreshToken": "device-refresh",
+-   "deviceToken": "device-token",
+-   "machineId": "machine-1",
+-   "uid": "uid-1",
++   "accessToken": "job-token",
++   "email": "qoder@example.com",
++   "expiresAt": 1794072823413,
++   "name": "Qoder Test User",
++   "refreshToken": "job-refresh",
+  }
+
+- Expected  - 5
++ Received  + 5
+
+      at <anonymous> (<repo>/tests/admin-account-import.test.ts:449:32)
+(fail) qoder-cn export/import preserves the device identity used for COSY signing [1.65ms]
+<-- POST /admin/api/accounts/import
+[warn] Import: failed to init quota for "keep-original": Qoder usage is unavailable: the saved sign-in carries no device token — sign in again to see usage
+  at fetchQoderQuota (src/lib/quota/fetchers/qoder.ts:223:15)
+  at fetchOAuthProviderQuota (src/lib/quota/index.ts:35:46)
+  at async refreshProviderQuota (src/lib/quota/refresh.ts:62:26)
+--> POST /admin/api/accounts/import 200 2ms
+<-- POST /admin/api/accounts/import
+[warn] Import: failed to init quota for "keep-original": Qoder usage is unavailable: the saved sign-in carries no device token — sign in again to see usage
+  at fetchQoderQuota (src/lib/quota/fetchers/qoder.ts:223:15)
+  at fetchOAuthProviderQuota (src/lib/quota/index.ts:35:46)
+  at async refreshProviderQuota (src/lib/quota/refresh.ts:62:26)
+--> POST /admin/api/accounts/import 200 1ms
+488 |     delete credentials[missing]
+489 |     const response = await adminJson("http://localhost/admin/api/accounts/import", {
+490 |       method: "POST", body: JSON.stringify({ accounts: [{ provider, label: "keep-original", credentials }], overwrite: true }),
+491 |     })
+492 |     const body = await response.json() as { imported: number; failed: number; details: { failed: Array<{ reason: string }> } }
+493 |     expect(body.imported).toBe(0)
+                                ^
+error: expect(received).toBe(expected)
+
+Expected: 0
+Received: 1
+
+      at <anonymous> (<repo>/tests/admin-account-import.test.ts:493:27)
+(fail) qoder rejects incomplete signing identities before overwriting an account [5.16ms]
+<-- POST /admin/api/accounts/import
+[warn] Import: failed to init quota for "keep-original": Qoder usage is unavailable: the saved sign-in carries no device token — sign in again to see usage
+  at fetchQoderQuota (src/lib/quota/fetchers/qoder.ts:223:15)
+  at fetchOAuthProviderQuota (src/lib/quota/index.ts:35:46)
+  at async refreshProviderQuota (src/lib/quota/refresh.ts:62:26)
+--> POST /admin/api/accounts/import 200 1ms
+<-- POST /admin/api/accounts/import
+[warn] Import: failed to init quota for "keep-original": Qoder usage is unavailable: the saved sign-in carries no device token — sign in again to see usage
+  at fetchQoderQuota (src/lib/quota/fetchers/qoder.ts:223:15)
+  at fetchOAuthProviderQuota (src/lib/quota/index.ts:35:46)
+  at async refreshProviderQuota (src/lib/quota/refresh.ts:62:26)
+--> POST /admin/api/accounts/import 200 1ms
+488 |     delete credentials[missing]
+489 |     const response = await adminJson("http://localhost/admin/api/accounts/import", {
+490 |       method: "POST", body: JSON.stringify({ accounts: [{ provider, label: "keep-original", credentials }], overwrite: true }),
+491 |     })
+492 |     const body = await response.json() as { imported: number; failed: number; details: { failed: Array<{ reason: string }> } }
+493 |     expect(body.imported).toBe(0)
+                                ^
+error: expect(received).toBe(expected)
+
+Expected: 0
+Received: 1
+
+      at <anonymous> (<repo>/tests/admin-account-import.test.ts:493:27)
+(fail) qoder-cn rejects incomplete signing identities before overwriting an account [3.24ms]
+<-- POST /admin/api/accounts/import
+[warn] Import: failed to init quota for "portable-codex": Codex quota request failed (404): {}
+  at fetchCodexUsagePayload (src/lib/quota/codex.ts:623:15)
+  at async fetchCodexQuota (src/lib/quota/fetchers/codex.ts:109:25)
+(node:15844) TimeoutOverflowWarning: 105844376577 does not fit into a 32-bit signed integer.
+Timeout duration was set to 1.
+(Use `bun --trace-warnings ...` to show where the warning was created)
+[warn] OAuth refresh failed for "portable-codex" (attempt 1), retrying in 60s: Codex token refresh failed (404): {}
+  at postOAuthTokenForm (src/services/oauth/token-response.ts:75:15)
+  at async refreshCodexTokens (src/services/oauth/codex.ts:124:11)
+  at async <anonymous> (src/services/providers/modules/codex.ts:63:26)
+  at async <anonymous> (src/services/providers/auth-update.ts:61:11)
+  at async <anonymous> (src/services/oauth/refresh-strategies.ts:22:34)
+  at async refreshOAuthConnectionTokenOnce (src/services/oauth/refresh-scheduler.ts:316:36)
+--> POST /admin/api/accounts/import 200 9ms
+(pass) codex declared portable credential fields survive the account import API [10.40ms]
+<-- POST /admin/api/accounts/import
+[warn] Import: failed to init quota for "portable-claude": Claude quota request failed (404): {}
+  at fetchQuotaByDescriptor (src/lib/quota/fetch-engine.ts:45:15)
+(node:15844) TimeoutOverflowWarning: 105916376566 does not fit into a 32-bit signed integer.
+Timeout duration was set to 1.
+[warn] OAuth refresh failed for "portable-claude" (attempt 1), retrying in 60s: Claude token refresh failed (404): {}
+  at refreshClaudeTokens (src/services/oauth/claude.ts:201:15)
+  at async <anonymous> (src/services/providers/modules/claude.ts:69:26)
+  at async <anonymous> (src/services/providers/auth-update.ts:61:11)
+  at async <anonymous> (src/services/oauth/refresh-strategies.ts:22:34)
+  at async refreshOAuthConnectionTokenOnce (src/services/oauth/refresh-scheduler.ts:316:36)
+--> POST /admin/api/accounts/import 200 2ms
+(pass) claude declared portable credential fields survive the account import API [3.55ms]
+<-- POST /admin/api/accounts/import
+[warn] Import: failed to init quota for "portable-antigravity": Antigravity quota request failed (404): {}
+  at fetchAntigravityQuotaSummary (src/lib/quota/fetchers/antigravity.ts:179:13)
+  at async fetchAntigravityQuota (src/lib/quota/fetchers/antigravity.ts:119:43)
+(node:15844) TimeoutOverflowWarning: 105930476563 does not fit into a 32-bit signed integer.
+Timeout duration was set to 1.
+[warn] OAuth refresh failed for "portable-antigravity" (attempt 1), retrying in 60s: Antigravity token request failed (404): {}
+  at postOAuthTokenForm (src/services/oauth/token-response.ts:75:15)
+--> POST /admin/api/accounts/import 200 2ms
+(pass) antigravity declared portable credential fields survive the account import API [3.13ms]
+<-- POST /admin/api/accounts/import
+[warn] Import: failed to init quota for "portable-kimi": Kimi quota request failed (404): {}
+  at fetchQuotaByDescriptor (src/lib/quota/fetch-engine.ts:45:15)
+(node:15844) TimeoutOverflowWarning: 105930476560 does not fit into a 32-bit signed integer.
+Timeout duration was set to 1.
+--> POST /admin/api/accounts/import 200 1ms
+(pass) kimi declared portable credential fields survive the account import API [2.13ms]
+<-- POST /admin/api/accounts/import
+[warn] Import: failed to init quota for "portable-xai": xAI quota request failed (404): {}
+  at fetchXaiQuota (src/lib/quota/fetchers/xai.ts:117:15)
+(node:15844) TimeoutOverflowWarning: 105930476558 does not fit into a 32-bit signed integer.
+Timeout duration was set to 1.
+[warn] OAuth refresh failed for "portable-xai" (attempt 1), retrying in 60s: xAI OAuth discovery failed (404): {}
+  at discoverXaiOAuthEndpoints (src/services/oauth/xai.ts:72:15)
+  at async resolveTokenEndpoint (src/services/oauth/xai.ts:215:27)
+  at async refreshXaiTokens (src/services/oauth/xai.ts:183:26)
+  at async <anonymous> (src/services/providers/modules/xai.ts:64:26)
+  at async <anonymous> (src/services/providers/auth-update.ts:61:11)
+  at async <anonymous> (src/services/oauth/refresh-strategies.ts:22:34)
+  at async refreshOAuthConnectionTokenOnce (src/services/oauth/refresh-scheduler.ts:316:36)
+--> POST /admin/api/accounts/import 200 2ms
+(pass) xai declared portable credential fields survive the account import API [3.07ms]
+<-- POST /admin/api/accounts/import
+[warn] Import: failed to init quota for "portable-minimax": MiniMax quota request failed on every candidate host (https://api.minimax.cn: HTTP 404; https://api.minimaxi.com: HTTP 404)
+  at fetchMinimaxQuota (src/lib/quota/fetchers/minimax.ts:670:13)
+(node:15844) TimeoutOverflowWarning: 105930476555 does not fit into a 32-bit signed integer.
+Timeout duration was set to 1.
+--> POST /admin/api/accounts/import 200 1ms
+(pass) minimax declared portable credential fields survive the account import API [2.39ms]
+<-- POST /admin/api/accounts/import
+[warn] Import: failed to init quota for "portable-qoder": Qoder usage request failed (HTTP 404)
+  at fetchQoderQuota (src/lib/quota/fetchers/qoder.ts:259:15)
+(node:15844) TimeoutOverflowWarning: 105930476552 does not fit into a 32-bit signed integer.
+Timeout duration was set to 1.
+[warn] OAuth refresh failed for "portable-qoder" (attempt 1), retrying in 60s: Qoder job token refresh failed (404)
+  at refreshQoderJobToken (src/services/oauth/qoder.ts:263:15)
+  at async <anonymous> (src/services/providers/modules/qoder.ts:141:23)
+  at async <anonymous> (src/services/providers/auth-update.ts:61:11)
+  at async <anonymous> (src/services/oauth/refresh-strategies.ts:22:34)
+  at async refreshOAuthConnectionTokenOnce (src/services/oauth/refresh-scheduler.ts:316:36)
+--> POST /admin/api/accounts/import 200 2ms
+(pass) qoder declared portable credential fields survive the account import API [3.31ms]
+<-- POST /admin/api/accounts/import
+[warn] Import: failed to init quota for "portable-qoder-cn": Qoder usage is unavailable: the saved sign-in carries no device token — sign in again to see usage
+  at fetchQoderQuota (src/lib/quota/fetchers/qoder.ts:223:15)
+  at fetchOAuthProviderQuota (src/lib/quota/index.ts:35:46)
+  at async refreshProviderQuota (src/lib/quota/refresh.ts:62:26)
+(node:15844) TimeoutOverflowWarning: 105930476549 does not fit into a 32-bit signed integer.
+Timeout duration was set to 1.
+--> POST /admin/api/accounts/import 200 1ms
+(pass) qoder-cn declared portable credential fields survive the account import API [1.93ms]
+<-- POST /admin/api/accounts/import
+[warn] Import: failed to init quota for "portable-factory": Factory usage request failed (HTTP 404)
+  at fetchFactoryQuota (src/lib/quota/fetchers/factory.ts:195:15)
+(node:15844) TimeoutOverflowWarning: 105930656547 does not fit into a 32-bit signed integer.
+Timeout duration was set to 1.
+--> POST /admin/api/accounts/import 200 1ms
+(pass) factory declared portable credential fields survive the account import API [2.15ms]
+<-- POST /admin/api/accounts/import
+[warn] Import: failed to init quota for "portable-zcode": ZCode usage request failed (HTTP 404)
+  at fetchZcodeQuota (src/lib/quota/fetchers/zcode.ts:372:15)
+(node:15844) TimeoutOverflowWarning: 105930476545 does not fit into a 32-bit signed integer.
+Timeout duration was set to 1.
+(node:15844) TimeoutOverflowWarning: 105930476536 does not fit into a 32-bit signed integer.
+Timeout duration was set to 1.
+--> POST /admin/api/accounts/import 200 10ms
+(pass) zcode declared portable credential fields survive the account import API [11.31ms]
+<-- POST /admin/api/accounts/import
+[warn] Import: failed to init quota for "portable-commandcode-plan": Command Code usage request failed (HTTP 404)
+  at fetchCommandCodeQuota (src/lib/quota/fetchers/commandcode.ts:153:15)
+(node:15844) TimeoutOverflowWarning: 105930476533 does not fit into a 32-bit signed integer.
+Timeout duration was set to 1.
+(node:15844) TimeoutOverflowWarning: 105930476532 does not fit into a 32-bit signed integer.
+Timeout duration was set to 1.
+--> POST /admin/api/accounts/import 200 1ms
+(pass) commandcode-plan declared portable credential fields survive the account import API [3.35ms]
+<-- POST /admin/api/accounts/import
+[warn] Import: failed to init quota for "portable-zed": Zed usage is unavailable: the saved sign-in is incomplete — sign in again
+  at fetchZedQuota (src/lib/quota/fetchers/zed.ts:26:15)
+  at fetchOAuthProviderQuota (src/lib/quota/index.ts:35:46)
+  at async refreshProviderQuota (src/lib/quota/refresh.ts:62:26)
+(node:15844) TimeoutOverflowWarning: 105930476530 does not fit into a 32-bit signed integer.
+Timeout duration was set to 1.
+(node:15844) TimeoutOverflowWarning: 105930476529 does not fit into a 32-bit signed integer.
+Timeout duration was set to 1.
+--> POST /admin/api/accounts/import 200 1ms
+(pass) zed declared portable credential fields survive the account import API [2.66ms]
+<-- POST /admin/api/accounts/import
+[warn] Import: failed to init quota for "portable-dimagent": DimAgent usage request failed (HTTP 404)
+  at fetchDimagentQuota (src/lib/quota/fetchers/dimagent.ts:98:15)
+(node:15844) TimeoutOverflowWarning: 105930476528 does not fit into a 32-bit signed integer.
+Timeout duration was set to 1.
+--> POST /admin/api/accounts/import 200 1ms
+(pass) dimagent declared portable credential fields survive the account import API [2.25ms]
+<-- POST /admin/api/accounts/import
+[warn] Import: failed to init quota for "portable-gemini": Gemini usage request failed (HTTP 404)
+  at fetchGeminiQuota (src/lib/quota/fetchers/gemini.ts:50:15)
+(node:15844) TimeoutOverflowWarning: 105930476525 does not fit into a 32-bit signed integer.
+Timeout duration was set to 1.
+--> POST /admin/api/accounts/import 200 0ms
+(pass) gemini declared portable credential fields survive the account import API [1.89ms]
+<-- POST /admin/api/accounts/import
+[warn] Import: failed to init quota for "portable-trae-cn": Trae CN usage request failed (HTTP 404)
+  at fetchTraeCnQuota (src/lib/quota/fetchers/trae-cn.ts:105:15)
+(node:15844) TimeoutOverflowWarning: 105930176523 does not fit into a 32-bit signed integer.
+Timeout duration was set to 1.
+[warn] [trae-cn] Device-bound renewal unavailable; trying legacy exchange
+[warn] OAuth refresh failed for "portable-trae-cn" (attempt 1), retrying in 60s: Trae CN: renewing the sign-in: HTTP 404 {}
+  at readTraeCnTokenExchange (src/services/oauth/trae-cn.ts:488:13)
+--> POST /admin/api/accounts/import 200 4ms
+(pass) trae-cn declared portable credential fields survive the account import API [4.76ms]
+
+tests/provider-metadata.test.ts:
+100 |         authMode: "oauth",
+101 |         accountFields: [],
+102 |         features: ["oauth"],
+103 |       },
+104 |     })
+105 |     expect(entry.credentials?.contextStringKeys).toContain("machineId")
+                                                       ^
+error: expect(received).toContain(expected)
+
+Expected to contain: "machineId"
+Received: [ "refreshToken", "idToken", "projectId", "deviceId", "apiKey" ]
+
+      at <anonymous> (<repo>/tests/provider-metadata.test.ts:105:50)
+(fail) pure provider metadata > required credential context is automatically portable [2.93ms]
+
+ 15 pass
+ 19 filtered out
+ 5 fail
+ 176 expect() calls
+Ran 20 tests across 2 files. [411.00ms]

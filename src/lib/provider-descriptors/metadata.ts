@@ -5,6 +5,8 @@ interface ProviderCredentials {
   primaryKey: string
   primarySource?: "context"
   requiredExtras?: ReadonlyArray<string>
+  /** Non-empty identity strings required to use this credential; portable automatically. */
+  requiredContextKeys?: ReadonlyArray<string>
   /** Omitted for OAuth exports, which retain provider-specific extra fields. */
   exportKeys?: ReadonlyArray<string>
   /** Credential refresher strategy used by account-managed connections. */
@@ -39,20 +41,22 @@ const OAUTH_CONTEXT_STRING_KEYS = [
 ] as const
 const OAUTH_CONTEXT_VALUE_KEYS = ["expiresAt"] as const
 
-function withOAuthContextKeys(
+function withCredentialContextKeys(
   declared: ProviderCredentials,
+  oauth: boolean,
 ): ProviderCredentials {
   return {
     ...declared,
     contextStringKeys: [
       ...new Set([
-        ...OAUTH_CONTEXT_STRING_KEYS,
+        ...(oauth ? OAUTH_CONTEXT_STRING_KEYS : []),
         ...(declared.contextStringKeys ?? []),
+        ...(declared.requiredContextKeys ?? []),
       ]),
     ],
     contextValueKeys: [
       ...new Set([
-        ...OAUTH_CONTEXT_VALUE_KEYS,
+        ...(oauth ? OAUTH_CONTEXT_VALUE_KEYS : []),
         ...(declared.contextValueKeys ?? []),
       ]),
     ],
@@ -71,12 +75,11 @@ export function defineProviderMetadata<
   credentials?: ProviderCredentials
   descriptor: ProviderDescriptor<Id>
 }) {
-  const credentials: ProviderCredentials | undefined =
-    metadata.oauth ?
-      withOAuthContextKeys(
-        metadata.credentials ?? { primaryKey: "accessToken" },
-      )
-    : metadata.credentials
+  const declared =
+    metadata.credentials
+    ?? (metadata.oauth ? { primaryKey: "accessToken" } : undefined)
+  const credentials =
+    declared ? withCredentialContextKeys(declared, metadata.oauth) : undefined
   return {
     ...metadata,
     credentials,

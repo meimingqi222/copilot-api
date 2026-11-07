@@ -30,12 +30,18 @@ import { server } from "~/server"
 import { cancelAllCodebuddyRefreshTimers } from "~/services/codebuddy/token-refresh"
 import { initializeProviderRegistry } from "~/services/providers"
 import {
+  connectionHasCredentials,
   listAccountManagedConnections,
   serializeConnectionForExport,
   setConnectionCredentialExtra,
 } from "~/lib/provider-connections"
 import { createOAuthConnection } from "~/services/oauth/strategy-types"
-import { applyQoderOAuthBundle } from "~/services/oauth/qoder"
+import {
+  applyQoderOAuthBundle,
+  qoderUserFromConnection,
+} from "~/services/oauth/qoder"
+import { OAUTH_PROVIDER_IDS } from "~/lib/provider-config"
+import { PROVIDER_METADATA } from "~/lib/provider-metadata"
 import {
   applyTraeCnOAuthBundle,
   newTraeCnDevice,
@@ -428,41 +434,148 @@ test("zcode export/import preserves the session JWT used for plan claims", async
   expect(zcodeSessionJwt(restored)).toBe("zcode-session-jwt")
 })
 
-test("qoder export/import preserves the device identity used for COSY signing", async () => {
-  const original = createOAuthConnection("qoder", "qoder-device")
-  applyQoderOAuthBundle(original, {
-    jobToken: "job-token",
-    jobRefreshToken: "job-refresh",
-    expiresAt: Date.now() + 3600_000,
-    deviceToken: "device-token",
-    deviceRefreshToken: "device-refresh",
-    uid: "uid-1",
-    machineId: "machine-1",
-    chatTokenKind: "device",
-    email: "qoder@example.com",
-  })
-  const exported = serializeConnectionForExport(original)
-  expect(exported.credentials).toMatchObject({
-    uid: "uid-1",
-    machineId: "machine-1",
-    deviceToken: "device-token",
-    deviceRefreshToken: "device-refresh",
-    chatTokenKind: "device",
-  })
+test.each(["qoder", "qoder-cn"] as const)(
+  "%s export/import preserves the device identity used for COSY signing",
+  async (provider) => {
+    const original = createOAuthConnection(provider, "qoder-device")
+    applyQoderOAuthBundle(original, {
+      jobToken: "job-token",
+      jobRefreshToken: "job-refresh",
+      expiresAt: Date.now() + 3600_000,
+      deviceToken: "device-token",
+      deviceRefreshToken: "device-refresh",
+      uid: "uid-1",
+      machineId: "machine-1",
+      chatTokenKind: "device",
+      name: "Qoder Test User",
+      email: "qoder@example.com",
+    })
+    const exported = serializeConnectionForExport(original)
+    expect(exported.credentials).toMatchObject({
+      uid: "uid-1",
+      machineId: "machine-1",
+      deviceToken: "device-token",
+      deviceRefreshToken: "device-refresh",
+      chatTokenKind: "device",
+    })
 
-  const { body } = await importAccounts([exported])
-  expect(body.imported).toBe(1)
-  expect(body.failed).toBe(0)
-  const restored = listAccountManagedConnections().find(
-    (c) => c.name === "qoder-device",
-  )!
-  const context = restored.credentials[0]?.context as Record<string, unknown>
-  expect(context.uid).toBe("uid-1")
-  expect(context.machineId).toBe("machine-1")
-  expect(context.deviceToken).toBe("device-token")
-  expect(context.deviceRefreshToken).toBe("device-refresh")
-  expect(context.chatTokenKind).toBe("device")
-})
+    const { body } = await importAccounts([exported])
+    expect(body.imported).toBe(1)
+    expect(body.failed).toBe(0)
+    const restored = listAccountManagedConnections().find(
+      (c) => c.name === "qoder-device",
+    )!
+    const context = restored.credentials[0]?.context as Record<string, unknown>
+    expect(context.uid).toBe("uid-1")
+    expect(context.machineId).toBe("machine-1")
+    expect(context.deviceToken).toBe("device-token")
+    expect(context.deviceRefreshToken).toBe("device-refresh")
+    expect(context.chatTokenKind).toBe("device")
+    expect(qoderUserFromConnection(restored)).toEqual({
+      uid: "uid-1",
+      machineId: "machine-1",
+      deviceToken: "device-token",
+      deviceRefreshToken: "device-refresh",
+      name: "Qoder Test User",
+      email: "qoder@example.com",
+    })
+  },
+)
+
+test.each(["qoder", "qoder-cn"] as const)(
+  "%s rejects incomplete signing identities before overwriting an account",
+  async (provider) => {
+    await importAccounts([
+      {
+        provider,
+        label: "keep-original",
+        credentials: {
+          accessToken: "original",
+          uid: "user",
+          machineId: "machine",
+        },
+      },
+    ])
+    const before = listAccountManagedConnections().find(
+      (c) => c.name === "keep-original",
+    )!
+    expect(connectionHasCredentials(before)).toBe(true)
+    for (const missing of ["uid", "machineId"]) {
+      const incomplete = structuredClone(before)
+      incomplete.credentials.at(0)!.context![missing] = "   "
+      expect(connectionHasCredentials(incomplete)).toBe(false)
+      const credentials: Record<string, unknown> = {
+        accessToken: "replacement",
+        uid: "user",
+        machineId: "machine",
+      }
+      if (missing === "uid") delete credentials[missing]
+      else credentials[missing] = "   "
+      const response = await adminJson(
+        "http://localhost/admin/api/accounts/import",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            accounts: [{ provider, label: "keep-original", credentials }],
+            overwrite: true,
+          }),
+        },
+      )
+      const body = (await response.json()) as {
+        imported: number
+        failed: number
+        details: { failed: Array<{ reason: string }> }
+      }
+      expect(body.imported).toBe(0)
+      expect(body.failed).toBe(1)
+      expect(body.details.failed[0]?.reason).toContain(missing)
+      expect(
+        listAccountManagedConnections().find((c) => c.id === before.id)
+          ?.credentials[0]?.value,
+      ).toBe("original")
+    }
+  },
+)
+
+test.each(OAUTH_PROVIDER_IDS)(
+  "%s declared portable credential fields survive the account import API",
+  async (provider) => {
+    const schema = PROVIDER_METADATA[provider].credentials!
+    const original = createOAuthConnection(provider, `portable-${provider}`)
+    const credential = original.credentials[0]!
+    credential.value = "live-access-token"
+    const expected: Record<string, unknown> = {
+      [schema.primaryKey]: "live-access-token",
+    }
+    for (const key of schema.contextStringKeys ?? []) {
+      const value = `value-${key}`
+      credential.context![key] = value
+      expected[key] = value
+    }
+    const expiresAt = Date.now() + 3600_000
+    for (const key of schema.contextValueKeys ?? []) {
+      credential.context![key] = expiresAt
+      expected[key] = expiresAt
+    }
+    const exported = serializeConnectionForExport(original)
+    expect(exported.credentials).toMatchObject(expected)
+    const { body } = await importAccounts([exported])
+    expect(body.imported).toBe(1)
+    expect(body.failed).toBe(0)
+    const restored = listAccountManagedConnections().find(
+      (c) => c.name === original.name,
+    )!
+    expect(serializeConnectionForExport(restored).credentials).toMatchObject(
+      expected,
+    )
+    for (const key of [
+      ...(schema.contextStringKeys ?? []),
+      ...(schema.contextValueKeys ?? []),
+    ]) {
+      expect(restored.credentials[0]?.context?.[key]).toBe(expected[key])
+    }
+  },
+)
 
 /** Guard against the extraction dropping the provider on the account shape. */
 describe("import builder account shape", () => {

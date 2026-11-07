@@ -50,6 +50,10 @@ adapter (mirroring how MiniMax Code got `minimax-native`):
   `discoverModels` (`GET /algo/api/v2/model/list?Encode=1`), and each mapping keeps
   `{ qoderSource, qoderModelConfig }` in `metadata` because the chat request must echo
   the model's config verbatim as `model_config` and send `X-Model-Key`/`X-Model-Source`.
+  Select the response's `app` list to match inference's product/session scene;
+  fall back to `chat` only when `app` is absent or null, never when it is empty.
+  QoDuck (`lmodel`) was returned only in `app` by a live account, including with
+  client version 1.1.49; a version bump or a hardcoded model is not the fix.
   Aggregate entries (`auto`, `default`) are dropped — Qoder routes between models inside
   them, so they are not something an agent can pick.
 
@@ -87,6 +91,9 @@ headers, forced streaming with non-streaming aggregation, XML lifting, upstream
 tool-call id preservation and the in-stream status normalization.
 `tests/qoder-quota.test.ts` pins the credit-window parsing and the device-token
 rotation on 401.
+
+The app-list discovery and empty-app regressions failed before the scene fix;
+the red run is saved in `.agents/notes-evidence/qoder-app-models-red.log`.
 
 The protocol itself is a reverse-engineered artifact. Only the golden vectors are proven
 in CI; real availability needs `scripts/test-qoder-live.ts` (device login → models →

@@ -8,9 +8,9 @@ export const providerMetadata = defineProviderMetadata({
     // COSY signing and quota/userinfo need the device identity. Without these
     // keys an exported account re-imports without them and every request fails
     // with "the saved sign-in is incomplete".
+    requiredContextKeys: ["uid", "machineId"],
     contextStringKeys: [
-      "uid",
-      "machineId",
+      "name",
       "deviceToken",
       "deviceRefreshToken",
       "chatTokenKind",
