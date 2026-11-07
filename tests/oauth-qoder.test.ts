@@ -4,8 +4,10 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 
 import {
   __resetProviderConnectionsForTest,
+  getConnectionProvider,
   getProviderConnection,
 } from "~/lib/provider-connections"
+import { publicAccountFromConnection } from "~/routes/admin/api/account-views"
 import {
   getOAuthProviderDescriptor,
   isOAuthProviderId,
@@ -220,6 +222,27 @@ describe("Qoder device flow", () => {
 })
 
 describe("Qoder token refresh", () => {
+  test("account view preserves protocol fallback for an empty non-Qoder provider", () => {
+    const connection = createConnection({
+      protocol: "copilot-native",
+      metadata: { provider: "" },
+    })
+    expect(publicAccountFromConnection(connection).provider).toBe("copilot")
+  })
+
+  for (const site of Object.values(QODER_SITES)) {
+    for (const provider of ["qoder", "qoder-cn", undefined] as const) {
+      test(`account view follows ${site.id} host with declared provider ${provider}`, () => {
+        const connection = createConnection({
+          baseUrl: site.apiHost,
+          metadata: provider ? { provider } : {},
+        })
+        expect(publicAccountFromConnection(connection).provider).toBe(site.id)
+        expect(getConnectionProvider(connection)).toBe(site.id)
+      })
+    }
+  }
+
   for (const kind of ["job", "device"] as const) {
     for (const site of Object.values(QODER_SITES)) {
       test(`${kind} refresh uses ${site.id} connection host despite conflicting provider metadata`, async () => {

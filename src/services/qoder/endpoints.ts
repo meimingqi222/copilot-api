@@ -11,9 +11,8 @@
  * 交换被 4xx 拒时按 CLI 的方式用 device token 直签 chat（site.deviceChat）。
  */
 
-// Import the reader directly (not the barrel): boot's provider-metadata
-// repair imports this module, and the barrel pulls boot back in.
-import { getConnectionProvider } from "~/lib/provider-connections/connection-metadata"
+import { PROTOCOL_PROVIDER_MAP } from "~/lib/provider-definitions"
+import type { ProviderConnection } from "~/lib/provider-connections/types"
 
 /** 一个 Qoder 站点的常量（授权页 / 账号端点 / 推理端点各一个 host）。 */
 export interface QoderSite {
@@ -71,14 +70,19 @@ export function qoderSiteForProvider(provider: string | undefined): QoderSite {
  * 匹配不到再回退到 provider。
  */
 export function qoderSiteForConnection(
-  connection: Parameters<typeof getConnectionProvider>[0],
+  connection: ProviderConnection,
 ): QoderSite {
   const base = connection.baseUrl
   if (typeof base === "string" && base) {
     const byBase = Object.values(QODER_SITES).find((s) => s.apiHost === base)
     if (byBase) return byBase
   }
-  return qoderSiteForProvider(getConnectionProvider(connection))
+  const provider = connection.metadata?.provider
+  return qoderSiteForProvider(
+    typeof provider === "string" ? provider : (
+      PROTOCOL_PROVIDER_MAP[connection.protocol]
+    ),
+  )
 }
 
 // ── 全局站常量（等价 QODER_SITES.qoder 的字段） ────────────────

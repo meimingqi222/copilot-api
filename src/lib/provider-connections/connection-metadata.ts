@@ -8,6 +8,7 @@
 import { isProviderId, type ProviderId } from "~/lib/provider-config"
 import { PROVIDER_METADATA } from "~/lib/provider-metadata"
 import { getSystemSettings } from "~/lib/system-config"
+import { qoderSiteForConnection } from "~/services/qoder/endpoints"
 
 import { PROTOCOL_PROVIDER_MAP as PROTOCOL_TO_PROVIDER } from "~/lib/provider-definitions"
 
@@ -113,6 +114,8 @@ export function readConnectionMetadata(
 export function getConnectionProvider(
   conn: ProviderConnection,
 ): ProviderId | undefined {
+  // Qoder's persisted host also determines inference, refresh and quota.
+  if (conn.protocol === "qoder-native") return qoderSiteForConnection(conn).id
   // codebuddy / codebuddy-cn 共用 codebuddy-native 协议，仅靠 protocol
   // 无法区分（PROTOCOL_TO_PROVIDER 后写覆盖）。account-managed 连接
   // 必须优先读 metadata.provider，只有无 metadata 时才回退到 protocol。

@@ -10,7 +10,7 @@
  *   (原 connection-to-account.ts 中的私有 map)。
  * - listAccountManagedConnections:listAccounts() 的 connection 级替代。
  * - accountManagedProvider:connectionToAccount 的 provider 派生
- *   (metadata.provider 优先,protocol 反查兜底)。
+ *   (统一 provider 读取器，Qoder 优先按站点识别)。
  * - accountManagedModelPrefix:getAccountModelPrefix 的 connection 级替代
  *   (OAuth 自定义 modelPrefix 优先,provider 兜底)。
  */
@@ -21,7 +21,10 @@ import { PROTOCOL_PROVIDER_MAP as PROTOCOL_TO_PROVIDER } from "~/lib/provider-de
 import type { ProviderConnection, ProviderProtocol } from "./types"
 
 import { isAccountManagedConnection } from "./account-managed"
-import { readConnectionMetadata } from "./connection-metadata"
+import {
+  getConnectionProvider,
+  readConnectionMetadata,
+} from "./connection-metadata"
 import { listProviderConnections } from "./state"
 
 /**
@@ -48,16 +51,15 @@ export function listAccountManagedConnections(): Array<ProviderConnection> {
 
 /**
  * account-managed connection 的 provider 派生。
- * 镜像 connectionToAccount:metadata.provider 优先,protocol 反查兜底。
+ * 复用统一 provider 读取器（Qoder 优先按站点，其他 provider 按 metadata/协议）。
  *
  * Account-managed protocol 都来自 PROVIDER_PROTOCOL_MAP 的值域,反查必然
  * 命中;命中不了只可能是把非 account-managed 协议传了进来 —— 那是调用方
  * 的错误,直接报错而不是静默当成 copilot。
  */
 export function accountManagedProvider(conn: ProviderConnection): ProviderId {
-  const fromMetadata = readConnectionMetadata(conn)?.provider
-  if (fromMetadata) return fromMetadata
-  const provider = providerFromProtocol(conn.protocol)
+  const provider =
+    getConnectionProvider(conn) || providerFromProtocol(conn.protocol)
   if (!provider) {
     throw new Error(`No provider registered for protocol "${conn.protocol}"`)
   }
@@ -69,6 +71,7 @@ export function accountManagedProvider(conn: ProviderConnection): ProviderId {
  * 的 connection 原生替代)。
  *
  * - account-managed connection:metadata.provider 优先,protocol 反查兜底。
+ *   Qoder 按连接站点识别，与实际请求保持一致。
  * - plain connection(*-compatible):直接用 protocol(openai/anthropic 等)。
  */
 export function connectionProvider(conn: ProviderConnection): string {

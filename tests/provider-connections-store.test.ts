@@ -20,6 +20,8 @@ import {
   loadProviderConnections,
   saveProviderConnections,
 } from "~/lib/provider-connections/store"
+import { initializeManagedConnections } from "~/lib/provider-connections/boot"
+import { createOAuthConnection } from "~/services/oauth/strategy-types"
 import { __resetPlanAllowanceMirrorForTest } from "~/lib/plan-quota/apply"
 import { resetPlanQuotaStore } from "~/lib/plan-quota/store"
 import { refreshManagedQuota } from "~/lib/quota/refresh"
@@ -123,6 +125,35 @@ describe("loadProviderConnections", () => {
   test("returns empty array when file is missing", async () => {
     const connections = await loadProviderConnections()
     expect(connections).toEqual([])
+  })
+
+  test("boot persists Qoder providers matching the connection hosts", async () => {
+    const connections = (
+      [
+        ["qoder", "https://api3.qoder.sh", "qoder-cn"],
+        ["qoder-cn", "https://gateway.qoder.com.cn", "qoder"],
+        ["qoder", "https://api3.qoder.sh", undefined],
+        ["qoder-cn", "https://gateway.qoder.com.cn", undefined],
+      ] as const
+    ).map(([provider, baseUrl, declared], index) => {
+      const conn = createOAuthConnection(provider, `site-${index}`)
+      conn.baseUrl = baseUrl
+      conn.enabled = false
+      conn.metadata = declared ? { provider: declared } : {}
+      return conn
+    })
+    await saveProviderConnections(connections)
+    await initializeManagedConnections()
+    const persisted = await loadProviderConnections()
+    expect(persisted.map((conn) => conn.metadata?.provider)).toEqual([
+      "qoder",
+      "qoder-cn",
+      "qoder",
+      "qoder-cn",
+    ])
+    expect(persisted.map((conn) => conn.baseUrl)).toEqual(
+      connections.map((conn) => conn.baseUrl),
+    )
   })
 
   test("throws when recoverable file exists but is corrupt", async () => {

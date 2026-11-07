@@ -1,0 +1,78 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/provider-connections-store.test.ts:
+141 |       return conn
+142 |     })
+143 |     await saveProviderConnections(connections)
+144 |     await initializeManagedConnections()
+145 |     const persisted = await loadProviderConnections()
+146 |     expect(persisted.map((conn) => conn.metadata?.provider)).toEqual([
+                                                                   ^
+error: expect(received).toEqual(expected)
+
+  [
+-   "qoder",
+    "qoder-cn",
++   "qoder",
+    "qoder",
+    "qoder-cn",
+  ]
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (<repo>/tests/provider-connections-store.test.ts:146:62)
+(fail) loadProviderConnections > boot persists Qoder providers matching the connection hosts [14.43ms]
+
+tests/oauth-qoder.test.ts:
+(pass) Qoder token refresh > account view follows qoder host with declared provider qoder [0.97ms]
+227 |       test(`account view follows ${site.id} host with declared provider ${provider}`, () => {
+228 |         const connection = createConnection({
+229 |           baseUrl: site.apiHost,
+230 |           metadata: provider ? { provider } : {},
+231 |         })
+232 |         expect(publicAccountFromConnection(connection).provider).toBe(site.id)
+                                                                       ^
+error: expect(received).toBe(expected)
+
+Expected: "qoder"
+Received: "qoder-cn"
+
+      at <anonymous> (<repo>/tests/oauth-qoder.test.ts:232:66)
+(fail) Qoder token refresh > account view follows qoder host with declared provider qoder-cn [0.19ms]
+227 |       test(`account view follows ${site.id} host with declared provider ${provider}`, () => {
+228 |         const connection = createConnection({
+229 |           baseUrl: site.apiHost,
+230 |           metadata: provider ? { provider } : {},
+231 |         })
+232 |         expect(publicAccountFromConnection(connection).provider).toBe(site.id)
+                                                                       ^
+error: expect(received).toBe(expected)
+
+Expected: "qoder"
+Received: "qoder-cn"
+
+      at <anonymous> (<repo>/tests/oauth-qoder.test.ts:232:66)
+(fail) Qoder token refresh > account view follows qoder host with declared provider undefined [0.07ms]
+227 |       test(`account view follows ${site.id} host with declared provider ${provider}`, () => {
+228 |         const connection = createConnection({
+229 |           baseUrl: site.apiHost,
+230 |           metadata: provider ? { provider } : {},
+231 |         })
+232 |         expect(publicAccountFromConnection(connection).provider).toBe(site.id)
+                                                                       ^
+error: expect(received).toBe(expected)
+
+Expected: "qoder-cn"
+Received: "qoder"
+
+      at <anonymous> (<repo>/tests/oauth-qoder.test.ts:232:66)
+(fail) Qoder token refresh > account view follows qoder-cn host with declared provider qoder [0.07ms]
+(pass) Qoder token refresh > account view follows qoder-cn host with declared provider qoder-cn [0.02ms]
+(pass) Qoder token refresh > account view follows qoder-cn host with declared provider undefined [0.02ms]
+
+ 3 pass
+ 40 filtered out
+ 4 fail
+ 10 expect() calls
+Ran 7 tests across 2 files. [271.00ms]
