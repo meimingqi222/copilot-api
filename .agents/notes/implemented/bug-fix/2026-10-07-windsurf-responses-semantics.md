@@ -29,6 +29,20 @@ can then submit self-contained full input without silently losing history.
 Native Responses calls keep their continuation behavior. No transcript store
 or new provider configuration is introduced.
 
+Chat output limits must also survive the route-to-native boundary. The route
+does not inject a default max_tokens when max_completion_tokens is present;
+Windsurf encodes explicit max_tokens first, then the alias, then its default.
+Tool definitions retain required schema properties and explicit strict, and
+tool_choice retains the caller's option or named function rather than always
+becoming auto. These are request contracts, not a guarantee that every model
+will generate semantically valid tool arguments.
+
+The native request has no structured response_format field. json_object and
+json_schema are rejected with LocalPayloadUnsupportedError before auth or
+upstream fetching, allowing existing same-model failover without credential
+cooldown. A Windsurf-only route returns 422; prompt instructions are not a
+substitute for a strict schema contract. Plain text remains supported.
+
 ## Alternatives considered
 
 **Forward incremental tool results without the referenced history.** Produces
@@ -48,6 +62,12 @@ Full replay costs a retry when a client attempts continuation on a translated
 target. The original live invalid_argument request had no stored body, so
 these confirmed defects do not prove which field caused that upstream failure.
 
+Silently omitting output caps or schemas can turn a bounded structured call
+into an unexpectedly long unconstrained generation. Rejecting unsupported
+formats is deliberate: it does not make schema-dependent callers work on
+Windsurf-only routes. Tool response normalization is separately owned by
+`2026-11-07-windsurf-tool-call-deltas.md`.
+
 ## Verification
 
 - `tests/windsurf-responses-translation.test.ts` exercises the production HTTP
@@ -56,6 +76,14 @@ these confirmed defects do not prove which field caused that upstream failure.
   matching call IDs and tool results, and checks Responses output events.
 - The same file opens the real WebSocket route, requires a continuation error
   before upstream fetch, and sends a full replay that succeeds on the socket.
+- `tests/windsurf-responses-translation.test.ts::Chat output caps and required tool schemas survive Windsurf encoding`
+  verifies the final native limit, explicit-limit precedence, required query,
+  strict flag and named tool choice through the real Chat route.
+- `tests/windsurf-responses-translation.test.ts::Windsurf rejects unsupported structured output before fetching without cooling credentials`
+  verifies 422 with zero fetches and a still-available route target.
+- `tests/windsurf-responses-translation.test.ts::structured Chat falls back from Windsurf without losing the schema`
+  verifies a compatible fallback receives the original schema and returns JSON
+  content rather than a native tool call, matching schema-based callers.
 
 Proved: Before the role fix, both HTTP cases failed because developer text was
 present as a conversation prompt instead of system_prompt. Before the
@@ -69,3 +97,8 @@ asynchronously. The same route regressions await it and verify that the HTTP
 Connect-Content-Encoding header matches the actual frame flag; instruction,
 history and continuation semantics above remain unchanged. Compression policy
 is owned by `2026-11-02-windsurf-request-compression.md`.
+
+Proved: Before the output-limit fix, the new Chat route regression received
+native max_tokens 64000 instead of its requested 123. After the fix the entire
+file passes (10 tests), and the 57-file affected run passes 677 tests. The natural
+red output is retained in `.agents/notes-evidence/windsurf-request-cap-red.log`.

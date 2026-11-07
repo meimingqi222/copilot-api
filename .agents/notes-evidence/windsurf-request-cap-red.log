@@ -1,0 +1,73 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/windsurf-responses-translation.test.ts:
+(pass) Windsurf shares developer-to-system normalization without mutating caller history [5.09ms]
+<-- POST /v1/responses
+[error] Error occurred: previous_response_not_found: full input replay required
+  at createTranslatedCall (src/services/protocols/wire-pairs.ts:429:15)
+  at execute (src/services/dispatch/shared.ts:416:7)
+  at run (node:async_hooks:144:29)
+  at executeWithFailover (src/services/dispatch/failover.ts:296:30)
+--> POST /v1/responses 400 5ms
+(pass) chained Responses deltas are rejected before a stateless Windsurf request [8.95ms]
+<-- POST /v1/chat/completions
+--> POST /v1/chat/completions 200 5ms
+237 |     })
+238 |     expect(response.status).toBe(200)
+239 |     await response.json()
+240 |     const packet = packets.at(-1)!
+241 |     const config = packet.find((node) => node.field === 8)!.sub!
+242 |     expect(config.find((node) => node.field === 2)?.varint).toBe(
+                                                                  ^
+error: expect(received).toBe(expected)
+
+Expected: 123
+Received: 64000
+
+      at <anonymous> (tests/windsurf-responses-translation.test.ts:242:61)
+(fail) Chat output caps and required tool schemas survive Windsurf encoding [6.52ms]
+<-- POST /v1/chat/completions
+[error] Error occurred: Windsurf does not support structured response_format (json_object or json_schema)
+  at createWindsurfChatCompletionsOnce (src/services/windsurf/create-chat-completions.ts:659:15)
+  at <anonymous> (src/services/protocols/once-adapter.ts:71:30)
+  at <anonymous> (src/services/protocols/registry.ts:82:34)
+  at run (node:async_hooks:144:29)
+  at withStreamDiagnosticAttempt (src/lib/stream-diagnostics.ts:517:30)
+  at execute (src/services/dispatch/shared.ts:416:7)
+  at run (node:async_hooks:144:29)
+  at executeWithFailover (src/services/dispatch/failover.ts:296:30)
+[error] HTTP error: Windsurf does not support structured response_format (json_object or json_schema)
+--> POST /v1/chat/completions 422 1ms
+<-- POST /v1/chat/completions
+[error] Error occurred: Windsurf does not support structured response_format (json_object or json_schema)
+  at createWindsurfChatCompletionsOnce (src/services/windsurf/create-chat-completions.ts:659:15)
+  at <anonymous> (src/services/protocols/once-adapter.ts:71:30)
+  at <anonymous> (src/services/protocols/registry.ts:82:34)
+  at run (node:async_hooks:144:29)
+  at withStreamDiagnosticAttempt (src/lib/stream-diagnostics.ts:517:30)
+  at execute (src/services/dispatch/shared.ts:416:7)
+  at run (node:async_hooks:144:29)
+  at executeWithFailover (src/services/dispatch/failover.ts:296:30)
+[error] HTTP error: Windsurf does not support structured response_format (json_object or json_schema)
+--> POST /v1/chat/completions 422 0ms
+(pass) Windsurf rejects unsupported structured output before fetching without cooling credentials [2.14ms]
+<-- GET /v1/responses
+--> GET /v1/responses 200 0ms
+(pass) Codex WebSocket chat fallback asks for full replay, then translates a self-contained turn [8.09ms]
+<-- POST /v1/chat/completions
+--> POST /v1/chat/completions 200 0ms
+(pass) Windsurf Chat keeps late reasoning out of visible content (stream=false) [1.88ms]
+<-- POST /v1/responses
+--> POST /v1/responses 200 1ms
+(pass) Responses to Windsurf preserves Codex instructions, namespace tools and replay (stream=false) [2.61ms]
+<-- POST /v1/chat/completions
+--> POST /v1/chat/completions 200 1ms
+(pass) Windsurf Chat keeps late reasoning out of visible content (stream=true) [2.77ms]
+<-- POST /v1/responses
+--> POST /v1/responses 200 0ms
+(pass) Responses to Windsurf preserves Codex instructions, namespace tools and replay (stream=true) [2.43ms]
+
+ 8 pass
+ 1 fail
+ 92 expect() calls
+Ran 9 tests across 1 file. [117.00ms]

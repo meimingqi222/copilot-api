@@ -1,0 +1,118 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/windsurf-collect-parity.test.ts:
+249 |             [2, "{}"],
+250 |           ])
+251 |           collected = await collectChatCompletion(toStream(events), MODEL)
+252 |         } else collected = result
+253 |         expect(collected.choices[0].finish_reason).toBe("tool_calls")
+254 |         expect(collected.choices[0].message.tool_calls).toEqual([
+                                                              ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "function": {
+-       "arguments": "{"query":"hello"}",
++       "arguments": "{"query":",
+        "name": "search",
+      },
+      "id": "call_a",
+      "type": "function",
+    },
+    {
+      "function": {
+-       "arguments": "{"path":"xy"}",
++       "arguments": "{"path":",
+        "name": "read",
+      },
+      "id": "call_b",
++     "type": "function",
++   },
++   {
++     "function": {
++       "arguments": "{"query":"hel",
++       "name": "search",
++     },
++     "id": "call_a",
++     "type": "function",
++   },
++   {
++     "function": {
++       "arguments": "{"query":"hel{"query":"hello"}"xy"}",
++       "name": "search",
++     },
++     "id": "call_a",
++     "type": "function",
++   },
++   {
++     "function": {
++       "arguments": "{"query":"hello"}",
++       "name": "search",
++     },
++     "id": "call_a",
+      "type": "function",
+    },
+    {
+      "function": {
+        "arguments": "{}",
+        "name": "empty",
+      },
+      "id": "call_c",
+      "type": "function",
+    },
+  ]
+
+- Expected  - 2
++ Received  + 26
+
+      at <anonymous> (tests/windsurf-collect-parity.test.ts:254:57)
+(fail) windsurf non-streaming collector > actual adapter normalizes interleaved tool snapshots and incremental args (stream=%s) [7.01ms]
+232 |                 }
+233 |               }>
+234 |             }
+235 |             return chunk.choices[0].delta.tool_calls ?? []
+236 |           })
+237 |           expect(calls.filter((call) => call.id).map(({ index, id }) => ({ index, id }))).toEqual([
+                                                                                                ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "id": "call_a",
+      "index": 0,
+    },
+    {
+      "id": "call_b",
+      "index": 1,
+    },
+    {
+-     "id": "call_c",
++     "id": "call_a",
+      "index": 2,
++   },
++   {
++     "id": "call_a",
++     "index": 3,
++   },
++   {
++     "id": "call_a",
++     "index": 4,
++   },
++   {
++     "id": "call_c",
++     "index": 5,
+    },
+  ]
+
+- Expected  - 1
++ Received  + 13
+
+      at <anonymous> (tests/windsurf-collect-parity.test.ts:237:91)
+(fail) windsurf non-streaming collector > actual adapter normalizes interleaved tool snapshots and incremental args (stream=%s) [0.37ms]
+
+ 0 pass
+ 4 filtered out
+ 2 fail
+ 3 expect() calls
+Ran 2 tests across 1 file. [97.00ms]

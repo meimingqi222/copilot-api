@@ -414,7 +414,7 @@ function buildToolDef(tool: Tool): ProtobufEncoder {
   t.writeString(1, tool.function.name)
   t.writeString(2, desc)
   t.writeString(3, JSON.stringify(tool.function.parameters))
-  t.writeBool(12, false)
+  t.writeBool(12, tool.function.strict ?? false)
   return t
 }
 
@@ -432,7 +432,10 @@ function buildConfiguration(payload: ChatCompletionsPayload): ProtobufEncoder {
 
   const cfg = new ProtobufEncoder()
   cfg.writeVarint(1, 1) // num_completions
-  cfg.writeVarint(2, payload.max_tokens ?? 64000) // max_tokens
+  cfg.writeVarint(
+    2,
+    payload.max_tokens ?? payload.max_completion_tokens ?? 64000,
+  )
   cfg.writeVarint(3, 200) // max_newlines
   cfg.writeDouble(5, payload.temperature ?? 0.4) // temperature
   cfg.writeDouble(6, payload.temperature ?? 0.4) // first_temperature
@@ -445,9 +448,13 @@ function buildConfiguration(payload: ChatCompletionsPayload): ProtobufEncoder {
   return cfg
 }
 
-function buildToolChoice(): ProtobufEncoder {
+function buildToolChoice(payload: ChatCompletionsPayload): ProtobufEncoder {
   const choice = new ProtobufEncoder()
-  choice.writeString(1, "auto")
+  if (typeof payload.tool_choice === "object" && payload.tool_choice) {
+    choice.writeString(2, payload.tool_choice.function.name)
+  } else {
+    choice.writeString(1, payload.tool_choice ?? "auto")
+  }
   return choice
 }
 
@@ -606,7 +613,7 @@ export async function buildRequest(opts: {
   }
 
   request.writeBool(11, true) // disable_parallel_tool_calls
-  request.writeMessage(12, buildToolChoice())
+  request.writeMessage(12, buildToolChoice(payload))
   request.writeMessage(13, buildSystemPromptCacheOptions())
   // Resolve here (not inside the helper) so the reported index is exactly
   // the one placed on the wire.

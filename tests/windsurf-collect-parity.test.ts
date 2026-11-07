@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test"
 
+import type { ProviderConnection } from "~/lib/provider-connections"
 import type { WindsurfStreamEvent } from "~/services/windsurf/collect-response"
 
+import { clearDevinUserJwtCacheForTest } from "~/services/windsurf/auth"
 import {
   chunkFromText,
   chunkFromToolCallArgs,
@@ -9,6 +11,11 @@ import {
   doneChunk,
 } from "~/services/windsurf/chunk-builders"
 import { collectChatCompletion } from "~/services/windsurf/collect-response"
+import { createWindsurfChatCompletionsOnce } from "~/services/windsurf/create-chat-completions"
+import {
+  encodeConnectFrame,
+  ProtobufEncoder,
+} from "~/services/windsurf/protobuf"
 
 /**
  * The non-streaming collector reads the structured `collected` twin that
@@ -135,6 +142,147 @@ function toStream(
 }
 
 describe("windsurf non-streaming collector", () => {
+  test.each([false, true])(
+    "actual adapter normalizes interleaved tool snapshots and incremental args (stream=%s)",
+    async (stream) => {
+      const originalFetch = globalThis.fetch
+      const connection: ProviderConnection = {
+        id: "windsurf-tool-deltas",
+        name: "windsurf-tool-deltas",
+        protocol: "windsurf-native",
+        baseUrl: "",
+        enabled: true,
+        priority: 0,
+        createdAt: 0,
+        metadata: {
+          provider: "windsurf",
+          settings: { baseUrl: "https://windsurf.test" },
+        },
+        credentials: [
+          {
+            id: "windsurf-tool-deltas",
+            authMode: "bearer",
+            value: "test-key",
+            enabled: true,
+            status: "ready",
+            createdAt: 0,
+          },
+        ],
+      }
+      const toolFrame = (id?: string, name?: string, args?: string) => {
+        const call = new ProtobufEncoder()
+        if (id !== undefined) call.writeString(1, id)
+        if (name !== undefined) call.writeString(2, name)
+        if (args !== undefined) call.writeString(3, args)
+        const frame = new ProtobufEncoder()
+        frame.writeMessage(6, call)
+        return encodeConnectFrame(frame.toUint8Array(), false)
+      }
+      const finish = new ProtobufEncoder()
+      finish.writeVarint(5, 10)
+      const eos = encodeConnectFrame(new TextEncoder().encode("{}"), false)
+      eos[0] = 2
+      const body = Buffer.concat([
+        toolFrame("call_a", "search", '{"query":'),
+        toolFrame("call_b", "read", '{"path":'),
+        toolFrame("call_a", "search", '{"query":"hel'),
+        toolFrame("call_a", "search", '{"query":"hel'),
+        toolFrame("call_a", undefined, '{"query":"hello"}'),
+        toolFrame("call_b", undefined, '"x'),
+        toolFrame(undefined, undefined, 'y"}'),
+        toolFrame("call_a", "search", '{"query":"hello"}'),
+        toolFrame("call_c", "empty", "{}"),
+        encodeConnectFrame(finish.toUint8Array(), false),
+        eos,
+      ])
+      globalThis.fetch = (async (input: string | URL | Request) => {
+        const url = input instanceof Request ? input.url : String(input)
+        if (!url.includes("GetUserJwt")) return new Response(body)
+        const auth = new ProtobufEncoder()
+        auth.writeString(1, "test-jwt")
+        return new Response(auth.toUint8Array())
+      }) as typeof fetch
+      try {
+        const result = await createWindsurfChatCompletionsOnce(
+          { connection, credential: connection.credentials[0] },
+          {
+            model: MODEL,
+            messages: [{ role: "user", content: "use tools" }],
+            tools: ["search", "read", "empty"].map((name) => ({
+              type: "function" as const,
+              function: { name, parameters: { type: "object" } },
+            })),
+            stream,
+          },
+        )
+        let collected
+        if (Symbol.asyncIterator in result) {
+          const events: Array<WindsurfStreamEvent> = []
+          for await (const event of result) events.push(event)
+          const calls = events.flatMap((event) => {
+            if (!event.data || event.data === "[DONE]") return []
+            const chunk = JSON.parse(event.data) as {
+              choices: Array<{
+                delta: {
+                  tool_calls?: Array<{
+                    index: number
+                    id?: string
+                    function: { arguments: string }
+                  }>
+                }
+              }>
+            }
+            return chunk.choices[0].delta.tool_calls ?? []
+          })
+          expect(
+            calls
+              .filter((call) => call.id)
+              .map(({ index, id }) => ({ index, id })),
+          ).toEqual([
+            { index: 0, id: "call_a" },
+            { index: 1, id: "call_b" },
+            { index: 2, id: "call_c" },
+          ])
+          expect(
+            calls
+              .filter((call) => !call.id)
+              .map((call) => [call.index, call.function.arguments]),
+          ).toEqual([
+            [0, '{"query":'],
+            [1, '{"path":'],
+            [0, '"hel'],
+            [0, 'lo"}'],
+            [1, '"x'],
+            [1, 'y"}'],
+            [2, "{}"],
+          ])
+          collected = await collectChatCompletion(toStream(events), MODEL)
+        } else collected = result
+        expect(collected.choices[0].finish_reason).toBe("tool_calls")
+        expect(collected.choices[0].message.tool_calls).toEqual([
+          {
+            id: "call_a",
+            type: "function",
+            function: { name: "search", arguments: '{"query":"hello"}' },
+          },
+          {
+            id: "call_b",
+            type: "function",
+            function: { name: "read", arguments: '{"path":"xy"}' },
+          },
+          {
+            id: "call_c",
+            type: "function",
+            function: { name: "empty", arguments: "{}" },
+          },
+        ])
+      } finally {
+        globalThis.fetch = originalFetch
+        clearDevinUserJwtCacheForTest()
+      }
+    },
+  )
+
   test("structured `collected` path matches the JSON fallback exactly", async () => {
     const events = buildEvents()
 

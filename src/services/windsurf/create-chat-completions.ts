@@ -11,7 +11,7 @@ import type {
 } from "~/services/protocols/chat/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
 
-import { HTTPError } from "~/lib/error"
+import { HTTPError, LocalPayloadUnsupportedError } from "~/lib/error"
 import { currentLogContext } from "~/lib/log-context"
 import { WindsurfAttemptDiagnostics } from "~/services/windsurf/diagnostics"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
@@ -353,6 +353,7 @@ async function* streamToOpenAI(
   let finishReason: "stop" | "length" | "tool_calls" | "content_filter" = "stop"
   let currentToolCallIndex = -1
   const toolIdToIndex = new Map<string, number>()
+  const toolArguments = new Map<number, string>()
   let lastToolCallId: string | undefined
   let upstreamFrameCount = 0
   let upstreamFrameBytes = 0
@@ -450,9 +451,11 @@ async function* streamToOpenAI(
           break
         }
         case "tool_call_init": {
+          lastToolCallId = delta.callId
+          // Windsurf repeats call metadata with cumulative argument snapshots.
+          if (toolIdToIndex.has(delta.callId)) break
           currentToolCallIndex++
           toolIdToIndex.set(delta.callId, currentToolCallIndex)
-          lastToolCallId = delta.callId
           yield emitEvent(
             chunkFromToolCallInit({
               requestId,
@@ -477,19 +480,26 @@ async function* streamToOpenAI(
         case "tool_call_args": {
           if (currentToolCallIndex < 0 || !lastToolCallId) break
           const routeKey = delta.callId ?? lastToolCallId
-          const toolIndex = toolIdToIndex.get(routeKey) ?? currentToolCallIndex
+          const toolIndex = toolIdToIndex.get(routeKey)
+          if (toolIndex === undefined) break
+          lastToolCallId = routeKey
+          const previous = toolArguments.get(toolIndex) ?? ""
+          const args =
+            delta.args.startsWith(previous) ?
+              delta.args.slice(previous.length)
+            : delta.args
+          if (!args) break
+          toolArguments.set(toolIndex, previous + args)
           yield emitEvent(
             chunkFromToolCallArgs({
               requestId,
               model,
               toolIndex,
-              args: delta.args,
+              args,
               created,
             }),
             {
-              toolCalls: [
-                { index: toolIndex, function: { arguments: delta.args } },
-              ],
+              toolCalls: [{ index: toolIndex, function: { arguments: args } }],
             },
           )
           break
@@ -642,6 +652,14 @@ export async function createWindsurfChatCompletionsOnce(
   signal?: AbortSignal,
   ctx?: RequestExecutionContext,
 ): Promise<AsyncIterable<CopilotStreamEvent> | ChatCompletionResponse> {
+  if (
+    payload.response_format?.type === "json_object"
+    || payload.response_format?.type === "json_schema"
+  ) {
+    throw new LocalPayloadUnsupportedError(
+      "Windsurf does not support structured response_format (json_object or json_schema)",
+    )
+  }
   const settings = resolveWindsurfRuntimeSettings(connection, credential)
   if (!settings) {
     throw new Error(

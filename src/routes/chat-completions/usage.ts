@@ -60,7 +60,10 @@ export function applyMaxTokens(
   payload: ChatCompletionsPayload,
   selectedModel: CachedModel | undefined,
 ): ChatCompletionsPayload {
-  if (isNullish(payload.max_tokens)) {
+  if (
+    isNullish(payload.max_tokens)
+    && isNullish(payload.max_completion_tokens)
+  ) {
     const newPayload = {
       ...payload,
       max_tokens: selectedModel?.capabilities.limits?.max_output_tokens,

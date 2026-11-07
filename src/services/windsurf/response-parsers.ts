@@ -247,26 +247,15 @@ function parseToolCallDelta(sub: Array<ProtobufNode>): Array<ChatStreamDelta> {
   const f1 = sub.find((n) => n.field === 1 && n.wire === 2)
   const f2 = sub.find((n) => n.field === 2 && n.wire === 2)
   const f3 = sub.find((n) => n.field === 3 && n.wire === 2)
+  const callId = f1?.raw ? decodeFrameText(f1.raw) : undefined
+  const toolName = f2?.raw ? decodeFrameText(f2.raw) : undefined
 
-  if (f1?.raw && f2?.raw) {
-    const callId = decodeFrameText(f1.raw)
-    const toolName = decodeFrameText(f2.raw)
-    if (callId && toolName) {
-      deltas.push({ kind: "tool_call_init", callId, toolName })
-    }
-    if (f3?.raw) {
-      const args = decodeFrameText(f3.raw)
-      if (args) {
-        deltas.push({
-          kind: "tool_call_args",
-          args,
-          callId: callId ?? undefined,
-        })
-      }
-    }
-  } else if (f3?.raw) {
+  if (callId && toolName) {
+    deltas.push({ kind: "tool_call_init", callId, toolName })
+  }
+  if (f3?.raw) {
     const args = decodeFrameText(f3.raw)
-    if (args) deltas.push({ kind: "tool_call_args", args })
+    if (args) deltas.push({ kind: "tool_call_args", args, callId })
   }
 
   return deltas
