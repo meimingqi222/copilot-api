@@ -177,16 +177,16 @@ export function logAttemptFailure(
 }
 
 /**
- * True when the upstream rejected the prompt on content-policy grounds; the
- * caller should surface a 400 immediately without cooling the credential or
- * rotating to another candidate.
+ * True when the upstream rejected the request itself (content policy or an
+ * invalid argument); the caller should surface a 400 immediately without
+ * cooling the credential or rotating to another candidate.
  */
-export function toNonRetryableContentPolicyError(
+export function toNonRetryableRequestError(
   error: unknown,
 ): HTTPError | undefined {
   if (
     error instanceof WindsurfUpstreamError
-    && error.kind === "content_policy"
+    && (error.kind === "content_policy" || error.kind === "invalid_request")
   ) {
     return new HTTPError(
       error.message,

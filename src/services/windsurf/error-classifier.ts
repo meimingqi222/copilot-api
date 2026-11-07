@@ -21,6 +21,7 @@ type WindsurfErrorKind =
   | "quota_exhausted" // "Quota exhausted" / quota/balance keywords
   | "auth_error" // "Unauthenticated" / auth-related "Permission denied"
   | "content_policy" // "blocked by our content policy" — prompt content, not account health
+  | "invalid_request" // `invalid_argument` — the request's own parameters, not account health
   | "server_error"
   | "client_error"
   | "unknown"
@@ -140,12 +141,10 @@ export function classifyWindsurfErrorText(
       return { kind: "client_error", message, code }
     }
     case "invalid_argument": {
-      if (/internal error/.test(lowerMsg)) {
-        return { kind: "server_error", message, code }
-      }
-      // Fall through to message checks below; unknown invalid_argument
-      // without a message signal stays client_error via the default path.
-      break
+      // Even "an internal error occurred" here is a deterministic rejection
+      // of this request (temperature 0 failed in 0.17s every time), so it must
+      // not cool down the account the other clients share.
+      return { kind: "invalid_request", message, code }
     }
     case "unauthenticated": {
       return { kind: "auth_error", message, code }

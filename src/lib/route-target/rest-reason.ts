@@ -322,6 +322,7 @@ export function restReasonForErrorKind(kind: string): RestReason {
     case "network_error":
       return "network"
     case "client_error":
+    case "invalid_request":
       return "refused"
     default:
       return "unknown"

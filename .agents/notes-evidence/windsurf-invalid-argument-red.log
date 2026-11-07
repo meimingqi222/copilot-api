@@ -1,0 +1,30 @@
+                         ^
+error: expect(received).toBeInstanceOf(expected)
+
+Expected constructor: [class HTTPError extends Error]
+Received value: 185 |     await setupWindsurfConnection("ws-b", 1)
+186 |     const admission = buildAdmissionFor("model-x")
+187 |     expect(admission.connection.id).toBe("ws-a")
+188 | 
+189 |     // The exact upstream reply to temperature 0: a request fault despite the wording.
+190 |     const error = new WindsurfUpstreamError(
+                        ^
+WindsurfUpstreamError: Windsurf upstream error: invalid_argument: an internal error occurred
+       kind: "server_error",
+ retryAfterMs: undefined,
+   rawFrame: "",
+       code: "invalid_argument"
+
+      at <anonymous> (<workspace>/tests/windsurf-content-policy.test.ts:190:19)
+
+
+      at <anonymous> (<workspace>/tests/windsurf-content-policy.test.ts:211:20)
+(fail) windsurf content policy failures > invalid_argument returns 400 without cooling or failing over, even when worded as internal [17.77ms]
+[warn] [dispatch] Windsurf upstream error: {"target":"ws-a::ws-a-cred::chat","kind":"server_error","code":"permission_denied","message":"Windsurf upstream error: permission_denied: an internal error occurred"}
+[warn] [provider-connections] credential ws-a-cred cooldown for 30000ms reason=upstream_windsurf_server_error
+(pass) windsurf content policy failures > server errors cool down for 30 seconds without recording a 429 [5.54ms]
+
+ 3 pass
+ 1 fail
+ 30 expect() calls
+Ran 4 tests across 1 file. [643.00ms]

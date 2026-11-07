@@ -5,6 +5,7 @@
  * 内容**，不是账号或线路健康度。旧行为把它归到 unknown → 走 rate-limit 冷却
  * 分支，结果一个客户端的 prompt 把整个账号拖下线，同账号其他客户端跟着吃
  * 429。这里的测试锁定正确语义：400 直接返回、不冷却、不换 target 重试。
+ * invalid_argument（哪怕文案是 "an internal error occurred"）同理，也是请求本身的错。
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
@@ -35,7 +36,10 @@ import {
   selectRouteTarget,
 } from "~/lib/route-target"
 import { executeWithFailover } from "~/services/dispatch/failover"
-import { WindsurfUpstreamError } from "~/services/windsurf/error-classifier"
+import {
+  WindsurfUpstreamError,
+  classifyWindsurfErrorText,
+} from "~/services/windsurf/error-classifier"
 
 import { setTestConnections } from "./helpers/set-connections"
 
@@ -174,6 +178,49 @@ describe("windsurf content policy failures", () => {
 
     expect(thrown).toBeInstanceOf(HTTPError)
     expect((thrown as HTTPError).responseBody).toContain("content policy")
+  })
+
+  test("invalid_argument returns 400 without cooling or failing over, even when worded as internal", async () => {
+    await setupWindsurfConnection("ws-a", 0)
+    await setupWindsurfConnection("ws-b", 1)
+    const admission = buildAdmissionFor("model-x")
+    expect(admission.connection.id).toBe("ws-a")
+
+    // The exact upstream reply to temperature 0: a request fault despite the wording.
+    const error = new WindsurfUpstreamError(
+      classifyWindsurfErrorText(
+        "invalid_argument",
+        "an internal error occurred",
+      ),
+      new Uint8Array(),
+    )
+    const executed: Array<string> = []
+    const thrown = await executeWithFailover({
+      payload: { model: "model-x" },
+      admission,
+      routeKind: "chat",
+      execute: (_adapter, target) => {
+        executed.push(target.connectionId)
+        return Promise.reject(error)
+      },
+    }).then(
+      () => null,
+      (e: unknown) => e,
+    )
+
+    expect(thrown).toBeInstanceOf(HTTPError)
+    expect((thrown as HTTPError).response.status).toBe(400)
+    expect((thrown as HTTPError).responseBody).toContain("invalid_argument")
+    expect(executed).toEqual(["ws-a"])
+    const credential = getProviderConnection("ws-a")!.credentials[0]
+    expect(restInfoFor(credential.id)).toBeUndefined()
+    expect(credential.cooldownUntil).toBeUndefined()
+    expect(getRemainingCooldownSeconds("ws-a")).toBe(0)
+    expect(getAccountRateLimitSnapshot("ws-a").consecutive429Count).toBe(0)
+    expect(
+      buildRouteTargets({ publicModelId: "model-x", endpoint: "chat" })[0]
+        ?.connectionId,
+    ).toBe("ws-a")
   })
 
   test("server errors cool down for 30 seconds without recording a 429", async () => {

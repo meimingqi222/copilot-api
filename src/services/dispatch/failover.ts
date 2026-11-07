@@ -66,7 +66,7 @@ import {
   classifyAttemptFailure,
   logAttemptFailure,
   markCooldown,
-  toNonRetryableContentPolicyError,
+  toNonRetryableRequestError,
 } from "~/services/dispatch/cooldown"
 import {
   getProtocolAdapter,
@@ -383,9 +383,9 @@ export async function executeWithFailover<
 
       logAttemptFailure(logPrefix, current, error)
 
-      const contentPolicyError = toNonRetryableContentPolicyError(error)
-      if (contentPolicyError) {
-        throw contentPolicyError
+      const requestError = toNonRetryableRequestError(error)
+      if (requestError) {
+        throw requestError
       }
 
       if (!(error instanceof LocalConcurrencyLimitError)) {
