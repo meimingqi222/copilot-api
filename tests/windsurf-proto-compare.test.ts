@@ -92,14 +92,14 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
   })
 
   test.each([
-    [0, 0.000001],
-    [0.2, 0.2],
-    [undefined, 0.4],
+    [0, 0.3, 0.000001, 0.3],
+    [0.2, 0, 0.2, 0.000001],
+    [undefined, undefined, 0.4, 1],
   ])(
-    "encodes temperature %s without upstream zero rejection",
-    async (temperature, expected) => {
+    "encodes temperature %s and top_p %s without upstream zero rejection",
+    async (temperature, top_p, expectedTemperature, expectedTopP) => {
       const built = await buildRequest({
-        payload: { ...basePayload, temperature },
+        payload: { ...basePayload, temperature, top_p },
         apiKey: "test-key",
         requestModel: "swe-2-flash-medium",
         cascadeId: "temperature",
@@ -109,7 +109,11 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
         (node) => node.field === 8,
       )
       const fields = parseMessage(configuration!.raw!, 0, 0)
-      for (const field of [5, 6]) {
+      for (const [field, expected] of [
+        [5, expectedTemperature],
+        [6, expectedTemperature],
+        [8, expectedTopP],
+      ] as const) {
         const bytes = fields.find((node) => node.field === field)!.raw!
         expect(
           new DataView(
@@ -117,7 +121,7 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
             bytes.byteOffset,
             bytes.byteLength,
           ).getFloat64(0, true),
-        ).toBe(expected!)
+        ).toBe(expected)
       }
     },
   )
