@@ -116,7 +116,10 @@ export function classifyAttemptFailure(
       rest: restDecisionForReason({
         reason: restReasonForErrorKind(error.kind),
         retryAfterMs: error.retryAfterMs,
-        fallbackMs: DEFAULTS.COOLDOWN_429_FALLBACK_MS,
+        fallbackMs:
+          error.kind === "server_error" ?
+            DEFAULTS.COOLDOWN_5XX_MS
+          : DEFAULTS.COOLDOWN_429_FALLBACK_MS,
       }),
     }
   }
@@ -307,6 +310,19 @@ async function markAccountManagedCooldown(
       return
     }
     invalidateSessionAffinityAuth(authKey)
+    if (error.kind === "server_error") {
+      // A server failure needs a circuit break, not an adaptive 429 penalty.
+      markCredentialCooldown(conn.credentials[0], {
+        retryAfterMs:
+          rest?.restMs ?? error.retryAfterMs ?? DEFAULTS.COOLDOWN_5XX_MS,
+        reason: "upstream_windsurf_server_error",
+      })
+      await persistConnectionState(
+        logPrefix,
+        "connection server-error cooldown",
+      )
+      return
+    }
     await markConnectionRateLimitedMs(conn, {
       retryAfterMs: error.retryAfterMs,
       reason: `upstream_windsurf_${error.kind}`,

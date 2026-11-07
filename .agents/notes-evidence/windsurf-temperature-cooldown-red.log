@@ -1,0 +1,76 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/windsurf-proto-compare.test.ts:
+(pass) Windsurf proto — buildRequest fingerprint > small requests use a plain Connect envelope [3.06ms]
+115 |           new DataView(
+116 |             bytes.buffer,
+117 |             bytes.byteOffset,
+118 |             bytes.byteLength,
+119 |           ).getFloat64(0, true),
+120 |         ).toBe(expected!)
+                ^
+error: expect(received).toBe(expected)
+
+Expected: 0.000001
+Received: 0
+
+      at <anonymous> (<workspace>/tests/windsurf-proto-compare.test.ts:120:11)
+(fail) Windsurf proto — buildRequest fingerprint > encodes temperature %s without upstream zero rejection [3.72ms]
+(pass) Windsurf proto — buildRequest fingerprint > encodes temperature %s without upstream zero rejection [0.10ms]
+(pass) Windsurf proto — buildRequest fingerprint > encodes temperature %s without upstream zero rejection [0.03ms]
+(pass) Windsurf proto — buildRequest fingerprint > large requests compress without calling the blocking gzip codec [4.33ms]
+(pass) Windsurf proto — buildRequest fingerprint > request compression honours cancellation before encoding [0.59ms]
+(pass) Windsurf proto — buildRequest fingerprint > request compression honours cancellation during encoding [0.58ms]
+(pass) Windsurf proto — buildRequest fingerprint > produces oh-my-pi aligned top-level and metadata fields [1.74ms]
+(pass) Windsurf proto — buildRequest fingerprint > omits prompt_id field when not provided [0.18ms]
+(pass) Windsurf proto — buildRequest fingerprint > never writes field 22 (random session_id would break KV cache) [0.25ms]
+(pass) Windsurf proto — buildRequest fingerprint > omits tools when no tools are provided [0.13ms]
+(pass) Windsurf proto — buildRequest fingerprint > forwards historical reasoning_content as reasoning_text [0.29ms]
+(pass) Windsurf proto — buildRequest fingerprint > keeps reasoning-only assistant history [0.07ms]
+(pass) Windsurf proto — buildRequest fingerprint > forwards historical reasoning signatures in the correct field [0.07ms]
+(pass) Windsurf proto — buildRequest fingerprint > extracts signatures from reasoning content parts [0.11ms]
+(pass) Windsurf proto — buildRequest fingerprint > round-trips its own reply: reasoning_opaque returns as field 12 [0.11ms]
+(pass) Windsurf proto — buildRequest fingerprint > an empty top-level alias does not shadow reasoning content parts [0.07ms]
+(pass) Windsurf proto — buildRequest fingerprint > forwards top-level `reasoning` (OpenRouter spelling) [0.07ms]
+(pass) Windsurf proto — buildRequest fingerprint > drops the signature when it cannot cover the merged reasoning [0.14ms]
+(pass) Windsurf proto — buildRequest fingerprint > drops a reasoning_details signature that only signs a fragment [0.11ms]
+(pass) Windsurf proto — buildRequest fingerprint > drops a top-level signature that cannot cover merged reasoning [0.09ms]
+(pass) Windsurf proto — buildRequest fingerprint > round-trips interleaved reasoning via reasoning_opaque [0.09ms]
+(pass) Windsurf proto — buildRequest fingerprint > skips an assistant turn carrying only a signature [0.09ms]
+(pass) Windsurf proto — buildRequest fingerprint > normalizes bare apiKey to devin-session-token$ prefix [0.10ms]
+(pass) Windsurf proto — buildRequest fingerprint > keeps apiKey unchanged when prefix already present [0.08ms]
+(pass) Windsurf proto — buildRequest fingerprint > counts multiple messages and tools [0.12ms]
+(pass) Windsurf proto — buildRequest fingerprint > resolveSystemPrompt falls back to default when no system message [0.02ms]
+(pass) Windsurf proto — buildRequest fingerprint > resolveSystemPrompt joins multiple system messages [0.02ms]
+
+tests/windsurf-content-policy.test.ts:
+[warn] [dispatch] Windsurf upstream error: {"target":"ws-a::ws-a-cred::chat","kind":"content_policy","code":"permission_denied","message":"Windsurf upstream error: permission_denied: permission_denied: Your request was blocked by our content policy. Please remove sensitive or unsafe content from your prompt, memories, and other settings and try again. (trace ID: abc123)"}
+(pass) windsurf content policy failures > returns 400 without cooling the connection or failing over [21.21ms]
+[warn] [dispatch] Windsurf upstream error: {"target":"ws-a::ws-a-cred::chat","kind":"content_policy","code":"permission_denied","message":"Windsurf upstream error: permission_denied: permission_denied: Your request was blocked by our content policy. Please remove sensitive or unsafe content from your prompt, memories, and other settings and try again. (trace ID: abc123)"}
+(pass) windsurf content policy failures > keeps the upstream wording in the client-facing body [0.52ms]
+[warn] [dispatch] Windsurf upstream error: {"target":"ws-a::ws-a-cred::chat","kind":"server_error","code":"permission_denied","message":"Windsurf upstream error: permission_denied: an internal error occurred"}
+[warn] Windsurf upstream rate-limited account "ws-a": {"appliedCooldownMs":1000,"state":{"hasState":true,"limiterQueueSize":0,"cooldownRemainingSeconds":1,"consecutive429Count":1,"theoreticalArrivalDelayMs":1000}}
+[warn] Connection "ws-a" marked unavailable due to rate limit (upstream_windsurf_server_error)
+204 |     expect(thrown).toBeInstanceOf(WindsurfUpstreamError)
+205 |     const credential = getProviderConnection("ws-a")!.credentials[0]
+206 |     const rest = restInfoFor(credential.id)!
+207 |     expect(rest.reason).toBe("network")
+208 |     expect(rest.untilMs! - before).toBeGreaterThanOrEqual(30_000)
+209 |     expect(rest.untilMs! - Date.now()).toBeLessThanOrEqual(30_000)
+                                             ^
+error: expect(received).toBeLessThanOrEqual(expected)
+
+Expected: <= 30000
+Received: 59999
+
+      at <anonymous> (<workspace>/tests/windsurf-content-policy.test.ts:209:40)
+(fail) windsurf content policy failures > server errors cool down for 30 seconds without recording a 429 [1.71ms]
+
+2 tests failed:
+(fail) Windsurf proto — buildRequest fingerprint > encodes temperature %s without upstream zero rejection [3.72ms]
+(fail) windsurf content policy failures > server errors cool down for 30 seconds without recording a 429 [1.71ms]
+
+ 29 pass
+ 2 fail
+ 84 expect() calls
+Ran 31 tests across 2 files. [300.00ms]

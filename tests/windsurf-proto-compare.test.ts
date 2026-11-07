@@ -91,6 +91,37 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     expect(fingerprintWindsurfRequest(built).model).toBe("MODEL_TEST")
   })
 
+  test.each([
+    [0, 0.000001],
+    [0.2, 0.2],
+    [undefined, 0.4],
+  ])(
+    "encodes temperature %s without upstream zero rejection",
+    async (temperature, expected) => {
+      const built = await buildRequest({
+        payload: { ...basePayload, temperature },
+        apiKey: "test-key",
+        requestModel: "swe-2-flash-medium",
+        cascadeId: "temperature",
+        turnIndex: 0,
+      })
+      const configuration = parseMessage(decodeFramedPayload(built), 0, 0).find(
+        (node) => node.field === 8,
+      )
+      const fields = parseMessage(configuration!.raw!, 0, 0)
+      for (const field of [5, 6]) {
+        const bytes = fields.find((node) => node.field === field)!.raw!
+        expect(
+          new DataView(
+            bytes.buffer,
+            bytes.byteOffset,
+            bytes.byteLength,
+          ).getFloat64(0, true),
+        ).toBe(expected!)
+      }
+    },
+  )
+
   test("large requests compress without calling the blocking gzip codec", async () => {
     const content = "long history ".repeat(10000)
     const sync = spyOn(Bun, "gzipSync")

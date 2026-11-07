@@ -7,7 +7,7 @@
  * 429。这里的测试锁定正确语义：400 直接返回、不冷却、不换 target 重试。
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import { randomUUID } from "node:crypto"
 import fs from "node:fs/promises"
 import os from "node:os"
@@ -30,6 +30,8 @@ import {
 import {
   __resetRouteTargetRoundRobin,
   buildRouteTargets,
+  clearRestRegistryForTest,
+  restInfoFor,
   selectRouteTarget,
 } from "~/lib/route-target"
 import { executeWithFailover } from "~/services/dispatch/failover"
@@ -46,6 +48,7 @@ beforeEach(async () => {
   )
   redirectPathsToDir(tempAppDir)
   resetAdaptiveRateLimiterForTest()
+  clearRestRegistryForTest()
 })
 
 afterEach(async () => {
@@ -53,6 +56,7 @@ afterEach(async () => {
   __resetProviderConnectionsForTest()
   __resetRouteTargetRoundRobin()
   resetAdaptiveRateLimiterForTest()
+  clearRestRegistryForTest()
   setTestConnections([])
   await fs.rm(tempAppDir, { recursive: true, force: true }).catch(() => {})
 })
@@ -172,9 +176,10 @@ describe("windsurf content policy failures", () => {
     expect((thrown as HTTPError).responseBody).toContain("content policy")
   })
 
-  test("server errors still cool the connection down", async () => {
+  test("server errors cool down for 30 seconds without recording a 429", async () => {
     await setupWindsurfConnection("ws-a", 0)
     const admission = buildAdmissionFor("model-x")
+    const before = Date.now()
 
     const thrown = await executeWithFailover({
       payload: { model: "model-x" },
@@ -197,6 +202,31 @@ describe("windsurf content policy failures", () => {
     )
 
     expect(thrown).toBeInstanceOf(WindsurfUpstreamError)
-    expect(getRemainingCooldownSeconds("ws-a")).toBeGreaterThan(0)
+    const credential = getProviderConnection("ws-a")!.credentials[0]
+    const rest = restInfoFor(credential.id)!
+    expect(rest.reason).toBe("network")
+    expect(rest.untilMs! - before).toBeGreaterThanOrEqual(30_000)
+    expect(rest.untilMs! - Date.now()).toBeLessThanOrEqual(30_000)
+    expect(credential.status).toBe("cooldown")
+    expect(credential.cooldownUntil! - before).toBeGreaterThanOrEqual(30_000)
+    expect(credential.cooldownUntil! - Date.now()).toBeLessThanOrEqual(30_000)
+    expect(credential.exhaustedAt).toBeUndefined()
+    expect(getAccountRateLimitSnapshot("ws-a").consecutive429Count).toBe(0)
+    const clock = spyOn(Date, "now").mockReturnValue(before + 29_000)
+    try {
+      expect(
+        buildRouteTargets({ publicModelId: "model-x", endpoint: "chat" }),
+      ).toEqual([])
+      clock.mockReturnValue(
+        Math.max(rest.untilMs!, credential.cooldownUntil!) + 1,
+      )
+      expect(
+        buildRouteTargets({ publicModelId: "model-x", endpoint: "chat" }).map(
+          (target) => target.connectionId,
+        ),
+      ).toEqual(["ws-a"])
+    } finally {
+      clock.mockRestore()
+    }
   })
 })

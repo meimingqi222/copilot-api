@@ -430,6 +430,9 @@ function buildConfiguration(payload: ChatCompletionsPayload): ProtobufEncoder {
     stopPatterns = DEVIN_DEFAULT_STOP_PATTERNS
   }
 
+  // SWE rejects zero with invalid_argument; use near-greedy sampling, not the 0.4 default.
+  const temperature =
+    payload.temperature === 0 ? 0.000001 : (payload.temperature ?? 0.4)
   const cfg = new ProtobufEncoder()
   cfg.writeVarint(1, 1) // num_completions
   cfg.writeVarint(
@@ -437,8 +440,8 @@ function buildConfiguration(payload: ChatCompletionsPayload): ProtobufEncoder {
     payload.max_tokens ?? payload.max_completion_tokens ?? 64000,
   )
   cfg.writeVarint(3, 200) // max_newlines
-  cfg.writeDouble(5, payload.temperature ?? 0.4) // temperature
-  cfg.writeDouble(6, payload.temperature ?? 0.4) // first_temperature
+  cfg.writeDouble(5, temperature) // temperature
+  cfg.writeDouble(6, temperature) // first_temperature
   cfg.writeVarint(7, 50) // top_k
   cfg.writeDouble(8, payload.top_p ?? 1) // top_p
   for (const pattern of stopPatterns) {
