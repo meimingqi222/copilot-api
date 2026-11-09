@@ -1,0 +1,242 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/ir-responses.test.ts:
+54 |       { type: "function_call_output", call_id: "c1", output: "later data" },
+55 |       thought("third thought"),
+56 |       { type: "function_call", call_id: "c2", name: "read", arguments: "{}" },
+57 |     ]))
+58 |     const translated = encodeMessagesRequest(request, { replayReasoningText: true })
+59 |     expect(translated.messages.filter(turn => turn.role === "assistant").map(turn => turn.content)).toEqual([
+                                                                                                         ^
+error: expect(received).toEqual(expected)
+
+  [
+    [
+      {
+-       "thinking": "first thought",
+-       "type": "thinking",
+-     },
+-     {
+-       "thinking": "second distinct thought",
+-       "type": "thinking",
+-     },
+-     {
+        "id": "c1",
+        "input": {},
+        "name": "read",
+        "type": "tool_use",
+      },
+    ],
+    [
+      {
+        "thinking": "third thought",
+        "type": "thinking",
+      },
+      {
+        "id": "c2",
+        "input": {},
+        "name": "read",
+        "type": "tool_use",
+      },
+    ],
+  ]
+
+- Expected  - 8
++ Received  + 0
+
+      at <anonymous> (tests/ir-responses.test.ts:59:101)
+(fail) Responses IR request codec > consecutive reasoning blocks survive DeepSeek Messages replay without crossing boundaries [3.76ms]
+(pass) Responses IR request codec > native reasoning replay stays native; foreign signed thinking never becomes prose or ciphertext [1.15ms]
+(pass) Responses IR request codec > hosted tool dropping cannot weaken a required or named tool contract [0.35ms]
+(pass) Responses IR request codec > lifts developer-role Lite tools and unwraps functions namespace consistently [0.66ms]
+(pass) Responses IR request codec > client tool search restores discovered tools, history and response kinds [1.63ms]
+(pass) Responses IR request codec > Codex compatibility keeps effort, agent messages and late instructions in order [0.10ms]
+(pass) Responses IR request codec > decode losses report dropped Codex history and hosted tools without their contents [0.21ms]
+(pass) Responses IR request codec > encodes boolean search intent and respects explicit opt-out [0.13ms]
+(pass) Responses IR request codec > retains namespace mapping and rejects unknown allowed tool names [0.16ms]
+(pass) Responses IR request codec > flattens long namespace tool names within the Chat limit [0.22ms]
+(pass) Responses IR request codec > allowed_tools filters Chat tools before required mode is applied [0.12ms]
+(pass) Responses IR request codec > reasoning does not cross a user or tool-result boundary [0.04ms]
+(pass) Responses IR request codec > encodes image tool results and namespace calls as structured Responses items [0.06ms]
+(pass) Responses IR request codec > rejects non-portable file URLs before calling a Chat upstream [0.85ms]
+603 |           if (event.type === "part_end") {
+604 |             expect(ended.has(event.partId)).toBe(false)
+605 |             ended.add(event.partId)
+606 |           }
+607 |         }
+608 |         expect([...parts.values()]).toEqual(["first thought", "second distinct thought"])
+                                          ^
+error: expect(received).toEqual(expected)
+
+  [
++   "",
+    "first thought",
+    "second distinct thought",
+  ]
+
+- Expected  - 0
++ Received  + 1
+
+      at <anonymous> (tests/ir-responses.test.ts:608:37)
+(fail) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (output_item.done reasoning_text) [2.18ms]
+603 |           if (event.type === "part_end") {
+604 |             expect(ended.has(event.partId)).toBe(false)
+605 |             ended.add(event.partId)
+606 |           }
+607 |         }
+608 |         expect([...parts.values()]).toEqual(["first thought", "second distinct thought"])
+                                          ^
+error: expect(received).toEqual(expected)
+
+  [
++   "",
+    "first thought",
+    "second distinct thought",
+  ]
+
+- Expected  - 0
++ Received  + 1
+
+      at <anonymous> (tests/ir-responses.test.ts:608:37)
+(fail) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (output_item.done summary_text) [0.22ms]
+603 |           if (event.type === "part_end") {
+604 |             expect(ended.has(event.partId)).toBe(false)
+605 |             ended.add(event.partId)
+606 |           }
+607 |         }
+608 |         expect([...parts.values()]).toEqual(["first thought", "second distinct thought"])
+                                          ^
+error: expect(received).toEqual(expected)
+
+  [
++   "",
+    "first thought",
+    "second distinct thought",
+  ]
+
+- Expected  - 0
++ Received  + 1
+
+      at <anonymous> (tests/ir-responses.test.ts:608:37)
+(fail) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (completed reasoning_text) [0.13ms]
+603 |           if (event.type === "part_end") {
+604 |             expect(ended.has(event.partId)).toBe(false)
+605 |             ended.add(event.partId)
+606 |           }
+607 |         }
+608 |         expect([...parts.values()]).toEqual(["first thought", "second distinct thought"])
+                                          ^
+error: expect(received).toEqual(expected)
+
+  [
++   "",
+    "first thought",
+    "second distinct thought",
+  ]
+
+- Expected  - 0
++ Received  + 1
+
+      at <anonymous> (tests/ir-responses.test.ts:608:37)
+(fail) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (completed summary_text) [0.10ms]
+603 |           if (event.type === "part_end") {
+604 |             expect(ended.has(event.partId)).toBe(false)
+605 |             ended.add(event.partId)
+606 |           }
+607 |         }
+608 |         expect([...parts.values()]).toEqual(["first thought", "second distinct thought"])
+                                          ^
+error: expect(received).toEqual(expected)
+
+  [
++   "",
+    "first thought",
+    "second distinct thought",
+  ]
+
+- Expected  - 0
++ Received  + 1
+
+      at <anonymous> (tests/ir-responses.test.ts:608:37)
+(fail) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (empty_done_completed reasoning_text) [0.21ms]
+603 |           if (event.type === "part_end") {
+604 |             expect(ended.has(event.partId)).toBe(false)
+605 |             ended.add(event.partId)
+606 |           }
+607 |         }
+608 |         expect([...parts.values()]).toEqual(["first thought", "second distinct thought"])
+                                          ^
+error: expect(received).toEqual(expected)
+
+  [
++   "",
+    "first thought",
+    "second distinct thought",
+  ]
+
+- Expected  - 0
++ Received  + 1
+
+      at <anonymous> (tests/ir-responses.test.ts:608:37)
+(fail) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (empty_done_completed summary_text) [0.16ms]
+617 |       { type: "response.completed", response: { id: "r", model: "deepseek-flash", output: [{ type: "reasoning", content: [{ type: "reasoning_text", text: "different thought" }] }] } },
+618 |     ]
+619 |     const consume = async () => {
+620 |       for await (const event of decodeResponsesStream((async function* () { for (const frame of frames) yield { data: JSON.stringify(frame) } })(), "deepseek-flash")) void event
+621 |     }
+622 |     await expect(consume()).rejects.toThrow("reasoning changed after being streamed")
+                                          ^
+error: expect(received).rejects.toThrow(expected)
+
+Expected promise that rejects
+Received promise that resolved: Promise { <resolved> }
+
+      at <anonymous> (tests/ir-responses.test.ts:622:37)
+(fail) Responses IR result and stream codec > rejects a reasoning snapshot that contradicts already streamed text [3.54ms]
+(pass) Responses IR result and stream codec > DeepSeek reasoning_text streams before the terminal snapshot without duplication [0.51ms]
+(pass) Responses IR result and stream codec > Messages upstream restores custom and search calls (stream=%s) [0.99ms]
+(pass) Responses IR result and stream codec > Messages upstream restores custom and search calls (stream=%s) [2.43ms]
+(pass) Responses IR result and stream codec > custom input prefixes decode fragmented escapes without exposing JSON wrappers [0.12ms]
+(pass) Responses IR result and stream codec > incremental custom input preserves every escape and surrogate split [0.70ms]
+(pass) Responses IR result and stream codec > incremental custom input withholds incomplete and invalid strings [0.04ms]
+(pass) Responses IR result and stream codec > preserves refusal text in results and replayed history [0.08ms]
+(pass) Responses IR result and stream codec > preserves refusal text and stop without duplicating snapshots after prefix "" [0.36ms]
+(pass) Responses IR result and stream codec > preserves refusal text and stop without duplicating snapshots after prefix "Cannot " [0.10ms]
+(pass) Responses IR result and stream codec > preserves refusal text and stop without duplicating snapshots after prefix "Cannot comply" [0.03ms]
+(pass) Responses IR result and stream codec > keeps reasoning order and reported usage without inventing ciphertext [0.16ms]
+(pass) Responses IR result and stream codec > restores namespace on a flattened Chat tool call [0.09ms]
+(pass) Responses IR result and stream codec > offers a custom tool and its history to Chat as a function [0.17ms]
+(pass) Responses IR result and stream codec > serves a Codex custom-tool request through a Chat-only upstream [0.55ms]
+(pass) Responses IR result and stream codec > Responses translation uses structured Chat deltas after the first frame [1.62ms]
+(pass) Responses IR result and stream codec > answers a Chat call to a custom tool as a custom_tool_call [0.07ms]
+(pass) Responses IR result and stream codec > streams a Chat call to a custom tool as custom_tool_call events [0.56ms]
+(pass) Responses IR result and stream codec > custom tool streams isolate interleaved calls with initial argument prefixes [0.48ms]
+(pass) Responses IR result and stream codec > custom tool streaming keeps JSON parse work proportional to input size [2.78ms]
+(pass) Responses IR result and stream codec > streams reasoning, text, usage and completion incrementally [0.56ms]
+(pass) Responses IR result and stream codec > turns image_generation_call into an image the client can render [3.72ms]
+(pass) Responses IR result and stream codec > recovers an image that arrives only on output_item.done [1.75ms]
+(pass) Responses IR result and stream codec > emits final image bytes once across added, repeated done and completed events [0.36ms]
+(pass) Responses IR result and stream codec > recovers tool arguments from arguments.done without duplicating streamed prefixes [2.35ms]
+(pass) Responses IR result and stream codec > recovers tool arguments from output_item.done without duplicating streamed prefixes [1.42ms]
+(pass) Responses IR result and stream codec > recovers tool arguments from response.completed without duplicating streamed prefixes [0.36ms]
+(pass) Responses IR result and stream codec > recovers tool arguments from empty_output_item.done without duplicating streamed prefixes [0.26ms]
+(pass) Responses IR result and stream codec > rejects a final tool snapshot that contradicts emitted arguments [1.19ms]
+(pass) Responses IR result and stream codec > uses a terminal-only response without losing content [0.46ms]
+(pass) Responses IR result and stream codec > terminal response only fills items absent from earlier deltas [0.26ms]
+(pass) Responses IR result and stream codec > DONE without completion marks the response incomplete [0.12ms]
+(pass) Responses IR result and stream codec > emits content before the upstream stream finishes [0.17ms]
+
+8 tests failed:
+(fail) Responses IR request codec > consecutive reasoning blocks survive DeepSeek Messages replay without crossing boundaries [3.76ms]
+(fail) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (output_item.done reasoning_text) [2.18ms]
+(fail) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (output_item.done summary_text) [0.22ms]
+(fail) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (completed reasoning_text) [0.13ms]
+(fail) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (completed summary_text) [0.10ms]
+(fail) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (empty_done_completed reasoning_text) [0.21ms]
+(fail) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (empty_done_completed summary_text) [0.16ms]
+(fail) Responses IR result and stream codec > rejects a reasoning snapshot that contradicts already streamed text [3.54ms]
+
+ 45 pass
+ 8 fail
+ 324 expect() calls
+Ran 53 tests across 1 file. [303.00ms]

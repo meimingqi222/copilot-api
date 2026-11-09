@@ -17,6 +17,7 @@ import {
 } from "~/services/ir/image-generation"
 import { mergeUsage } from "~/services/ir/usage"
 import { CustomToolInputDecoder } from "~/services/ir/codecs/responses/custom-tool-input"
+import { getResponsesReasoningText } from "~/services/protocols/responses/types"
 import {
   decodeResponsesResult,
   encodeResponsesResult,
@@ -70,7 +71,6 @@ function decodeAddedPart(
 function* terminalMissingEvents(
   response: ResponsesResponse,
   populated: ReadonlySet<number>,
-  reasoningPopulated: boolean,
   startIndex: number,
   imageIndices: ReadonlyMap<string, number>,
 ): Iterable<StreamEvent> {
@@ -78,7 +78,6 @@ function* terminalMissingEvents(
   for (const [outputIndex, item] of (response.output ?? []).entries()) {
     if (
       populated.has(outputIndex)
-      || (item.type === "reasoning" && reasoningPopulated)
       || (item.type === "image_generation_call"
         && item.id !== undefined
         && populated.has(imageIndices.get(item.id) ?? -1))
@@ -162,10 +161,36 @@ function* completeToolArguments(
   }
 }
 
+/** Snapshots can fill an emitted prefix, but cannot rewrite it or reopen an ended part. */
+function* completeReasoningText(
+  current: { id: string; part: IRPart } | undefined,
+  index: number,
+  item: WireRecord | undefined,
+  closed = false,
+): Iterable<StreamEvent> {
+  if (current?.part.type !== "thinking" || !item) return
+  const text = getResponsesReasoningText(item)
+  if (!text) return
+  const prefix = current.part.text
+  if (!text.startsWith(prefix) || (closed && text !== prefix)) {
+    throw new Error("Responses reasoning changed after being streamed")
+  }
+  const suffix = text.slice(prefix.length)
+  current.part = { ...current.part, text }
+  if (suffix)
+    yield {
+      type: "part_delta",
+      partId: current.id,
+      index,
+      delta: { type: "thinking", text: suffix },
+    }
+}
+
 function* finishResponsePart(
   started: Map<number, { id: string; part: IRPart }>,
   index: number,
   item: WireRecord | undefined,
+  completedReasoning: Map<number, { id: string; part: IRPart }>,
 ): Iterable<StreamEvent> {
   const current = started.get(index)
   if (!current) return
@@ -174,6 +199,12 @@ function* finishResponsePart(
     if (!asString(item?.arguments)) return
     yield* completeToolArguments(current, index, asString(item?.arguments))
   }
+  if (current.part.type === "thinking") {
+    // An empty done is not authoritative; completion may carry the full thought.
+    if (!item || !getResponsesReasoningText(item)) return
+    yield* completeReasoningText(current, index, item)
+    completedReasoning.set(index, current)
+  }
   yield { type: "part_end", partId: current.id, index }
   started.delete(index)
 }
@@ -181,13 +212,50 @@ function* finishResponsePart(
 function* completeTerminalParts(
   response: ResponsesResponse,
   started: Map<number, { id: string; part: IRPart }>,
+  completedReasoning: Map<number, { id: string; part: IRPart }>,
+  populated: Set<number>,
 ): Iterable<StreamEvent> {
   for (const [index, item] of (response.output ?? []).entries()) {
     if (
       started.get(index)?.part.type === "tool_call"
       && item.type === "function_call"
     ) {
-      yield* finishResponsePart(started, index, asRecord(item))
+      yield* finishResponsePart(
+        started,
+        index,
+        asRecord(item),
+        completedReasoning,
+      )
+    }
+    if (item.type === "reasoning") {
+      // Legacy unindexed deltas belong to one item, not every terminal thought.
+      const key =
+        started.has(index) || completedReasoning.has(index) ? index
+        : started.has(-1) || completedReasoning.has(-1) ? -1
+        : index
+      yield* completeReasoningText(
+        completedReasoning.get(key),
+        key,
+        asRecord(item),
+        true,
+      )
+      if (started.get(key)?.part.type === "thinking") {
+        yield* finishResponsePart(
+          started,
+          key,
+          asRecord(item),
+          completedReasoning,
+        )
+        populated.add(index)
+      } else if (completedReasoning.has(key)) {
+        populated.add(index)
+      }
+      // Bind the unindexed legacy thought once, so later thoughts remain distinct.
+      const completed = completedReasoning.get(key)
+      if (key === -1 && completed) {
+        completedReasoning.delete(key)
+        completedReasoning.set(index, completed)
+      }
     }
   }
   for (const [index, current] of started) {
@@ -217,6 +285,45 @@ function refusalDelta(wire: WireRecord, refusals: Map<string, string>): string {
   return delta
 }
 
+function* completeOutputItem(
+  item: WireRecord | undefined,
+  index: number,
+  state: {
+    started: Map<number, { id: string; part: IRPart }>
+    completedReasoning: Map<number, { id: string; part: IRPart }>
+    populated: Set<number>
+    imageIndices: Map<string, number>
+    source: ResultIR["source"]
+  },
+): Iterable<StreamEvent> {
+  const { started, completedReasoning, populated, imageIndices, source } = state
+  if (item?.type === "image_generation_call") {
+    yield* imageResultEvents(item, index, populated, imageIndices)
+    return
+  }
+  if (item?.type === "reasoning") {
+    yield* completeReasoningText(
+      completedReasoning.get(index),
+      index,
+      item,
+      true,
+    )
+    if (
+      !started.has(index)
+      && !completedReasoning.has(index)
+      && getResponsesReasoningText(item)
+    ) {
+      const part: IRPart = { type: "thinking", text: "", source }
+      const partId = asString(item.id) ?? `thinking_${index}`
+      started.set(index, { id: partId, part })
+      yield { type: "part_start", partId, index, part }
+    }
+    if (started.has(index) || completedReasoning.has(index))
+      populated.add(index)
+  }
+  yield* finishResponsePart(started, index, item, completedReasoning)
+}
+
 /** Decode Responses SSE one event at a time; no full-stream buffering. */
 export async function* decodeResponsesStream(
   stream: AsyncIterable<CopilotStreamEventLike>,
@@ -224,11 +331,11 @@ export async function* decodeResponsesStream(
 ): AsyncIterable<StreamEvent> {
   const source = { wire: "responses" as const, model }
   const started = new Map<number, { id: string; part: IRPart }>()
+  const completedReasoning = new Map<number, { id: string; part: IRPart }>()
   const populated = new Set<number>()
   const imageIndices = new Map<string, number>()
   const refusals = new Map<string, string>()
   let refused = false
-  let reasoningPopulated = false
   let messageStarted = false
   let nextIndex = 0
   let responseId = ""
@@ -236,7 +343,7 @@ export async function* decodeResponsesStream(
     if (raw.data === "[DONE]") break
     const wire = parse(raw.data)
     if (!wire) continue
-    const type = asString(wire.type)
+    const type = asString(wire.type) ?? ""
     if (type === "error" || type === "response.failed") {
       yield* decodeFailure(wire)
       return
@@ -291,18 +398,22 @@ export async function* decodeResponsesStream(
       yield { type: "part_start", partId, index, part }
       continue
     }
+    const reasoningDelta = [
+      "response.reasoning_summary_text.delta",
+      "response.reasoning_text.delta",
+    ].includes(type)
     if (
       [
         "response.output_text.delta",
         "response.refusal.delta",
         "response.refusal.done",
         "response.reasoning_summary_text.delta",
+        "response.reasoning_text.delta",
         "response.function_call_arguments.delta",
-      ].includes(type ?? "")
+      ].includes(type)
     ) {
-      const index =
-        number(wire.output_index)
-        ?? (type === "response.reasoning_summary_text.delta" ? -1 : 0)
+      const index = number(wire.output_index) ?? (reasoningDelta ? -1 : 0)
+      nextIndex = Math.max(nextIndex, index + 1)
       let current = started.get(index)
       if (
         !current
@@ -310,7 +421,7 @@ export async function* decodeResponsesStream(
           "response.output_text.delta",
           "response.refusal.delta",
           "response.refusal.done",
-        ].includes(type ?? "")
+        ].includes(type)
       ) {
         const partId = `text_${index}`
         const part: IRPart = { type: "text", text: "" }
@@ -318,7 +429,7 @@ export async function* decodeResponsesStream(
         started.set(index, current)
         yield { type: "part_start", partId, index, part }
       }
-      if (!current && type === "response.reasoning_summary_text.delta") {
+      if (!current && reasoningDelta) {
         const partId = `thinking_${index}`
         const part: IRPart = { type: "thinking", text: "", source }
         current = { id: partId, part }
@@ -335,8 +446,6 @@ export async function* decodeResponsesStream(
       }
       if (!delta) continue
       populated.add(index)
-      if (type === "response.reasoning_summary_text.delta")
-        reasoningPopulated = true
       const deltaEvent: StreamEvent & { type: "part_delta" } = {
         type: "part_delta",
         partId: current.id,
@@ -344,11 +453,10 @@ export async function* decodeResponsesStream(
         delta:
           type === "response.function_call_arguments.delta" ?
             { type: "tool_arguments", text: delta }
-          : type === "response.reasoning_summary_text.delta" ?
-            { type: "thinking", text: delta }
+          : reasoningDelta ? { type: "thinking", text: delta }
           : { type: "text", text: delta },
       }
-      if (current.part.type === "tool_call")
+      if (current.part.type !== "text")
         current.part = updatePart(current.part, deltaEvent)
       yield deltaEvent
       continue
@@ -368,25 +476,32 @@ export async function* decodeResponsesStream(
       const index =
         number(wire.output_index)
         ?? (imageId ? imageIndices.get(imageId) : undefined)
+        ?? (item?.type === "reasoning" && started.has(-1) ? -1 : undefined)
         ?? nextIndex++
       nextIndex = Math.max(nextIndex, index + 1)
-      if (item?.type === "image_generation_call") {
-        yield* imageResultEvents(item, index, populated, imageIndices)
-        continue
-      }
-      yield* finishResponsePart(started, index, item)
+      yield* completeOutputItem(item, index, {
+        started,
+        completedReasoning,
+        populated,
+        imageIndices,
+        source,
+      })
       continue
     }
     if (type === "response.completed" || type === "response.incomplete") {
       const response = responseFromRecord(wire.response)
       if (response) {
         const result = decodeResponsesResult(response)
-        yield* completeTerminalParts(response, started)
+        yield* completeTerminalParts(
+          response,
+          started,
+          completedReasoning,
+          populated,
+        )
         // Recover items that appeared only in the terminal response object.
         yield* terminalMissingEvents(
           response,
           populated,
-          reasoningPopulated,
           nextIndex,
           imageIndices,
         )

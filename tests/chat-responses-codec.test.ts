@@ -23,6 +23,8 @@ import {
 } from "~/services/ir/codecs/responses/request"
 import { encodeResponsesResult } from "~/services/ir/codecs/responses/result"
 import { encodeResponsesStream } from "~/services/ir/codecs/responses/stream"
+import { planTranslation } from "~/services/ir"
+import { lossReasonCode } from "~/services/ir/loss-reasons"
 
 // These codecs replaced the Copilot-private Chat↔Responses translators.
 // Mapping of the old entry points to the surviving IR codec pipeline:
@@ -596,10 +598,10 @@ describe("chat → responses input translation (historical reasoning)", () => {
     ])
   })
 
-  test("injects historical reasoning exactly once when top-level and content parts agree", () => {
+  test("does not turn historical reasoning into prose when aliases and parts agree", () => {
     // The proxy's own responses→chat output carries reasoning both as
-    // top-level reasoning_content and as content parts; replaying it must not
-    // double the reasoning in the upstream prompt.
+    // top-level reasoning_content and as content parts. Neither copy belongs
+    // in the Responses assistant's published text.
     const out = toResponsesRequest({
       model: "gpt-5",
       messages: [
@@ -623,19 +625,14 @@ describe("chat → responses input translation (historical reasoning)", () => {
       assistant && "role" in assistant && Array.isArray(assistant.content) ?
         assistant.content.map((part) => ("text" in part ? part.text : ""))
       : []
-    expect(texts).toEqual(["[historical reasoning] step one", "answer"])
+    expect(texts).toEqual(["answer"])
     expect(assistant).toMatchObject({
-      content: [
-        { type: "output_text", text: "[historical reasoning] step one" },
-        { type: "output_text", text: "answer" },
-      ],
+      content: [{ type: "output_text", text: "answer" }],
     })
-    // The content-part copy is stripped — reasoning appears in the input
-    // exactly once instead of twice.
-    expect(JSON.stringify(input).match(/step one/g)).toHaveLength(1)
+    expect(JSON.stringify(input)).not.toContain("step one")
   })
 
-  test("injects historical reasoning once for assistant turns with tool calls", () => {
+  test("does not inject historical reasoning into assistant turns with tool calls", () => {
     const out = toResponsesRequest({
       model: "gpt-5",
       messages: [
@@ -666,16 +663,113 @@ describe("chat → responses input translation (historical reasoning)", () => {
       assistant && "role" in assistant && Array.isArray(assistant.content) ?
         assistant.content.map((part) => ("text" in part ? part.text : ""))
       : []
-    expect(texts).toEqual(["[historical reasoning] step one", "answer"])
+    expect(texts).toEqual(["answer"])
     expect(assistant).toMatchObject({
-      content: [
-        { type: "output_text", text: "[historical reasoning] step one" },
-        { type: "output_text", text: "answer" },
-      ],
+      content: [{ type: "output_text", text: "answer" }],
     })
     expect(
       input.filter((item) => "type" in item && item.type === "function_call"),
     ).toHaveLength(1)
-    expect(JSON.stringify(input).match(/step one/g)).toHaveLength(1)
+    expect(JSON.stringify(input)).not.toContain("step one")
+  })
+
+  test("drops foreign reasoning with telemetry while preserving multi-round tool history and direct Chat replay", () => {
+    const chat: ChatCompletionsPayload = {
+      model: "grok-4.6",
+      tools: [
+        {
+          type: "function",
+          function: { name: "read", parameters: { type: "object" } },
+        },
+      ],
+      messages: [
+        { role: "user", content: "inspect" },
+        {
+          role: "assistant",
+          content: null,
+          reasoning_content: "private plan A",
+          tool_calls: [
+            {
+              id: "call_a",
+              type: "function",
+              function: { name: "read", arguments: '{"path":"a"}' },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "call_a", content: "alpha data" },
+        {
+          role: "assistant",
+          content: "Alpha checked.",
+          reasoning_content: "private plan B",
+          tool_calls: [
+            {
+              id: "call_b",
+              type: "function",
+              function: { name: "read", arguments: '{"path":"b"}' },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "call_b", content: "beta data" },
+        {
+          role: "assistant",
+          content: "Both checked.",
+          reasoning_content: "private final thought",
+        },
+        { role: "user", content: "continue" },
+      ],
+    }
+    const ir = decodeChatRequest(chat)
+    const out = encodeResponsesRequest(ir)
+    expect(out.input as unknown).toEqual([
+      { role: "user", content: [{ type: "input_text", text: "inspect" }] },
+      {
+        type: "function_call",
+        call_id: "call_a",
+        name: "read",
+        arguments: '{"path":"a"}',
+      },
+      { type: "function_call_output", call_id: "call_a", output: "alpha data" },
+      {
+        role: "assistant",
+        content: [{ type: "output_text", text: "Alpha checked." }],
+      },
+      {
+        type: "function_call",
+        call_id: "call_b",
+        name: "read",
+        arguments: '{"path":"b"}',
+      },
+      { type: "function_call_output", call_id: "call_b", output: "beta data" },
+      {
+        role: "assistant",
+        content: [{ type: "output_text", text: "Both checked." }],
+      },
+      { role: "user", content: [{ type: "input_text", text: "continue" }] },
+    ])
+    expect(out.tools).toEqual([
+      { type: "function", name: "read", parameters: { type: "object" } },
+    ])
+    const plan = planTranslation(ir, { wire: "responses", issuer: "target" })
+    expect(plan.accepted).toBe(true)
+    expect(
+      plan.losses.records.map((loss) => [
+        loss.feature,
+        loss.action,
+        lossReasonCode(loss.reason),
+      ]),
+    ).toEqual([
+      ["unsigned_thinking", "drop", "foreign_reasoning_dropped"],
+      ["unsigned_thinking", "drop", "foreign_reasoning_dropped"],
+      ["unsigned_thinking", "drop", "foreign_reasoning_dropped"],
+    ])
+    expect(JSON.stringify(plan.losses)).not.toContain("private")
+    // This policy is target-specific: a Chat target still receives its own
+    // historical reasoning extensions rather than losing them globally.
+    const replay = encodeChatRequest(ir, { preserveHistoricalReasoning: true })
+    expect(
+      replay.messages
+        .filter((message) => message.role === "assistant")
+        .map((message) => message.reasoning_content),
+    ).toEqual(["private plan A", "private plan B", "private final thought"])
   })
 })

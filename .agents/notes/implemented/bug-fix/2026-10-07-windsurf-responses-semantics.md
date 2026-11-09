@@ -87,6 +87,9 @@ No retries or fabricated arguments are added. Tool response normalization is sep
   matching call IDs and tool results, and checks Responses output events.
 - The same file opens the real WebSocket route, requires a continuation error
   before upstream fetch, and sends a full replay that succeeds on the socket.
+- The added Messages signed-thinking replay cases preserve the instruction,
+  tool pairing and continuation contracts above. Per-block signature ownership
+  is documented in `2026-11-09-windsurf-thinking-block-signatures.md`.
 - `tests/windsurf-responses-translation.test.ts::Chat output caps and required tool schemas survive Windsurf encoding`
   verifies the final native limit, explicit-limit precedence, required query,
   strict flag and named tool choice through the real Chat route.

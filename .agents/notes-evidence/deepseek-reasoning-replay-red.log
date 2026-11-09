@@ -1,0 +1,827 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/messages-via-responses.test.ts:
+<-- POST /v1/messages
+--> POST /v1/messages 200 21ms
+(pass) POST /v1/messages sends a named schema to a responses-only connection [68.18ms]
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 5ms
+(pass) chat → Responses keeps reasoning out of prose (stream=false terminalOnly=false deepseek=false) [7.68ms]
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 2ms
+316 |           stream,
+317 |         }),
+318 |       },
+319 |     )
+320 |     expect(response.status).toBe(200)
+321 |     expect(sent?.input).toEqual([
+                              ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "content": [
+        {
+          "text": "inspect",
+          "type": "input_text",
+        },
+      ],
+      "role": "user",
+    },
+    {
+      "content": [
+        {
+-         "text": "private old plan",
+-         "type": "reasoning_text",
+-       },
+-     ],
+-     "summary": [],
+-     "type": "reasoning",
+-   },
+-   {
+-     "content": [
+-       {
+          "text": "Published [historical reasoning] literally.",
+          "type": "output_text",
+        },
+      ],
+      "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "call_old",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "call_old",
+      "output": "tool data",
+      "type": "function_call_output",
+    },
+    {
+      "content": [
+        {
+          "text": "continue",
+          "type": "input_text",
+        },
+      ],
+      "role": "user",
+    },
+  ]
+
+- Expected  - 10
++ Received  + 0
+
+      at <anonymous> (tests/messages-via-responses.test.ts:321:25)
+(fail) chat → Responses keeps reasoning out of prose (stream=false terminalOnly=false deepseek=true) [4.45ms]
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 6ms
+(pass) chat → Responses keeps reasoning out of prose (stream=true terminalOnly=false deepseek=false) [11.58ms]
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 3ms
+316 |           stream,
+317 |         }),
+318 |       },
+319 |     )
+320 |     expect(response.status).toBe(200)
+321 |     expect(sent?.input).toEqual([
+                              ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "content": [
+        {
+          "text": "inspect",
+          "type": "input_text",
+        },
+      ],
+      "role": "user",
+    },
+    {
+      "content": [
+        {
+-         "text": "private old plan",
+-         "type": "reasoning_text",
+-       },
+-     ],
+-     "summary": [],
+-     "type": "reasoning",
+-   },
+-   {
+-     "content": [
+-       {
+          "text": "Published [historical reasoning] literally.",
+          "type": "output_text",
+        },
+      ],
+      "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "call_old",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "call_old",
+      "output": "tool data",
+      "type": "function_call_output",
+    },
+    {
+      "content": [
+        {
+          "text": "continue",
+          "type": "input_text",
+        },
+      ],
+      "role": "user",
+    },
+  ]
+
+- Expected  - 10
++ Received  + 0
+
+      at <anonymous> (tests/messages-via-responses.test.ts:321:25)
+(fail) chat → Responses keeps reasoning out of prose (stream=true terminalOnly=false deepseek=true) [36.82ms]
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 2ms
+(pass) chat → Responses keeps reasoning out of prose (stream=true terminalOnly=true deepseek=false) [4.71ms]
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 1ms
+316 |           stream,
+317 |         }),
+318 |       },
+319 |     )
+320 |     expect(response.status).toBe(200)
+321 |     expect(sent?.input).toEqual([
+                              ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "content": [
+        {
+          "text": "inspect",
+          "type": "input_text",
+        },
+      ],
+      "role": "user",
+    },
+    {
+      "content": [
+        {
+-         "text": "private old plan",
+-         "type": "reasoning_text",
+-       },
+-     ],
+-     "summary": [],
+-     "type": "reasoning",
+-   },
+-   {
+-     "content": [
+-       {
+          "text": "Published [historical reasoning] literally.",
+          "type": "output_text",
+        },
+      ],
+      "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "call_old",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "call_old",
+      "output": "tool data",
+      "type": "function_call_output",
+    },
+    {
+      "content": [
+        {
+          "text": "continue",
+          "type": "input_text",
+        },
+      ],
+      "role": "user",
+    },
+  ]
+
+- Expected  - 10
++ Received  + 0
+
+      at <anonymous> (tests/messages-via-responses.test.ts:321:25)
+(fail) chat → Responses keeps reasoning out of prose (stream=true terminalOnly=true deepseek=true) [3.62ms]
+<-- POST /v1/messages
+--> POST /v1/messages 200 2ms
+(pass) messages → Responses keeps reasoning out of prose (stream=false terminalOnly=false deepseek=false) [3.80ms]
+<-- POST /v1/messages
+--> POST /v1/messages 200 3ms
+316 |           stream,
+317 |         }),
+318 |       },
+319 |     )
+320 |     expect(response.status).toBe(200)
+321 |     expect(sent?.input).toEqual([
+                              ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "content": [
+        {
+          "text": "inspect",
+          "type": "input_text",
+        },
+      ],
+      "role": "user",
+    },
+    {
+      "content": [
+        {
+-         "text": "private old plan",
+-         "type": "reasoning_text",
+-       },
+-     ],
+-     "summary": [],
+-     "type": "reasoning",
+-   },
+-   {
+-     "content": [
+-       {
+          "text": "Published [historical reasoning] literally.",
+          "type": "output_text",
+        },
+      ],
+      "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "call_old",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "call_old",
+      "output": "tool data",
+      "type": "function_call_output",
+    },
+    {
+      "content": [
+        {
+          "text": "continue",
+          "type": "input_text",
+        },
+      ],
+      "role": "user",
+    },
+  ]
+
+- Expected  - 10
++ Received  + 0
+
+      at <anonymous> (tests/messages-via-responses.test.ts:321:25)
+(fail) messages → Responses keeps reasoning out of prose (stream=false terminalOnly=false deepseek=true) [7.65ms]
+<-- POST /v1/messages
+[warn] Adaptive rate limiter waiting 1 seconds before sending request: {"accountId":"responses-conn","waitTimeMs":5,"state":{"hasState":true,"limiterQueueSize":0,"cooldownRemainingSeconds":0,"consecutive429Count":0,"theoreticalArrivalDelayMs":405}}
+--> POST /v1/messages 200 11ms
+(pass) messages → Responses keeps reasoning out of prose (stream=true terminalOnly=false deepseek=false) [16.33ms]
+<-- POST /v1/messages
+[warn] Adaptive rate limiter waiting 1 seconds before sending request: {"accountId":"responses-conn","waitTimeMs":40,"state":{"hasState":true,"limiterQueueSize":0,"cooldownRemainingSeconds":0,"consecutive429Count":0,"theoreticalArrivalDelayMs":440}}
+--> POST /v1/messages 200 43ms
+316 |           stream,
+317 |         }),
+318 |       },
+319 |     )
+320 |     expect(response.status).toBe(200)
+321 |     expect(sent?.input).toEqual([
+                              ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "content": [
+        {
+          "text": "inspect",
+          "type": "input_text",
+        },
+      ],
+      "role": "user",
+    },
+    {
+      "content": [
+        {
+-         "text": "private old plan",
+-         "type": "reasoning_text",
+-       },
+-     ],
+-     "summary": [],
+-     "type": "reasoning",
+-   },
+-   {
+-     "content": [
+-       {
+          "text": "Published [historical reasoning] literally.",
+          "type": "output_text",
+        },
+      ],
+      "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "call_old",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "call_old",
+      "output": "tool data",
+      "type": "function_call_output",
+    },
+    {
+      "content": [
+        {
+          "text": "continue",
+          "type": "input_text",
+        },
+      ],
+      "role": "user",
+    },
+  ]
+
+- Expected  - 10
++ Received  + 0
+
+      at <anonymous> (tests/messages-via-responses.test.ts:321:25)
+(fail) messages → Responses keeps reasoning out of prose (stream=true terminalOnly=false deepseek=true) [45.46ms]
+<-- POST /v1/messages
+[warn] Adaptive rate limiter waiting 1 seconds before sending request: {"accountId":"responses-conn","waitTimeMs":44,"state":{"hasState":true,"limiterQueueSize":0,"cooldownRemainingSeconds":0,"consecutive429Count":0,"theoreticalArrivalDelayMs":444}}
+--> POST /v1/messages 200 47ms
+(pass) messages → Responses keeps reasoning out of prose (stream=true terminalOnly=true deepseek=false) [50.46ms]
+<-- POST /v1/messages
+[warn] Adaptive rate limiter waiting 1 seconds before sending request: {"accountId":"responses-conn","waitTimeMs":44,"state":{"hasState":true,"limiterQueueSize":0,"cooldownRemainingSeconds":0,"consecutive429Count":0,"theoreticalArrivalDelayMs":444}}
+--> POST /v1/messages 200 46ms
+316 |           stream,
+317 |         }),
+318 |       },
+319 |     )
+320 |     expect(response.status).toBe(200)
+321 |     expect(sent?.input).toEqual([
+                              ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "content": [
+        {
+          "text": "inspect",
+          "type": "input_text",
+        },
+      ],
+      "role": "user",
+    },
+    {
+      "content": [
+        {
+-         "text": "private old plan",
+-         "type": "reasoning_text",
+-       },
+-     ],
+-     "summary": [],
+-     "type": "reasoning",
+-   },
+-   {
+-     "content": [
+-       {
+          "text": "Published [historical reasoning] literally.",
+          "type": "output_text",
+        },
+      ],
+      "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "call_old",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "call_old",
+      "output": "tool data",
+      "type": "function_call_output",
+    },
+    {
+      "content": [
+        {
+          "text": "continue",
+          "type": "input_text",
+        },
+      ],
+      "role": "user",
+    },
+  ]
+
+- Expected  - 10
++ Received  + 0
+
+      at <anonymous> (tests/messages-via-responses.test.ts:321:25)
+(fail) messages → Responses keeps reasoning out of prose (stream=true terminalOnly=true deepseek=true) [49.69ms]
+
+tests/openai-responses-strip-previous.test.ts:
+190 |       })
+191 |       const sent = JSON.parse(captured[0]?.body ?? "{}") as Record<
+192 |         string,
+193 |         unknown
+194 |       >
+195 |       expect(sent.input).toEqual(
+                               ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+-     "content": [
++     "encrypted_content": "opaque",
++     "id": "r1",
++     "summary": [
+        {
+          "text": "summary A",
+-         "type": "reasoning_text",
++         "type": "summary_text",
+        },
+      ],
+-     "summary": [],
+      "type": "reasoning",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "c1",
+      "output": "data A",
+      "type": "function_call_output",
+    },
+    {
+      "content": [
+        {
+          "text": "full thought B",
+          "type": "reasoning_text",
+        },
+      ],
+-     "summary": [],
++     "summary": [
++       {
++         "text": "short summary",
++         "type": "summary_text",
++       },
++     ],
+      "type": "reasoning",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c2",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "c2",
+      "output": "data B",
+      "type": "function_call_output",
++   },
++   {
++     "encrypted_content": "unreadable",
++     "summary": [],
++     "type": "reasoning",
+    },
+  ]
+
+- Expected  - 4
++ Received  + 15
+
+      at <anonymous> (tests/openai-responses-strip-previous.test.ts:195:26)
+(fail) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://api.deepseek.com/v1 model-alias) [0.68ms]
+190 |       })
+191 |       const sent = JSON.parse(captured[0]?.body ?? "{}") as Record<
+192 |         string,
+193 |         unknown
+194 |       >
+195 |       expect(sent.input).toEqual(
+                               ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+-     "content": [
++     "encrypted_content": "opaque",
++     "id": "r1",
++     "summary": [
+        {
+          "text": "summary A",
+-         "type": "reasoning_text",
++         "type": "summary_text",
+        },
+      ],
+-     "summary": [],
+      "type": "reasoning",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "c1",
+      "output": "data A",
+      "type": "function_call_output",
+    },
+    {
+      "content": [
+        {
+          "text": "full thought B",
+          "type": "reasoning_text",
+        },
+      ],
+-     "summary": [],
++     "summary": [
++       {
++         "text": "short summary",
++         "type": "summary_text",
++       },
++     ],
+      "type": "reasoning",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c2",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "c2",
+      "output": "data B",
+      "type": "function_call_output",
++   },
++   {
++     "encrypted_content": "unreadable",
++     "summary": [],
++     "type": "reasoning",
+    },
+  ]
+
+- Expected  - 4
++ Received  + 15
+
+      at <anonymous> (tests/openai-responses-strip-previous.test.ts:195:26)
+(fail) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://third-party.test/v1 vendor/DeepSeek-flash) [0.19ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://third-party.test/deepseek gpt-test) [0.12ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://api.openai.com/v1 deepseek-flash) [0.06ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://api.x.ai/v1 deepseek-flash) [0.04ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://api.githubcopilot.com/v1 deepseek-flash) [0.03ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://chatgpt.com/v1 deepseek-flash) [0.04ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://test.openai.azure.com/v1 deepseek-flash) [0.05ms]
+(pass) openai-responses stripPreviousResponseId > strips previous_response_id when enabled [0.41ms]
+(pass) openai-responses stripPreviousResponseId > passes previous_response_id through by default [0.12ms]
+(pass) openai-responses stripPreviousResponseId > flag persists through create/update [0.10ms]
+(pass) openai-responses stripPreviousResponseId > rewrites output_text history to input_text when enabled [0.18ms]
+(pass) openai-responses stripPreviousResponseId > leaves input_text and string input untouched [0.03ms]
+(pass) openai-responses transcript replay > second turn replays history as self-contained input [0.35ms]
+(pass) openai-responses transcript replay > string input is normalized for replay [0.12ms]
+(pass) openai-responses transcript replay > cache miss falls back to stripping only [0.06ms]
+(pass) openai-responses transcript replay > transcripts are isolated per connection [0.08ms]
+(pass) openai-responses transcript replay > instructions carry forward unless the turn sets its own [0.17ms]
+(pass) openai-responses transcript replay > streaming turn records transcript on completed [0.79ms]
+(pass) openai-responses translated targets > translated chat targets are stripped but never replayed or recorded [0.18ms]
+(pass) openai-responses translated targets > translated streaming targets are not recorded [0.21ms]
+(pass) snoopResponsesStreamForTranscript > passes events through and records on completed [0.20ms]
+(pass) snoopResponsesStreamForTranscript > failed streams are not recorded [0.07ms]
+(pass) snoopResponsesStreamForTranscript > overflowing streams pass through but are not recorded [5.78ms]
+
+tests/responses-via-messages.test.ts:
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+[warn] [upstream-model-audit] response model mismatch: sent "claude-sonnet-4" but upstream reported "deepseek-flash" { requestId: '69a0b96b-a6ce-41e7-9aa3-a3e8f659e267',
+  endpoint: 'messages',
+  connectionId: 'anthropic-conn',
+  credentialId: 'cred-1',
+  model: 'claude-sonnet-4',
+  modelUpstream: 'claude-sonnet-4',
+  modelResponse: 'deepseek-flash' }
+--> POST /v1/chat/completions 200 5ms
+(pass) chat → Messages replays unsigned thinking only for DeepSeek (stream=false deepseek=false) [7.73ms]
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 2ms
+219 |     )
+220 |     expect(
+221 |       assistants.map((message) =>
+222 |         message.content.filter((part) => part.type === "thinking"),
+223 |       ),
+224 |     ).toEqual(
+            ^
+error: expect(received).toEqual(expected)
+
+  [
+-   [
+-     {
+-       "thinking": "thought A",
+-       "type": "thinking",
+-     },
+-   ],
+-   [
+-     {
+-       "thinking": "thought B",
+-       "type": "thinking",
+-     },
+-   ],
++   [],
++   [],
+  ]
+
+- Expected  - 12
++ Received  + 2
+
+      at <anonymous> (tests/responses-via-messages.test.ts:224:7)
+(fail) chat → Messages replays unsigned thinking only for DeepSeek (stream=false deepseek=true) [3.65ms]
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 2ms
+[warn] [upstream-model-audit] response model mismatch: sent "claude-sonnet-4" but upstream reported "deepseek-flash" { requestId: '5320f98f-4adc-462a-ae27-5a3d892bcae9',
+  endpoint: 'messages',
+  connectionId: 'anthropic-conn',
+  credentialId: 'cred-1',
+  model: 'claude-sonnet-4',
+  modelUpstream: 'claude-sonnet-4',
+  modelResponse: 'deepseek-flash' }
+(pass) chat → Messages replays unsigned thinking only for DeepSeek (stream=true deepseek=false) [5.02ms]
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 1ms
+219 |     )
+220 |     expect(
+221 |       assistants.map((message) =>
+222 |         message.content.filter((part) => part.type === "thinking"),
+223 |       ),
+224 |     ).toEqual(
+            ^
+error: expect(received).toEqual(expected)
+
+  [
+-   [
+-     {
+-       "thinking": "thought A",
+-       "type": "thinking",
+-     },
+-   ],
+-   [
+-     {
+-       "thinking": "thought B",
+-       "type": "thinking",
+-     },
+-   ],
++   [],
++   [],
+  ]
+
+- Expected  - 12
++ Received  + 2
+
+      at <anonymous> (tests/responses-via-messages.test.ts:224:7)
+(fail) chat → Messages replays unsigned thinking only for DeepSeek (stream=true deepseek=true) [3.50ms]
+<-- POST /v1/responses
+[warn] [upstream-model-audit] response model mismatch: sent "claude-sonnet-4" but upstream reported "deepseek-flash" { requestId: 'd686cad0-f935-47ad-b4b1-87e2b0d0c30e',
+  endpoint: 'messages',
+  connectionId: 'anthropic-conn',
+  credentialId: 'cred-1',
+  model: 'claude-sonnet-4',
+  modelUpstream: 'claude-sonnet-4',
+  modelResponse: 'deepseek-flash' }
+--> POST /v1/responses 200 4ms
+(pass) responses → Messages replays unsigned thinking only for DeepSeek (stream=false deepseek=false) [5.42ms]
+<-- POST /v1/responses
+--> POST /v1/responses 200 1ms
+219 |     )
+220 |     expect(
+221 |       assistants.map((message) =>
+222 |         message.content.filter((part) => part.type === "thinking"),
+223 |       ),
+224 |     ).toEqual(
+            ^
+error: expect(received).toEqual(expected)
+
+  [
+-   [
+-     {
+-       "thinking": "thought A",
+-       "type": "thinking",
+-     },
+-   ],
+-   [
+-     {
+-       "thinking": "thought B",
+-       "type": "thinking",
+-     },
+-   ],
++   [],
++   [],
+  ]
+
+- Expected  - 12
++ Received  + 2
+
+      at <anonymous> (tests/responses-via-messages.test.ts:224:7)
+(fail) responses → Messages replays unsigned thinking only for DeepSeek (stream=false deepseek=true) [3.38ms]
+<-- POST /v1/responses
+--> POST /v1/responses 200 2ms
+[warn] [upstream-model-audit] response model mismatch: sent "claude-sonnet-4" but upstream reported "deepseek-flash" { requestId: '86074b26-4be3-4901-aa7e-2921f39f11a7',
+  endpoint: 'messages',
+  connectionId: 'anthropic-conn',
+  credentialId: 'cred-1',
+  model: 'claude-sonnet-4',
+  modelUpstream: 'claude-sonnet-4',
+  modelResponse: 'deepseek-flash' }
+(pass) responses → Messages replays unsigned thinking only for DeepSeek (stream=true deepseek=false) [5.86ms]
+<-- POST /v1/responses
+--> POST /v1/responses 200 1ms
+219 |     )
+220 |     expect(
+221 |       assistants.map((message) =>
+222 |         message.content.filter((part) => part.type === "thinking"),
+223 |       ),
+224 |     ).toEqual(
+            ^
+error: expect(received).toEqual(expected)
+
+  [
+-   [
+-     {
+-       "thinking": "thought A",
+-       "type": "thinking",
+-     },
+-   ],
+-   [
+-     {
+-       "thinking": "thought B",
+-       "type": "thinking",
+-     },
+-   ],
++   [],
++   [],
+  ]
+
+- Expected  - 12
++ Received  + 2
+
+      at <anonymous> (tests/responses-via-messages.test.ts:224:7)
+(fail) responses → Messages replays unsigned thinking only for DeepSeek (stream=true deepseek=true) [3.21ms]
+<-- POST /v1/responses
+[warn] Adaptive rate limiter waiting 1 seconds before sending request: {"accountId":"anthropic-conn","waitTimeMs":13,"state":{"hasState":true,"limiterQueueSize":0,"cooldownRemainingSeconds":0,"consecutive429Count":0,"theoreticalArrivalDelayMs":413}}
+--> POST /v1/responses 200 16ms
+(pass) POST /v1/responses routes to a messages-only connection via responses→messages translation [17.62ms]
+<-- POST /v1/responses
+[warn] Adaptive rate limiter waiting 1 seconds before sending request: {"accountId":"anthropic-conn","waitTimeMs":45,"state":{"hasState":true,"limiterQueueSize":0,"cooldownRemainingSeconds":0,"consecutive429Count":0,"theoreticalArrivalDelayMs":445}}
+--> POST /v1/responses 200 48ms
+(pass) responses retains split Messages stream usage (late input=false) [51.79ms]
+<-- POST /v1/responses
+[warn] Adaptive rate limiter waiting 1 seconds before sending request: {"accountId":"anthropic-conn","waitTimeMs":44,"state":{"hasState":true,"limiterQueueSize":0,"cooldownRemainingSeconds":0,"consecutive429Count":0,"theoreticalArrivalDelayMs":444}}
+--> POST /v1/responses 200 46ms
+(pass) responses retains split Messages stream usage (late input=true) [49.62ms]
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+[warn] Adaptive rate limiter waiting 1 seconds before sending request: {"accountId":"anthropic-conn","waitTimeMs":43,"state":{"hasState":true,"limiterQueueSize":0,"cooldownRemainingSeconds":0,"consecutive429Count":0,"theoreticalArrivalDelayMs":443}}
+--> POST /v1/chat/completions 200 46ms
+(pass) chat/completions retains split Messages stream usage (late input=false) [49.30ms]
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+[warn] Adaptive rate limiter waiting 1 seconds before sending request: {"accountId":"anthropic-conn","waitTimeMs":44,"state":{"hasState":true,"limiterQueueSize":0,"cooldownRemainingSeconds":0,"consecutive429Count":0,"theoreticalArrivalDelayMs":444}}
+--> POST /v1/chat/completions 200 46ms
+(pass) chat/completions retains split Messages stream usage (late input=true) [50.55ms]
+
+12 tests failed:
+(fail) chat → Responses keeps reasoning out of prose (stream=false terminalOnly=false deepseek=true) [4.45ms]
+(fail) chat → Responses keeps reasoning out of prose (stream=true terminalOnly=false deepseek=true) [36.82ms]
+(fail) chat → Responses keeps reasoning out of prose (stream=true terminalOnly=true deepseek=true) [3.62ms]
+(fail) messages → Responses keeps reasoning out of prose (stream=false terminalOnly=false deepseek=true) [7.65ms]
+(fail) messages → Responses keeps reasoning out of prose (stream=true terminalOnly=false deepseek=true) [45.46ms]
+(fail) messages → Responses keeps reasoning out of prose (stream=true terminalOnly=true deepseek=true) [49.69ms]
+(fail) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://api.deepseek.com/v1 model-alias) [0.68ms]
+(fail) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://third-party.test/v1 vendor/DeepSeek-flash) [0.19ms]
+(fail) chat → Messages replays unsigned thinking only for DeepSeek (stream=false deepseek=true) [3.65ms]
+(fail) chat → Messages replays unsigned thinking only for DeepSeek (stream=true deepseek=true) [3.50ms]
+(fail) responses → Messages replays unsigned thinking only for DeepSeek (stream=false deepseek=true) [3.38ms]
+(fail) responses → Messages replays unsigned thinking only for DeepSeek (stream=true deepseek=true) [3.21ms]
+
+ 38 pass
+ 12 fail
+ 159 expect() calls
+Ran 50 tests across 3 files. [916.00ms]

@@ -31,6 +31,8 @@ export const LOSS_REASONS = {
     "signature_not_replayed",
   "historical thinking without a valid signature cannot be replayed":
     "unsigned_thinking_dropped",
+  "Responses cannot replay historical thinking from another wire":
+    "foreign_reasoning_dropped",
   "opaque reasoning cannot be replayed to another issuer":
     "encrypted_reasoning_issuer_mismatch",
   "target has no explicit cache breakpoint": "cache_breakpoint_unsupported",

@@ -41,6 +41,7 @@ const originalLogPersist = process.env.LOG_PERSIST
 let testDir: string
 let packets: Array<Array<ProtobufNode>>
 let structuredReply: string | undefined
+let thinkingReply: Uint8Array | undefined
 
 function fieldText(
   nodes: Array<ProtobufNode>,
@@ -126,6 +127,7 @@ beforeEach(async () => {
   clearDevinUserJwtCacheForTest()
   packets = []
   structuredReply = undefined
+  thinkingReply = undefined
   process.env.LOG_PERSIST = "0"
   state.legacyApiKey = undefined
   state.users = []
@@ -155,6 +157,7 @@ beforeEach(async () => {
         Bun.gunzipSync(Buffer.from(framed.subarray(5)))
       : framed.subarray(5)
     packets.push(parseMessage(bytes, 0, 6))
+    if (thinkingReply) return new Response(thinkingReply)
     if (structuredReply !== undefined) {
       const frames = [
         structuredReply.slice(0, 8),
@@ -206,6 +209,178 @@ afterEach(async () => {
   redirectPathsToDir(originalDir)
   await fs.rm(testDir, { recursive: true, force: true })
 })
+
+test.each([false, true])(
+  "Messages preserves Devin thinking blocks and their signature types through tool replay (stream=%s)",
+  async (stream) => {
+    const claude = structuredClone(connection)
+    claude.models = [
+      {
+        ...connection.models![0],
+        publicId: "claude-opus-5-5",
+        upstreamId: "claude-opus-5-5",
+        endpoints: ["chat"],
+      },
+    ]
+    upsertProviderConnection(claude)
+    cacheModels()
+    const frame = (field: number, text: string) => {
+      const encoder = new ProtobufEncoder()
+      encoder.writeString(field, text)
+      return encodeConnectFrame(encoder.toUint8Array(), false)
+    }
+    const call = new ProtobufEncoder()
+    call.writeString(1, "call_beta")
+    call.writeString(2, "read_file")
+    call.writeString(3, '{"path":"beta"}')
+    const tool = new ProtobufEncoder()
+    tool.writeMessage(6, call)
+    tool.writeVarint(5, 10)
+    const eos = encodeConnectFrame(new TextEncoder().encode("{}"), false)
+    eos[0] = 2
+    thinkingReply = Buffer.concat([
+      frame(9, "inspect alpha"),
+      frame(10, "sig-a"),
+      frame(10, "-end"),
+      frame(21, "anthropic-bedrock"),
+      frame(3, "Reading alpha."),
+      frame(9, "then beta"),
+      frame(10, "sig-b"),
+      frame(10, "-tail"),
+      frame(21, "anthropic"),
+      encodeConnectFrame(tool.toUint8Array(), false),
+      eos,
+    ])
+    const request = {
+      model: "claude-opus-5-5",
+      max_tokens: 1024,
+      tools: [
+        {
+          name: "read_file",
+          input_schema: {
+            type: "object",
+            properties: { path: { type: "string" } },
+          },
+        },
+      ],
+      messages: [{ role: "user", content: "Inspect alpha then beta." }],
+    }
+    const response = await server.request("http://localhost/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...request, stream }),
+    })
+    expect(response.status).toBe(200)
+    let content: Array<Record<string, unknown>>
+    if (!stream)
+      content = (
+        (await response.json()) as { content: Array<Record<string, unknown>> }
+      ).content
+    else {
+      content = []
+      const argumentsByIndex = new Map<number, string>()
+      const frames = (await response.text())
+        .split("\n")
+        .filter((line) => line.startsWith("data:"))
+      for (const line of frames) {
+        const event = JSON.parse(line.slice(5)) as {
+          type: string
+          index: number
+          content_block?: Record<string, unknown>
+          delta?: {
+            type: string
+            thinking?: string
+            text?: string
+            signature?: string
+            partial_json?: string
+          }
+        }
+        if (event.type === "content_block_start")
+          content[event.index] = event.content_block!
+        const delta = event.delta
+        const block = content[event.index]
+        if (!delta || !block) continue
+        if (delta.type === "thinking_delta")
+          block.thinking = `${block.thinking ?? ""}${delta.thinking}`
+        if (delta.type === "signature_delta")
+          block.signature = `${block.signature ?? ""}${delta.signature}`
+        if (delta.type === "text_delta")
+          block.text = `${block.text ?? ""}${delta.text}`
+        if (delta.type === "input_json_delta")
+          argumentsByIndex.set(
+            event.index,
+            `${argumentsByIndex.get(event.index) ?? ""}${delta.partial_json}`,
+          )
+      }
+      for (const [index, args] of argumentsByIndex)
+        content[index].input = JSON.parse(args)
+    }
+    expect(content).toEqual([
+      { type: "thinking", thinking: "inspect alpha", signature: "sig-a-end" },
+      { type: "text", text: "Reading alpha." },
+      { type: "thinking", thinking: "then beta", signature: "sig-b-tail" },
+      {
+        type: "tool_use",
+        id: "call_beta",
+        name: "read_file",
+        input: { path: "beta" },
+      },
+    ])
+    const replay = await server.request("http://localhost/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ...request,
+        messages: [
+          ...request.messages,
+          { role: "assistant", content },
+          {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "call_beta",
+                content: "beta data",
+              },
+            ],
+          },
+        ],
+      }),
+    })
+    expect(replay.status).toBe(200)
+    await replay.text()
+    const prompts = packets
+      .at(-1)!
+      .filter((node) => node.field === 3)
+      .map((node) => node.sub!)
+    const assistant = prompts.filter(
+      (fields) => fields.find((node) => node.field === 2)?.varint === 2,
+    )
+    expect(
+      assistant.map((fields) => [
+        fieldText(fields, 3),
+        fieldText(fields, 11),
+        fieldText(fields, 12),
+        fieldText(fields, 18),
+      ]),
+    ).toEqual([
+      ["Reading alpha.", "inspect alpha", "sig-a-end", "anthropic-bedrock"],
+      [undefined, "then beta", "sig-b-tail", "anthropic"],
+    ])
+    expect(
+      assistant.map(
+        (fields) => fields.filter((node) => node.field === 6).length,
+      ),
+    ).toEqual([0, 1])
+    expect(
+      prompts.some(
+        (fields) =>
+          fieldText(fields, 7) === "call_beta"
+          && fieldText(fields, 3) === "beta data",
+      ),
+    ).toBe(true)
+  },
+)
 
 test("chained Responses deltas are rejected before a stateless Windsurf request", async () => {
   const response = await server.request("http://localhost/v1/responses", {

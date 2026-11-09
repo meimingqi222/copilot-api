@@ -1,0 +1,99 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/windsurf-collect-parity.test.ts:
+201 |           { type: "reasoning", text: "first", signature: firstSignature },
+202 |           ...(separator === "text" ? [{ type: "text", text: "between" }] : []),
+203 |           { type: "reasoning", text: "second", signature: secondSignature },
+204 |           { type: "text", text: "answer" },
+205 |         ])
+206 |         expect(collected.choices[0].message.reasoning_opaque).toBeNull()
+                                                                    ^
+error: expect(received).toBeNull()
+
+Received: "first-false-text-tailsecond-false-text-longer-end"
+
+      at <anonymous> (<workspace>/tests/windsurf-collect-parity.test.ts:206:63)
+(fail) windsurf non-streaming collector > actual adapter preserves per-block thinking signatures false text [17.07ms]
+195 |           ])
+196 |           collected = await collectChatCompletion(toStream(events), MODEL)
+197 |           const json = await collectChatCompletion(toStream(events.map(({ data }) => ({ data }))), MODEL)
+198 |           expect({ ...collected, id: "", created: 0 }).toEqual({ ...json, id: "", created: 0 })
+199 |         } else collected = result
+200 |         expect(collected.choices[0].message.content).toEqual([
+                                                           ^
+error: expect(received).toEqual(expected)
+
+- [
+-   {
+-     "signature": "first-false-tool-tail",
+-     "text": "first",
+-     "type": "reasoning",
+-   },
+-   {
+-     "signature": "second-false-tool-longer-end",
+-     "text": "second",
+-     "type": "reasoning",
+-   },
+-   {
+-     "text": "answer",
+-     "type": "text",
+-   },
+- ]
++ "answer"
+
+- Expected  - 16
++ Received  + 1
+
+      at <anonymous> (<workspace>/tests/windsurf-collect-parity.test.ts:200:54)
+(fail) windsurf non-streaming collector > actual adapter preserves per-block thinking signatures false tool [1.47ms]
+201 |           { type: "reasoning", text: "first", signature: firstSignature },
+202 |           ...(separator === "text" ? [{ type: "text", text: "between" }] : []),
+203 |           { type: "reasoning", text: "second", signature: secondSignature },
+204 |           { type: "text", text: "answer" },
+205 |         ])
+206 |         expect(collected.choices[0].message.reasoning_opaque).toBeNull()
+                                                                    ^
+error: expect(received).toBeNull()
+
+Received: "first-true-text-tailsecond-true-text-longer-end"
+
+      at <anonymous> (<workspace>/tests/windsurf-collect-parity.test.ts:206:63)
+(fail) windsurf non-streaming collector > actual adapter preserves per-block thinking signatures true text [1.07ms]
+195 |           ])
+196 |           collected = await collectChatCompletion(toStream(events), MODEL)
+197 |           const json = await collectChatCompletion(toStream(events.map(({ data }) => ({ data }))), MODEL)
+198 |           expect({ ...collected, id: "", created: 0 }).toEqual({ ...json, id: "", created: 0 })
+199 |         } else collected = result
+200 |         expect(collected.choices[0].message.content).toEqual([
+                                                           ^
+error: expect(received).toEqual(expected)
+
+- [
+-   {
+-     "signature": "first-true-tool-tail",
+-     "text": "first",
+-     "type": "reasoning",
+-   },
+-   {
+-     "signature": "second-true-tool-longer-end",
+-     "text": "second",
+-     "type": "reasoning",
+-   },
+-   {
+-     "text": "answer",
+-     "type": "text",
+-   },
+- ]
++ "answer"
+
+- Expected  - 16
++ Received  + 1
+
+      at <anonymous> (<workspace>/tests/windsurf-collect-parity.test.ts:200:54)
+(fail) windsurf non-streaming collector > actual adapter preserves per-block thinking signatures true tool [0.89ms]
+
+ 0 pass
+ 6 filtered out
+ 4 fail
+ 10 expect() calls
+Ran 4 tests across 1 file. [322.00ms]

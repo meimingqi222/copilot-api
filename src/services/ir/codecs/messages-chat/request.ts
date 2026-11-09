@@ -11,6 +11,7 @@ import type {
 import type {
   IRImagePart,
   IRPart,
+  IRThinkingPart,
   DecodeLoss,
   IRTurn,
   IRWebSearchResultPart,
@@ -334,9 +335,33 @@ function userTurnContent(
     : [{ type: "text", text: EMPTY_TEXT_PLACEHOLDER }]
 }
 
+/** Strict signature replay and readable-history replay are distinct contracts. */
+function thinkingToMessages(
+  part: IRThinkingPart,
+  options: { issuer?: string; replayReasoningText?: boolean },
+): AnthropicAssistantContentBlock | undefined {
+  if (options.replayReasoningText) {
+    return part.text ? { type: "thinking", thinking: part.text } : undefined
+  }
+  if (
+    part.source.wire !== "gemini"
+    && part.signature
+    && part.signedText === part.text
+    && (!part.source.issuer
+      || !options.issuer
+      || part.source.issuer === options.issuer)
+  )
+    return { type: "thinking", thinking: part.text, signature: part.signature }
+  return undefined
+}
+
 export function encodeMessagesRequest(
   ir: RequestIR,
-  options: { stream?: boolean; issuer?: string } = {},
+  options: {
+    stream?: boolean
+    issuer?: string
+    replayReasoningText?: boolean
+  } = {},
 ): AnthropicMessagesPayload {
   const systemParts = ir.instructions.flatMap(
     (instruction) => instruction.parts,
@@ -379,26 +404,15 @@ export function encodeMessagesRequest(
     }
     flush()
     const content: Array<AnthropicAssistantContentBlock> = []
-    for (const part of turn.parts.filter((part) =>
-      part.type === "thinking" ?
-        part.source.wire !== "gemini"
-      : part.type !== "text" || part.text.trim(),
+    for (const part of turn.parts.filter(
+      (part) => part.type !== "text" || part.text.trim(),
     )) {
       if (part.type === "image" || part.type === "file")
         throw new Error("Assistant media cannot be represented by Messages")
-      if (
-        part.type === "thinking"
-        && part.signature
-        && part.signedText === part.text
-        && (!part.source.issuer
-          || !options.issuer
-          || part.source.issuer === options.issuer)
-      )
-        content.push({
-          type: "thinking",
-          thinking: part.text,
-          signature: part.signature,
-        })
+      if (part.type === "thinking") {
+        const thinking = thinkingToMessages(part, options)
+        if (thinking) content.push(thinking)
+      }
       if (part.type === "text") content.push({ type: "text", text: part.text })
       if (part.type === "tool_call")
         content.push({

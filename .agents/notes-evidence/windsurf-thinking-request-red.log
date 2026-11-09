@@ -1,0 +1,40 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/windsurf-proto-compare.test.ts:
+464 |       .map((node) => parseMessage(node.raw!, 0, 0))
+465 |     const text = (fields: typeof prompts[number], field: number) => {
+466 |       const raw = fields.find((node) => node.field === field)?.raw
+467 |       return raw ? new TextDecoder().decode(raw) : undefined
+468 |     }
+469 |     expect(prompts.map((fields) => [text(fields, 3), text(fields, 11), text(fields, 12), text(fields, 18)])).toEqual([
+                                                                                                                   ^
+error: expect(received).toEqual(expected)
+
+  [
+    [
+      "Reading alpha.",
+-     "inspect alpha",
+-     "sig-a",
+-     "anthropic",
+-   ],
+-   [
++     "inspect alphathen beta",
++     "sig-asig-b",
+      undefined,
+-     "then beta",
+-     "sig-b",
+-     "anthropic",
+    ],
+  ]
+
+- Expected  - 8
++ Received  + 2
+
+      at <anonymous> (<repo>/tests/windsurf-proto-compare.test.ts:469:110)
+(fail) Windsurf proto — buildRequest fingerprint > keeps interleaved thinking signatures on separate upstream prompts [23.59ms]
+
+ 0 pass
+ 28 filtered out
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [87.00ms]

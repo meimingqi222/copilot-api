@@ -120,7 +120,11 @@ function chatToolConfig(
 
 export function encodeChatRequest(
   ir: RequestIR,
-  options: { preserveHistoricalReasoning?: boolean; stream?: boolean } = {},
+  options: {
+    preserveHistoricalReasoning?: boolean
+    preserveReasoningOrder?: boolean
+    stream?: boolean
+  } = {},
 ): ChatCompletionsPayload {
   const messages: Array<Message> = []
   for (const instruction of ir.instructions) {
@@ -212,23 +216,43 @@ export function encodeChatRequest(
     const images = turn.parts
       .filter((part) => part.type === "image")
       .map(imageToChat)
+    const ordered: Array<ContentPart> =
+      options.preserveReasoningOrder && thinking.length > 0 ?
+        turn.parts.flatMap((part): Array<ContentPart> => {
+          if (part.type === "text") return [{ type: "text", text: part.text }]
+          if (part.type === "thinking")
+            return [
+              {
+                type: "reasoning",
+                text: part.text,
+                ...(part.signature && part.signedText === part.text ?
+                  { signature: part.signature }
+                : {}),
+              },
+            ]
+          return []
+        })
+      : []
     messages.push({
       role: "assistant",
-      content: text || null,
+      content: ordered.length > 0 ? ordered : text || null,
       ...(images.length > 0 && { images }),
-      ...(thinking.length > 0 && {
-        reasoning_content: thinking.map((part) => part.text).join("\n\n"),
-        ...(thinking.length > 1 && {
-          reasoning_details: thinking.map((part) => ({
-            type: "reasoning.text",
-            text: part.text,
-            ...(part.signature && { signature: part.signature }),
-          })),
+      // Ordered blocks replace aggregate aliases, which could otherwise
+      // resurrect an invalid signature after the signed text was changed.
+      ...(thinking.length > 0
+        && ordered.length === 0 && {
+          reasoning_content: thinking.map((part) => part.text).join("\n\n"),
+          ...(thinking.length > 1 && {
+            reasoning_details: thinking.map((part) => ({
+              type: "reasoning.text",
+              text: part.text,
+              ...(part.signature && { signature: part.signature }),
+            })),
+          }),
+          ...(thinking.find((part) => part.signature)?.signature && {
+            signature: thinking.find((part) => part.signature)?.signature,
+          }),
         }),
-        ...(thinking.find((part) => part.signature)?.signature && {
-          signature: thinking.find((part) => part.signature)?.signature,
-        }),
-      }),
       ...(toolCalls.length > 0 && {
         tool_calls: toolCalls.map((part) => ({
           id: sanitizeId(part.id),

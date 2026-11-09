@@ -16,6 +16,10 @@ import {
   encodeConnectFrame,
   ProtobufEncoder,
 } from "~/services/windsurf/protobuf"
+import {
+  getWindsurfSignatureType,
+  rememberWindsurfSignature,
+} from "~/services/windsurf/thinking-signatures"
 
 /**
  * The non-streaming collector reads the structured `collected` twin that
@@ -142,6 +146,133 @@ function toStream(
 }
 
 describe("windsurf non-streaming collector", () => {
+  test.each(
+    [false, true].flatMap((stream) =>
+      ["text", "tool"].map((separator) => ({ stream, separator })),
+    ),
+  )(
+    "actual adapter preserves per-block thinking signatures $stream $separator",
+    async ({ stream, separator }) => {
+      const originalFetch = globalThis.fetch
+      const connection: ProviderConnection = {
+        id: "thinking-response",
+        name: "thinking-response",
+        protocol: "windsurf-native",
+        baseUrl: "",
+        enabled: true,
+        priority: 0,
+        createdAt: 0,
+        metadata: {
+          provider: "windsurf",
+          settings: { baseUrl: "https://windsurf.test" },
+        },
+        credentials: [
+          {
+            id: "thinking-response",
+            authMode: "bearer",
+            value: "test-key",
+            enabled: true,
+            status: "ready",
+            createdAt: 0,
+          },
+        ],
+      }
+      const frame = (field: number, text: string) => {
+        const encoded = new ProtobufEncoder()
+        encoded.writeString(field, text)
+        return encodeConnectFrame(encoded.toUint8Array(), false)
+      }
+      const tool = new ProtobufEncoder()
+      tool.writeString(1, "call_sep")
+      tool.writeString(2, "search")
+      tool.writeString(3, "{}")
+      const toolFrame = new ProtobufEncoder()
+      toolFrame.writeMessage(6, tool)
+      const eos = encodeConnectFrame(new TextEncoder().encode("{}"), false)
+      eos[0] = 2
+      const firstSignature = `first-${stream}-${separator}-tail`
+      const secondSignature = `second-${stream}-${separator}-longer-end`
+      const body = Buffer.concat([
+        frame(9, "first"),
+        frame(10, `first-${stream}-${separator}-`),
+        frame(10, "tail"),
+        separator === "text" ?
+          frame(3, "between")
+        : encodeConnectFrame(toolFrame.toUint8Array(), false),
+        frame(21, "type-first"),
+        frame(9, "second"),
+        frame(21, "type-second"),
+        frame(10, `second-${stream}-${separator}-longer-`),
+        frame(10, "end"),
+        frame(3, "answer"),
+        eos,
+      ])
+      globalThis.fetch = (async (input: string | URL | Request) => {
+        if (
+          !String(input instanceof Request ? input.url : input).includes(
+            "GetUserJwt",
+          )
+        )
+          return new Response(body)
+        const auth = new ProtobufEncoder()
+        auth.writeString(1, "test-jwt")
+        return new Response(auth.toUint8Array())
+      }) as typeof fetch
+      try {
+        const result = await createWindsurfChatCompletionsOnce(
+          { connection, credential: connection.credentials[0] },
+          {
+            model: MODEL,
+            messages: [{ role: "user", content: "think" }],
+            stream,
+          },
+        )
+        let collected
+        if (Symbol.asyncIterator in result) {
+          const events: Array<WindsurfStreamEvent> = []
+          for await (const event of result) events.push(event)
+          expect(
+            events.flatMap(({ data }) =>
+              data && data !== "[DONE]" ?
+                (JSON.parse(data).choices[0].delta.reasoning_opaque ?? [])
+              : [],
+            ),
+          ).toEqual([
+            `first-${stream}-${separator}-`,
+            "tail",
+            `second-${stream}-${separator}-longer-`,
+            "end",
+          ])
+          collected = await collectChatCompletion(toStream(events), MODEL)
+          const json = await collectChatCompletion(
+            toStream(events.map(({ data }) => ({ data }))),
+            MODEL,
+          )
+          expect({ ...collected, id: "", created: 0 }).toEqual({
+            ...json,
+            id: "",
+            created: 0,
+          })
+        } else collected = result
+        expect(collected.choices[0].message.content).toEqual([
+          { type: "reasoning", text: "first", signature: firstSignature },
+          ...(separator === "text" ?
+            [{ type: "text" as const, text: "between" }]
+          : []),
+          { type: "reasoning", text: "second", signature: secondSignature },
+          { type: "text", text: "answer" },
+        ])
+        expect(collected.choices[0].message.reasoning_opaque).toBeNull()
+        expect(getWindsurfSignatureType(firstSignature)).toBe("type-first")
+        expect(getWindsurfSignatureType(secondSignature)).toBe("type-second")
+        expect(getWindsurfSignatureType("unknown-signature")).toBe("anthropic")
+      } finally {
+        globalThis.fetch = originalFetch
+        clearDevinUserJwtCacheForTest()
+      }
+    },
+  )
+
   test.each([false, true])(
     "actual adapter normalizes interleaved tool snapshots and incremental args (stream=%s)",
     async (stream) => {
@@ -297,6 +428,7 @@ describe("windsurf non-streaming collector", () => {
 
     // And the collected content itself is correct, not just self-consistent.
     expect(structured.choices[0].message.content).toBe("Hello 世界🎉")
+    expect(structured.choices[0].message.reasoning_opaque).toBe("SIG")
     expect(structured.choices[0].finish_reason).toBe("tool_calls")
     expect(structured.choices[0].message.tool_calls).toEqual([
       {
@@ -311,6 +443,20 @@ describe("windsurf non-streaming collector", () => {
       prompt_tokens_details: { cached_tokens: 90 },
     })
   })
+  test("signature replay metadata is bounded and refreshes existing keys", () => {
+    rememberWindsurfSignature("old-entry", "old-type")
+    for (let i = 0; i < 512; i++)
+      rememberWindsurfSignature(`bounded-${i}`, "type")
+    expect(getWindsurfSignatureType("old-entry")).toBe("anthropic")
+    rememberWindsurfSignature("bounded-0", "updated")
+    rememberWindsurfSignature("new-entry", "new-type")
+    expect(getWindsurfSignatureType("bounded-0")).toBe("updated")
+    expect(getWindsurfSignatureType("bounded-1")).toBe("anthropic")
+    const oversized = "x".repeat(4 * 1024 * 1024)
+    rememberWindsurfSignature(oversized, "oversized")
+    expect(getWindsurfSignatureType(oversized)).toBe("anthropic")
+  })
+
   test.each(["tools", "mixed"])(
     "enforces one response budget across %s",
     async (mode) => {

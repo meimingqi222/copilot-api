@@ -8,6 +8,7 @@ import type { CacheCreationUsage } from "~/lib/cache-usage"
  */
 
 import type { OpenAIServiceTier } from "~/lib/service-tier"
+import { asRecord, asString } from "~/lib/json-shape"
 
 /** 上游 SSE 事件的通用外形（data + 可选 event 名）。 */
 export interface CopilotStreamEventLike {
@@ -46,6 +47,7 @@ interface ResponsesReasoningItem {
   type: "reasoning"
   id?: string
   summary?: Array<ResponsesReasoningSummaryPart>
+  content?: Array<{ type: "reasoning_text"; text: string }>
 }
 
 interface ResponsesMessageItem {
@@ -170,6 +172,7 @@ export type ResponsesInputItem =
       id?: string
       encrypted_content?: string
       summary?: Array<ResponsesReasoningSummaryPart>
+      content?: Array<{ type: "reasoning_text"; text: string }>
     }
   /** Replayed by clients that used the upstream `web_search` tool. */
   | ResponsesWebSearchCallItem
@@ -302,6 +305,24 @@ export interface ResponsesResponse {
   metadata?: Record<string, unknown>
 }
 
+/** Prefer full readable reasoning over a summary; never interpret ciphertext. */
+export function getResponsesReasoningText(
+  item: Record<string, unknown>,
+): string {
+  const text = (value: unknown, type?: string): string =>
+    Array.isArray(value) ?
+      value
+        .map((raw) => {
+          const part = asRecord(raw)
+          return !type || part?.type === type ?
+              (asString(part?.text) ?? "")
+            : ""
+        })
+        .join("")
+    : ""
+  return text(item.content, "reasoning_text") || text(item.summary)
+}
+
 export function extractMessageContentFromResponsesPayload(
   payload: ResponsesPayload,
 ): string {
@@ -312,7 +333,8 @@ export function extractMessageContentFromResponsesPayload(
 
   const parts: Array<string> = []
   for (const item of input) {
-    if (!("content" in item) || item.role !== "user") continue
+    if (!("content" in item) || !("role" in item) || item.role !== "user")
+      continue
     if (typeof item.content === "string") {
       parts.push(item.content)
       continue

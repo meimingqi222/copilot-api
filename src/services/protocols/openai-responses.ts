@@ -54,6 +54,10 @@ import {
   snoopResponsesStreamForTranscript,
 } from "./openai-responses-transcript"
 import { discoverJsonModels, discoveredModelMappings } from "./discover-models"
+import {
+  replayResponsesReasoningText,
+  replaysReasoningText,
+} from "~/services/protocols/reasoning-replay"
 
 function classifyDiscoveredModelEndpoints(
   id: string,
@@ -193,6 +197,14 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
         recordedInput = normalizeResponsesInputToItems(upstreamPayload.input)
         recordedInstructions = upstreamPayload.instructions
       }
+    }
+
+    if (replaysReasoningText(connection, target.upstreamModelId)) {
+      upstreamPayload.input = replayResponsesReasoningText(
+        upstreamPayload.input,
+      )
+      if (recordedInput)
+        recordedInput = normalizeResponsesInputToItems(upstreamPayload.input)
     }
 
     const response = await fetch(

@@ -145,6 +145,8 @@ interface TargetCapabilities {
   model?: string
   /** Identity of the issuer that will validate opaque references. */
   issuer?: string
+  /** Target explicitly accepts readable history without a vendor signature. */
+  replayReasoningText?: boolean
   supports?: Partial<WireCapabilities>
   /** A target may itself place prompt cache breakpoints. */
   cacheControlPolicy?: "caller" | "target"
@@ -516,6 +518,37 @@ function recordReasoningLoss(
   feature: RequestFeature,
   capabilities: WireCapabilities,
 ): void {
+  if (
+    target.replayReasoningText
+    && (target.wire === "responses" || target.wire === "messages")
+    && (feature.kind === "signed_thinking"
+      || feature.kind === "unsigned_thinking")
+  ) {
+    if (feature.kind === "signed_thinking")
+      record(
+        records,
+        target.wire,
+        feature,
+        "transform",
+        "target cannot replay Anthropic signature; retain readable reasoning only",
+      )
+    return
+  }
+  if (
+    target.wire === "responses"
+    && (feature.kind === "signed_thinking"
+      || feature.kind === "unsigned_thinking")
+    && feature.source?.wire !== "responses"
+  ) {
+    record(
+      records,
+      target.wire,
+      feature,
+      "drop",
+      "Responses cannot replay historical thinking from another wire",
+    )
+    return
+  }
   switch (feature.kind as ReasoningFeatureKind) {
     case "signed_thinking":
       if (
@@ -575,7 +608,8 @@ function recordReasoningLoss(
       break
     case "encrypted_reasoning":
       if (
-        !capabilities.encryptedReasoning
+        target.replayReasoningText
+        || !capabilities.encryptedReasoning
         || !target.issuer
         || target.issuer !== feature.source?.issuer
       ) {

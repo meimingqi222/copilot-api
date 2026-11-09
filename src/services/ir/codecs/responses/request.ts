@@ -13,7 +13,10 @@ import type {
 import { encodeChatTextFormat } from "~/services/ir/codecs/messages-chat/text-format"
 import { LocalPayloadUnsupportedError } from "~/lib/error"
 import { readOpenAIServiceTier } from "~/lib/service-tier"
-import { isResponsesServerTool } from "~/services/protocols/responses/types"
+import {
+  getResponsesReasoningText,
+  isResponsesServerTool,
+} from "~/services/protocols/responses/types"
 import {
   imagePartFromGenerationCall,
   responsesImageCall,
@@ -384,11 +387,11 @@ export function decodeResponsesRequest(payload: ResponsesPayload): RequestIR {
     : []
   const turns: Array<IRTurn> = []
   const losses: Array<DecodeLoss> = []
-  let pendingReasoning: Extract<IRPart, { type: "thinking" }> | undefined
+  let pendingReasoning: Array<Extract<IRPart, { type: "thinking" }>> = []
   const takeReasoning = (): Array<IRPart> => {
-    const part = pendingReasoning
-    pendingReasoning = undefined
-    return part ? [part] : []
+    const parts = pendingReasoning
+    pendingReasoning = []
+    return parts
   }
   const input =
     typeof payload.input === "string" ?
@@ -399,7 +402,7 @@ export function decodeResponsesRequest(payload: ResponsesPayload): RequestIR {
     turns,
     takeReasoning,
     clearReasoning: () => {
-      pendingReasoning = undefined
+      pendingReasoning = []
     },
     decodeContent: (value, path) => decodeContent(value, losses, path),
     liftedTools: [],
@@ -431,20 +434,17 @@ export function decodeResponsesRequest(payload: ResponsesPayload): RequestIR {
       continue
     }
     if (item.type === "reasoning") {
-      // The summary, else the reasoning itself when the item carries it.
-      const summary =
-        joinedText(item.summary) || joinedText(item.content, "reasoning_text")
-      pendingReasoning =
-        summary || asString(item.encrypted_content) ?
-          {
-            type: "thinking",
-            text: summary,
-            source,
-            ...(asString(item.encrypted_content) ?
-              { encryptedContent: asString(item.encrypted_content) }
-            : {}),
-          }
-        : undefined
+      const summary = getResponsesReasoningText(item)
+      if (summary || asString(item.encrypted_content)) {
+        pendingReasoning.push({
+          type: "thinking",
+          text: summary,
+          source,
+          ...(asString(item.encrypted_content) ?
+            { encryptedContent: asString(item.encrypted_content) }
+          : {}),
+        })
+      }
       continue
     }
     if (item.type === "function_call") {
@@ -502,7 +502,7 @@ export function decodeResponsesRequest(payload: ResponsesPayload): RequestIR {
       item.type === "function_call_output"
       || item.type === "custom_tool_call_output"
     ) {
-      pendingReasoning = undefined
+      pendingReasoning = []
       const callId = asString(item.call_id)
       if (
         !callId
@@ -530,7 +530,7 @@ export function decodeResponsesRequest(payload: ResponsesPayload): RequestIR {
       continue
     }
     if (item.type === "web_search_call") {
-      pendingReasoning = undefined
+      pendingReasoning = []
       const id = asString(item.id) ?? asString(item.call_id)
       if (id)
         turns.push({
@@ -558,7 +558,7 @@ export function decodeResponsesRequest(payload: ResponsesPayload): RequestIR {
         throw new LocalPayloadUnsupportedError(
           "Responses instruction contains non-text content",
         )
-      pendingReasoning = undefined
+      pendingReasoning = []
       if (turns.length > 0) {
         // Codex adds a developer message where its context changed (world
         // state, settings, a model switch) and keeps it there. Lifted into
@@ -605,7 +605,7 @@ export function decodeResponsesRequest(payload: ResponsesPayload): RequestIR {
           ...decodeContent(item.content, losses, `input[${index}].content`),
         ],
       })
-      if (!isAssistant) pendingReasoning = undefined
+      if (!isAssistant) pendingReasoning = []
       continue
     }
     if (decodeCodexInputItem(item, `input[${index}]`, codex)) continue
@@ -673,17 +673,6 @@ function responsesEffort(
     ) ?
       value
     : undefined
-}
-
-/** Concatenated `text` of the parts in `value`, optionally of one type only. */
-function joinedText(value: unknown, type?: string): string {
-  if (!Array.isArray(value)) return ""
-  return value
-    .map((raw) => {
-      const part = asRecord(raw)
-      return !type || part?.type === type ? (asString(part?.text) ?? "") : ""
-    })
-    .join("")
 }
 
 function encodeContent(
@@ -840,7 +829,10 @@ function* splitToolResultTurns(turns: Array<IRTurn>): Iterable<IRTurn> {
 }
 
 /** Opaque replay material stays on its originating wire. */
-function encodeResponsesTurns(turns: Array<IRTurn>): Array<RecordValue> {
+function encodeResponsesTurns(
+  turns: Array<IRTurn>,
+  replayReasoningText = false,
+): Array<RecordValue> {
   const items: Array<RecordValue> = []
   for (const turn of splitToolResultTurns(turns)) {
     if (turn.role === "tool") {
@@ -874,16 +866,17 @@ function encodeResponsesTurns(turns: Array<IRTurn>): Array<RecordValue> {
           continue
         }
         if (part.type !== "thinking") continue
-        // Responses accepts only its own replay objects as opaque reasoning.
-        // Historical thinking from another wire remains readable assistant
-        // context, without inventing encrypted_content for it.
-        if (part.source.wire !== "responses" && part.text) {
-          content.unshift({
-            type: "output_text",
-            text: `[historical reasoning] ${part.text}`,
-          })
+        if (replayReasoningText) {
+          if (part.text)
+            items.push({
+              type: "reasoning",
+              summary: [],
+              content: [{ type: "reasoning_text", text: part.text }],
+            })
           continue
         }
+        // Foreign thinking is not published prose or native replay material.
+        // Preflight records its omission; never invent a summary or ciphertext.
         if (
           part.source.wire === "responses"
           && (part.text || part.encryptedContent)
@@ -916,7 +909,10 @@ function encodeResponsesTurns(turns: Array<IRTurn>): Array<RecordValue> {
 }
 
 /** Encode conversation history and generation options into Responses wire. */
-export function encodeResponsesRequest(ir: RequestIR): ResponsesPayload {
+export function encodeResponsesRequest(
+  ir: RequestIR,
+  options: { replayReasoningText?: boolean } = {},
+): ResponsesPayload {
   const generation = ir.generation
   const tools = ir.tools ?? []
   const encodedTools = encodeRequestTools(
@@ -930,7 +926,7 @@ export function encodeResponsesRequest(ir: RequestIR): ResponsesPayload {
   ).response_format
   const payload: RecordValue = {
     model: ir.model,
-    input: encodeResponsesTurns(ir.turns),
+    input: encodeResponsesTurns(ir.turns, options.replayReasoningText),
     service_tier: readOpenAIServiceTier(generation?.serviceTier),
     ...(ir.instructions.length ?
       {

@@ -89,6 +89,7 @@ import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
 import type { ResponsesPayload } from "~/services/protocols/responses/types"
 import type { AnthropicMessagesPayload } from "./anthropic"
 import { isPlainResult } from "./result-shape"
+import { replaysReasoningText } from "~/services/protocols/reasoning-replay"
 
 /** Every codec reads SSE frames off `.data`; the rest of the frame is ignored. */
 type SseLike = { data?: string }
@@ -98,6 +99,9 @@ interface RequestEncodeContext {
   issuer?: string
   /** Some targets reject historical reasoning in the transcript. */
   preserveHistoricalReasoning?: boolean
+  /** Native Chat extensions can retain the source's ordered thinking blocks. */
+  preserveReasoningOrder?: boolean
+  replayReasoningText?: boolean
 }
 
 interface ResultDecodeContext {
@@ -146,6 +150,7 @@ const chatSpec: WireSpec = {
     encodeChatRequest(ir, {
       stream: ctx.stream,
       preserveHistoricalReasoning: ctx.preserveHistoricalReasoning,
+      preserveReasoningOrder: ctx.preserveReasoningOrder,
     }),
   decodeResult: (response) =>
     decodeChatResponse(response as Parameters<typeof decodeChatResponse>[0]),
@@ -162,7 +167,11 @@ const messagesSpec: WireSpec = {
       payload as Parameters<typeof decodeMessagesRequest>[0],
     ),
   encodeRequest: (ir, ctx) =>
-    encodeMessagesRequest(ir, { stream: ctx.stream, issuer: ctx.issuer }),
+    encodeMessagesRequest(ir, {
+      stream: ctx.stream,
+      issuer: ctx.issuer,
+      replayReasoningText: ctx.replayReasoningText,
+    }),
   decodeResult: (response) =>
     decodeMessagesResponse(
       response as Parameters<typeof decodeMessagesResponse>[0],
@@ -187,7 +196,9 @@ const responsesSpec: WireSpec = {
       payload as Parameters<typeof decodeResponsesRequest>[0],
     ),
   encodeRequest: (ir, ctx) => ({
-    ...encodeResponsesRequest(ir),
+    ...encodeResponsesRequest(ir, {
+      replayReasoningText: ctx.replayReasoningText,
+    }),
     ...(ctx.stream !== undefined && { stream: ctx.stream }),
   }),
   decodeResult: (response) =>
@@ -438,11 +449,16 @@ export async function createTranslatedCall(
   const searchers =
     needsSearchOrchestration(requestIR, target) ? listSearchers() : []
   const orchestrate = searchers.length > 0
+  const replayReasoningText = replaysReasoningText(
+    connection,
+    routeTarget.upstreamModelId,
+  )
   const plan = planTranslation(requestIR, {
     wire: target,
     providerId: connection.protocol,
     model: routeTarget.upstreamModelId,
     issuer: connection.id,
+    replayReasoningText,
     ...(cacheControlPolicy && {
       cacheControlPolicy,
     }),
@@ -519,6 +535,8 @@ export async function createTranslatedCall(
     stream,
     issuer: connection.id,
     preserveHistoricalReasoning,
+    preserveReasoningOrder: connection.protocol === "windsurf-native",
+    replayReasoningText,
   })
   const targetRequest =
     transformTargetRequest ? transformTargetRequest(encoded) : encoded

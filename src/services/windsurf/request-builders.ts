@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 
 import type {
   ChatCompletionsPayload,
+  ContentPart,
   Message,
   Tool,
 } from "~/services/protocols/chat/types"
@@ -21,6 +22,7 @@ import {
 import { buildWindsurfClientMetadata } from "./metadata"
 import { ProtobufEncoder, encodeConnectRequest } from "./protobuf"
 import { nextWindsurfSessionTurnIndex } from "./session-turn"
+import { getWindsurfSignatureType } from "~/services/windsurf/thinking-signatures"
 
 // ── Enum constants (aligned with oh-my-pi generated protobuf) ──────────────────
 
@@ -281,6 +283,7 @@ function writeChatMessagePrompt(
       }
       if (reasoningSignature) {
         prompt.writeString(12, reasoningSignature)
+        prompt.writeString(18, getWindsurfSignatureType(reasoningSignature))
       }
     })
     return true
@@ -309,6 +312,68 @@ function writeChatMessagePrompt(
   return false
 }
 
+/** Each signed block needs its own prompt; an aggregate signature signs none of them. */
+function splitAssistantThinking(message: Message): Array<Message> {
+  if (message.role !== "assistant") return [message]
+  let parts: Array<ContentPart> | undefined
+  if (
+    Array.isArray(message.content)
+    && message.content.some(
+      (part) => part.type === "reasoning" || part.type === "thinking",
+    )
+  )
+    parts = message.content
+  else if ((message.reasoning_details?.length ?? 0) > 1) {
+    const details = message.reasoning_details!.map((detail) => ({
+      type: "reasoning" as const,
+      text: extractReasoningBlockText(detail) ?? "",
+      ...(detail.signature ? { signature: detail.signature } : {}),
+    }))
+    const text = extractReasoningTextAlias(message)
+    const joined = details.map((part) => part.text ?? "").join("")
+    const spaced = details.map((part) => part.text ?? "").join("\n\n")
+    if (text && text !== joined && text !== spaced) return [message]
+    parts = [
+      ...details,
+      { type: "text", text: serializeMessageContent(message.content).text },
+    ]
+  }
+  if (!parts) return [message]
+  const singleThinking =
+    parts.filter(
+      (part) => part.type === "reasoning" || part.type === "thinking",
+    ).length === 1
+  const prompts: Array<Message> = []
+  for (const part of parts) {
+    if (part.type === "reasoning" || part.type === "thinking") {
+      const text = extractReasoningBlockText(part)
+      if (text) {
+        const signature =
+          part.signature
+          ?? (singleThinking ?
+            resolveAssistantSignature(message, text)
+          : undefined)
+        prompts.push({
+          role: "assistant",
+          content: null,
+          reasoning_text: text,
+          ...(signature ? { signature } : {}),
+        })
+      }
+    } else if (part.type === "text" || part.type === "output_text") {
+      if (!part.text) continue
+      const previous = prompts.at(-1)
+      if (previous) previous.content = `${previous.content ?? ""}${part.text}`
+      else prompts.push({ role: "assistant", content: part.text })
+    }
+  }
+  if (message.tool_calls?.length) {
+    if (!prompts.length) prompts.push({ role: "assistant", content: null })
+    prompts.at(-1)!.tool_calls = message.tool_calls
+  }
+  return prompts
+}
+
 function resolveAssistantReasoning(message: Message): string {
   // Falls through to the parts when the message carries no top-level
   // reasoning — including when it carries only an empty one, which
@@ -322,21 +387,9 @@ function resolveAssistantReasoning(message: Message): string {
 /**
  * Signature covering the whole of `reasoningText`, or undefined.
  *
- * Windsurf carries reasoning as a single pair — field 11 text, field 12
- * signature — so a signature may only be sent when it signs the entire string
- * written to field 11. History that arrives as several separately signed
- * segments (an Anthropic client with interleaved thinking and tool use, via
- * the IR messages→chat encoder) has no such signature: `reasoningText`
- * is their concatenation, and attaching the first segment's signature to it
- * yields a pair the upstream rejects. Dropping the signature degrades
- * gracefully; mismatching it does not.
- *
- * A top-level signature must provably pair with the whole of `reasoningText`
- * to be trusted: it needs its own top-level text, and the message must not
- * carry independently-signed segments that show the reasoning was assembled
- * from several signed blocks. `reasoning_opaque` is exempt — it is the full
- * accumulated signature this proxy's own Windsurf collector writes
- * (`collect-response.ts`), covering the stream by construction.
+ * Each prompt carries one text/signature pair; separately signed blocks are
+ * split before this point. Reject ambiguous aggregate aliases when an unsplit
+ * message still contains independently signed segments.
  */
 function resolveAssistantSignature(
   message: Message,
@@ -354,9 +407,6 @@ function resolveAssistantSignature(
   //     entries or reasoning/thinking content parts) — those indicate the
   //     reasoning was assembled from several signed blocks, so no single
   //     top-level signature can be shown to cover the concatenation.
-  // `reasoning_opaque` is exempt from (2): it is the spelling this proxy's own
-  // Windsurf collector emits as the full accumulated signature of the whole
-  // stream, so it covers `reasoning_text` by construction.
   const topLevel = extractSignatureAlias(message)
   if (topLevel && reasoningText === extractReasoningTextAlias(message)) {
     const hasSignedSegments =
@@ -367,7 +417,7 @@ function resolveAssistantSignature(
             (part.type === "reasoning" || part.type === "thinking")
             && part.signature,
         ))
-    if (!hasSignedSegments || message.reasoning_opaque) {
+    if (!hasSignedSegments) {
       return topLevel
     }
   }
@@ -602,11 +652,15 @@ export async function buildRequest(opts: {
 
   for (const [messageIndex, message] of payload.messages.entries()) {
     if (message.role === "system") continue
-    writeChatMessagePrompt(request, {
-      message,
-      index: messageIndex,
-      cascadeId,
-    })
+    const prompts = splitAssistantThinking(message)
+    for (const [partIndex, prompt] of prompts.entries()) {
+      writeChatMessagePrompt(request, {
+        message: prompt,
+        index: messageIndex,
+        cascadeId:
+          partIndex === 0 ? cascadeId : `${cascadeId}\0part-${partIndex}`,
+      })
+    }
   }
 
   request.writeVarint(7, ChatMessageRequestType.CASCADE)

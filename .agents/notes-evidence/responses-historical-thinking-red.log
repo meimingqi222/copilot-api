@@ -1,0 +1,140 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/chat-responses-codec.test.ts:
+(pass) chat → responses input translation (historical reasoning) > uses output_text for assistant history and input_text for user and tool content [1.01ms]
+623 |     )
+624 |     const texts =
+625 |       assistant && "role" in assistant && Array.isArray(assistant.content) ?
+626 |         assistant.content.map((part) => ("text" in part ? part.text : ""))
+627 |       : []
+628 |     expect(texts).toEqual(["answer"])
+                        ^
+error: expect(received).toEqual(expected)
+
+  [
++   "[historical reasoning] step one",
+    "answer",
+  ]
+
+- Expected  - 0
++ Received  + 1
+
+      at <anonymous> (<repo>/tests/chat-responses-codec.test.ts:628:19)
+(fail) chat → responses input translation (historical reasoning) > does not turn historical reasoning into prose when aliases and parts agree [33.81ms]
+663 |     )
+664 |     const texts =
+665 |       assistant && "role" in assistant && Array.isArray(assistant.content) ?
+666 |         assistant.content.map((part) => ("text" in part ? part.text : ""))
+667 |       : []
+668 |     expect(texts).toEqual(["answer"])
+                        ^
+error: expect(received).toEqual(expected)
+
+  [
++   "[historical reasoning] step one",
+    "answer",
+  ]
+
+- Expected  - 0
++ Received  + 1
+
+      at <anonymous> (<repo>/tests/chat-responses-codec.test.ts:668:19)
+(fail) chat → responses input translation (historical reasoning) > does not inject historical reasoning into assistant turns with tool calls [0.58ms]
+691 |         { role: "user", content: "continue" },
+692 |       ],
+693 |     }
+694 |     const ir = decodeChatRequest(chat)
+695 |     const out = encodeResponsesRequest(ir)
+696 |     expect(out.input).toEqual([
+                            ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "content": [
+        {
+          "text": "inspect",
+          "type": "input_text",
+        },
+      ],
+      "role": "user",
+    },
+    {
++     "content": [
++       {
++         "text": "[historical reasoning] private plan A",
++         "type": "output_text",
++       },
++     ],
++     "role": "assistant",
++   },
++   {
+      "arguments": "{"path":"a"}",
+      "call_id": "call_a",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "call_a",
+      "output": "alpha data",
+      "type": "function_call_output",
+    },
+    {
+      "content": [
++       {
++         "text": "[historical reasoning] private plan B",
++         "type": "output_text",
++       },
+        {
+          "text": "Alpha checked.",
+          "type": "output_text",
+        },
+      ],
+      "role": "assistant",
+    },
+    {
+      "arguments": "{"path":"b"}",
+      "call_id": "call_b",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "call_b",
+      "output": "beta data",
+      "type": "function_call_output",
+    },
+    {
+      "content": [
++       {
++         "text": "[historical reasoning] private final thought",
++         "type": "output_text",
++       },
+        {
+          "text": "Both checked.",
+          "type": "output_text",
+        },
+      ],
+      "role": "assistant",
+    },
+    {
+      "content": [
+        {
+          "text": "continue",
+          "type": "input_text",
+        },
+      ],
+      "role": "user",
+    },
+  ]
+
+- Expected  - 0
++ Received  + 17
+
+      at <anonymous> (<repo>/tests/chat-responses-codec.test.ts:696:23)
+(fail) chat → responses input translation (historical reasoning) > drops foreign reasoning with telemetry while preserving multi-round tool history and direct Chat replay [0.98ms]
+
+ 1 pass
+ 18 filtered out
+ 3 fail
+ 4 expect() calls
+Ran 4 tests across 1 file. [287.00ms]

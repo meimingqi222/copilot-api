@@ -226,6 +226,33 @@ describe("Messages and Chat IR codecs", () => {
     expect(detailsOnly.messages[0]?.content).toEqual(
       payload.messages[0]?.content,
     )
+    const options = {
+      preserveHistoricalReasoning: true,
+      preserveReasoningOrder: true,
+    }
+    expect(encodeChatRequest(ir, options).messages[0]).toEqual({
+      role: "assistant",
+      content: [
+        { type: "reasoning", text: "first", signature: "sig-1" },
+        { type: "reasoning", text: "second", signature: "sig-2" },
+        { type: "text", text: "answer" },
+      ],
+    })
+    const part = ir.turns[0].parts[0]
+    if (part.type !== "thinking") throw new Error("expected thinking fixture")
+    // After editing, neither an ordered part nor a top-level alias may carry
+    // the signature issued for the original text.
+    ir.turns[0].parts = [
+      { ...part, text: "edited" },
+      { type: "text", text: "answer" },
+    ]
+    expect(encodeChatRequest(ir, options).messages[0]).toEqual({
+      role: "assistant",
+      content: [
+        { type: "reasoning", text: "edited" },
+        { type: "text", text: "answer" },
+      ],
+    })
   })
 
   test.each(["", " \n"])(

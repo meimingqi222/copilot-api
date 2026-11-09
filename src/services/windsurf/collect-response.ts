@@ -60,11 +60,12 @@ function appendOrderedResponsePart(
   kind: OrderedResponsePart["kind"],
   text: string,
   currentBytes: number,
+  separate = false,
 ): number | undefined {
   const nextBytes = currentBytes + Buffer.byteLength(text)
   if (nextBytes > MAX_ORDERED_RESPONSE_BYTES) return undefined
   const previous = parts.at(-1)
-  if (previous?.kind === kind) {
+  if (previous?.kind === kind && !separate) {
     previous.text += text
     return nextBytes
   }
@@ -215,6 +216,9 @@ export async function collectChatCompletion(
   let text = ""
   let reasoningText = ""
   let reasoningOpaque = ""
+  let reasoningBlocks = 0
+  let thinking = false
+  let lastThinkingPart: OrderedResponsePart | undefined
   // Count every incoming text/tool delta once, never re-measure accumulated
   // strings: doing so would flatten ropes and reintroduce quadratic allocation.
   const budget = new ResponseBudget()
@@ -238,6 +242,12 @@ export async function collectChatCompletion(
     const reasoningDelta = chunk.reasoningText ?? ""
     const signatureDelta = chunk.reasoningOpaque ?? ""
     const signatureDeltaBytes = Buffer.byteLength(signatureDelta)
+    const newThinkingBlock = Boolean(reasoningDelta) && !thinking
+    if (newThinkingBlock) {
+      reasoningBlocks++
+      if (reasoningBlocks > 1) reasoningOpaque = ""
+    }
+    if (reasoningDelta) thinking = true
     budget.add(
       Buffer.byteLength(contentDelta)
         + Buffer.byteLength(reasoningDelta)
@@ -268,21 +278,29 @@ export async function collectChatCompletion(
         "reasoning",
         reasoningDelta,
         orderedPartsBytes,
+        newThinkingBlock,
       )
       if (nextBytes === undefined) orderedPartsComplete = false
-      else orderedPartsBytes = nextBytes
+      else {
+        orderedPartsBytes = nextBytes
+        lastThinkingPart = orderedParts.at(-1)
+      }
     }
-    reasoningOpaque += signatureDelta
+    if (reasoningBlocks <= 1) reasoningOpaque += signatureDelta
     if (signatureDelta && orderedPartsComplete) {
-      const previous = orderedParts.at(-1)
       if (
-        previous?.kind === "reasoning"
-        && orderedPartsBytes + signatureDeltaBytes <= MAX_ORDERED_RESPONSE_BYTES
+        orderedPartsBytes + signatureDeltaBytes
+        > MAX_ORDERED_RESPONSE_BYTES
       ) {
-        previous.signature = `${previous.signature ?? ""}${signatureDelta}`
+        orderedPartsComplete = false
+      } else if (lastThinkingPart) {
+        lastThinkingPart.signature = `${lastThinkingPart.signature ?? ""}${signatureDelta}`
         orderedPartsBytes += signatureDeltaBytes
       }
     }
+    // Tool activity closes a thinking block even when no text separates it
+    // from the next one. Keep tools in their existing normalized tool_calls.
+    if (contentDelta || chunk.toolCalls?.length) thinking = false
     usage = chunk.usage ?? usage
 
     const finReason = chunk.finishReason
@@ -359,7 +377,7 @@ export async function collectChatCompletion(
           content:
             (
               orderedPartsComplete
-              && hasReasoningAfterContent
+              && (hasReasoningAfterContent || reasoningBlocks > 1)
               && orderedContent.length > 0
             ) ?
               orderedContent

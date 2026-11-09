@@ -1,0 +1,704 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/openai-responses-strip-previous.test.ts:
+164 |         connection: buildConnection(),
+165 |         credential: buildCredential(),
+166 |         payload,
+167 |       })
+168 |       const sent = JSON.parse(captured[0]?.body ?? "{}") as Record<string, unknown>
+169 |       expect(sent.input).toEqual(replay ? [
+                               ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "content": "start",
+      "role": "user",
+    },
+    {
++     "content": "checking",
++     "role": "assistant",
++   },
++   {
+      "content": [
+        {
+          "text": "first",
+          "type": "reasoning_text",
+        },
+      ],
+      "summary": [],
+      "type": "reasoning",
+    },
+    {
+-     "content": "checking",
+-     "role": "assistant",
+-   },
+-   {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "content": [
+        {
+          "text": "later",
+          "type": "reasoning_text",
+        },
+      ],
+      "summary": [],
+      "type": "reasoning",
+    },
+    {
+      "call_id": "c1",
+      "output": "data",
+      "type": "function_call_output",
+    },
+    {
+-     "content": [
+-       {
+-         "text": "second",
+-         "type": "reasoning_text",
+-       },
+-     ],
+-     "summary": [],
+-     "type": "reasoning",
+-   },
+-   {
+      "content": "next",
+      "role": "assistant",
+      "type": "message",
+    },
+    {
+      "call_id": "c2",
+      "input": "pwd",
+      "name": "run",
+      "type": "custom_tool_call",
++   },
++   {
++     "content": [
++       {
++         "text": "second",
++         "type": "reasoning_text",
++       },
++     ],
++     "summary": [],
++     "type": "reasoning",
+    },
+    {
+      "call_id": "c2",
+      "output": "data",
+      "type": "custom_tool_call_output",
+    },
+    {
+      "content": "checking",
+      "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "c1",
+      "output": "data",
+      "type": "function_call_output",
+    },
+    {
+      "content": [
+        {
+          "text": "first",
+          "type": "reasoning_text",
+        },
+      ],
+      "summary": [],
+      "type": "reasoning",
+    },
+    {
+      "content": "checking",
+      "role": "assistant",
+    },
+    {
+      "content": [
+        {
+          "text": "later",
+          "type": "reasoning_text",
+        },
+      ],
+      "summary": [],
+      "type": "reasoning",
+    },
+  ]
+
+- Expected  - 14
++ Received  + 14
+
+      at <anonymous> (<repo>/tests/openai-responses-strip-previous.test.ts:169:26)
+(fail) openai-responses stripPreviousResponseId > leads each DeepSeek assistant step with its first readable reasoning (stream=false replay=true) [19.45ms]
+164 |         connection: buildConnection(),
+165 |         credential: buildCredential(),
+166 |         payload,
+167 |       })
+168 |       const sent = JSON.parse(captured[0]?.body ?? "{}") as Record<string, unknown>
+169 |       expect(sent.input).toEqual(replay ? [
+                               ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "content": "start",
+      "role": "user",
+    },
+    {
++     "content": "checking",
++     "role": "assistant",
++   },
++   {
+      "content": [
+        {
+          "text": "first",
+          "type": "reasoning_text",
+        },
+      ],
+      "summary": [],
+      "type": "reasoning",
+    },
+    {
+-     "content": "checking",
+-     "role": "assistant",
+-   },
+-   {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "content": [
+        {
+          "text": "later",
+          "type": "reasoning_text",
+        },
+      ],
+      "summary": [],
+      "type": "reasoning",
+    },
+    {
+      "call_id": "c1",
+      "output": "data",
+      "type": "function_call_output",
+    },
+    {
+-     "content": [
+-       {
+-         "text": "second",
+-         "type": "reasoning_text",
+-       },
+-     ],
+-     "summary": [],
+-     "type": "reasoning",
+-   },
+-   {
+      "content": "next",
+      "role": "assistant",
+      "type": "message",
+    },
+    {
+      "call_id": "c2",
+      "input": "pwd",
+      "name": "run",
+      "type": "custom_tool_call",
++   },
++   {
++     "content": [
++       {
++         "text": "second",
++         "type": "reasoning_text",
++       },
++     ],
++     "summary": [],
++     "type": "reasoning",
+    },
+    {
+      "call_id": "c2",
+      "output": "data",
+      "type": "custom_tool_call_output",
+    },
+    {
+      "content": "checking",
+      "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "c1",
+      "output": "data",
+      "type": "function_call_output",
+    },
+    {
+      "content": [
+        {
+          "text": "first",
+          "type": "reasoning_text",
+        },
+      ],
+      "summary": [],
+      "type": "reasoning",
+    },
+    {
+      "content": "checking",
+      "role": "assistant",
+    },
+    {
+      "content": [
+        {
+          "text": "later",
+          "type": "reasoning_text",
+        },
+      ],
+      "summary": [],
+      "type": "reasoning",
+    },
+  ]
+
+- Expected  - 14
++ Received  + 14
+
+      at <anonymous> (<repo>/tests/openai-responses-strip-previous.test.ts:169:26)
+(fail) openai-responses stripPreviousResponseId > leads each DeepSeek assistant step with its first readable reasoning (stream=true replay=true) [1.95ms]
+(pass) openai-responses stripPreviousResponseId > leads each DeepSeek assistant step with its first readable reasoning (stream=false replay=false) [0.22ms]
+(pass) openai-responses stripPreviousResponseId > leads each DeepSeek assistant step with its first readable reasoning (stream=true replay=false) [0.29ms]
+204 |       connection: buildConnection(),
+205 |       credential: buildCredential(),
+206 |       payload,
+207 |     })
+208 |     const sent = JSON.parse(captured[0]?.body ?? "{}") as Record<string, unknown>
+209 |     expect(sent.input).toEqual([said, call, boundary, thought, said, call])
+                             ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "content": "before",
+      "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "content": "new turn",
+      "role": "user",
+    },
+    {
++     "content": "before",
++     "role": "assistant",
++   },
++   {
+      "content": [
+        {
+          "text": "after boundary",
+          "type": "reasoning_text",
+        },
+      ],
+      "summary": [],
+      "type": "reasoning",
+-   },
+-   {
+-     "content": "before",
+-     "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+  ]
+
+- Expected  - 4
++ Received  + 4
+
+      at <anonymous> (<repo>/tests/openai-responses-strip-previous.test.ts:209:24)
+(fail) openai-responses stripPreviousResponseId > never moves DeepSeek reasoning across boundary {"role":"user","content":"new turn"} [0.76ms]
+204 |       connection: buildConnection(),
+205 |       credential: buildCredential(),
+206 |       payload,
+207 |     })
+208 |     const sent = JSON.parse(captured[0]?.body ?? "{}") as Record<string, unknown>
+209 |     expect(sent.input).toEqual([said, call, boundary, thought, said, call])
+                             ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "content": "before",
+      "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "content": "system",
+      "role": "system",
+      "type": "message",
+    },
+    {
++     "content": "before",
++     "role": "assistant",
++   },
++   {
+      "content": [
+        {
+          "text": "after boundary",
+          "type": "reasoning_text",
+        },
+      ],
+      "summary": [],
+      "type": "reasoning",
+-   },
+-   {
+-     "content": "before",
+-     "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+  ]
+
+- Expected  - 4
++ Received  + 4
+
+      at <anonymous> (<repo>/tests/openai-responses-strip-previous.test.ts:209:24)
+(fail) openai-responses stripPreviousResponseId > never moves DeepSeek reasoning across boundary {"type":"message","role":"system","content":"system"} [0.20ms]
+204 |       connection: buildConnection(),
+205 |       credential: buildCredential(),
+206 |       payload,
+207 |     })
+208 |     const sent = JSON.parse(captured[0]?.body ?? "{}") as Record<string, unknown>
+209 |     expect(sent.input).toEqual([said, call, boundary, thought, said, call])
+                             ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "content": "before",
+      "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "content": "developer",
+      "role": "developer",
+    },
+    {
++     "content": "before",
++     "role": "assistant",
++   },
++   {
+      "content": [
+        {
+          "text": "after boundary",
+          "type": "reasoning_text",
+        },
+      ],
+      "summary": [],
+      "type": "reasoning",
+-   },
+-   {
+-     "content": "before",
+-     "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+  ]
+
+- Expected  - 4
++ Received  + 4
+
+      at <anonymous> (<repo>/tests/openai-responses-strip-previous.test.ts:209:24)
+(fail) openai-responses stripPreviousResponseId > never moves DeepSeek reasoning across boundary {"role":"developer","content":"developer"} [0.15ms]
+204 |       connection: buildConnection(),
+205 |       credential: buildCredential(),
+206 |       payload,
+207 |     })
+208 |     const sent = JSON.parse(captured[0]?.body ?? "{}") as Record<string, unknown>
+209 |     expect(sent.input).toEqual([said, call, boundary, thought, said, call])
+                             ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "content": "before",
+      "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "c1",
+      "output": "data",
+      "type": "function_call_output",
+    },
+    {
++     "content": "before",
++     "role": "assistant",
++   },
++   {
+      "content": [
+        {
+          "text": "after boundary",
+          "type": "reasoning_text",
+        },
+      ],
+      "summary": [],
+      "type": "reasoning",
+-   },
+-   {
+-     "content": "before",
+-     "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+  ]
+
+- Expected  - 4
++ Received  + 4
+
+      at <anonymous> (<repo>/tests/openai-responses-strip-previous.test.ts:209:24)
+(fail) openai-responses stripPreviousResponseId > never moves DeepSeek reasoning across boundary {"type":"function_call_output","call_id":"c1","output":"data"} [0.13ms]
+204 |       connection: buildConnection(),
+205 |       credential: buildCredential(),
+206 |       payload,
+207 |     })
+208 |     const sent = JSON.parse(captured[0]?.body ?? "{}") as Record<string, unknown>
+209 |     expect(sent.input).toEqual([said, call, boundary, thought, said, call])
+                             ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "content": "before",
+      "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "c1",
+      "output": "data",
+      "type": "custom_tool_call_output",
+    },
+    {
++     "content": "before",
++     "role": "assistant",
++   },
++   {
+      "content": [
+        {
+          "text": "after boundary",
+          "type": "reasoning_text",
+        },
+      ],
+      "summary": [],
+      "type": "reasoning",
+-   },
+-   {
+-     "content": "before",
+-     "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+  ]
+
+- Expected  - 4
++ Received  + 4
+
+      at <anonymous> (<repo>/tests/openai-responses-strip-previous.test.ts:209:24)
+(fail) openai-responses stripPreviousResponseId > never moves DeepSeek reasoning across boundary {"type":"custom_tool_call_output","call_id":"c1","output":"data"} [0.09ms]
+204 |       connection: buildConnection(),
+205 |       credential: buildCredential(),
+206 |       payload,
+207 |     })
+208 |     const sent = JSON.parse(captured[0]?.body ?? "{}") as Record<string, unknown>
+209 |     expect(sent.input).toEqual([said, call, boundary, thought, said, call])
+                             ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "content": "before",
+      "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "content": "opaque boundary",
+      "role": "assistant",
+      "type": "unknown",
+    },
+    {
++     "content": "before",
++     "role": "assistant",
++   },
++   {
+      "content": [
+        {
+          "text": "after boundary",
+          "type": "reasoning_text",
+        },
+      ],
+      "summary": [],
+      "type": "reasoning",
+-   },
+-   {
+-     "content": "before",
+-     "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+  ]
+
+- Expected  - 4
++ Received  + 4
+
+      at <anonymous> (<repo>/tests/openai-responses-strip-previous.test.ts:209:24)
+(fail) openai-responses stripPreviousResponseId > never moves DeepSeek reasoning across boundary {"type":"unknown","role":"assistant","content":"opaque boundary"} [0.08ms]
+204 |       connection: buildConnection(),
+205 |       credential: buildCredential(),
+206 |       payload,
+207 |     })
+208 |     const sent = JSON.parse(captured[0]?.body ?? "{}") as Record<string, unknown>
+209 |     expect(sent.input).toEqual([said, call, boundary, thought, said, call])
+                             ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "content": "before",
+      "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "type": "unknown",
+    },
+    {
++     "content": "before",
++     "role": "assistant",
++   },
++   {
+      "content": [
+        {
+          "text": "after boundary",
+          "type": "reasoning_text",
+        },
+      ],
+      "summary": [],
+      "type": "reasoning",
+-   },
+-   {
+-     "content": "before",
+-     "role": "assistant",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+  ]
+
+- Expected  - 4
++ Received  + 4
+
+      at <anonymous> (<repo>/tests/openai-responses-strip-previous.test.ts:209:24)
+(fail) openai-responses stripPreviousResponseId > never moves DeepSeek reasoning across boundary {"type":"unknown"} [0.08ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://api.deepseek.com/v1 model-alias) [0.49ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://third-party.test/v1 vendor/DeepSeek-flash) [0.09ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://third-party.test/deepseek gpt-test) [0.09ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://api.openai.com/v1 deepseek-flash) [0.04ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://api.x.ai/v1 deepseek-flash) [0.04ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://api.githubcopilot.com/v1 deepseek-flash) [0.04ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://chatgpt.com/v1 deepseek-flash) [0.04ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://api.anthropic.com/v1 deepseek-flash) [0.06ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://test.openai.azure.com/v1 deepseek-flash) [0.06ms]
+(pass) openai-responses stripPreviousResponseId > strips previous_response_id when enabled [0.65ms]
+(pass) openai-responses stripPreviousResponseId > passes previous_response_id through by default [0.11ms]
+(pass) openai-responses stripPreviousResponseId > flag persists through create/update [0.52ms]
+(pass) openai-responses stripPreviousResponseId > rewrites output_text history to input_text when enabled [0.21ms]
+(pass) openai-responses stripPreviousResponseId > leaves input_text and string input untouched [0.03ms]
+(pass) openai-responses transcript replay > second turn replays history as self-contained input [0.38ms]
+(pass) openai-responses transcript replay > string input is normalized for replay [0.16ms]
+(pass) openai-responses transcript replay > cache miss falls back to stripping only [0.21ms]
+(pass) openai-responses transcript replay > transcripts are isolated per connection [0.18ms]
+(pass) openai-responses transcript replay > instructions carry forward unless the turn sets its own [0.87ms]
+(pass) openai-responses transcript replay > streaming turn records transcript on completed [6.50ms]
+(pass) openai-responses translated targets > translated chat targets are stripped but never replayed or recorded [0.61ms]
+(pass) openai-responses translated targets > translated streaming targets are not recorded [0.40ms]
+(pass) snoopResponsesStreamForTranscript > passes events through and records on completed [0.95ms]
+(pass) snoopResponsesStreamForTranscript > failed streams are not recorded [0.17ms]
+(pass) snoopResponsesStreamForTranscript > overflowing streams pass through but are not recorded [9.84ms]
+
+9 tests failed:
+(fail) openai-responses stripPreviousResponseId > leads each DeepSeek assistant step with its first readable reasoning (stream=false replay=true) [19.45ms]
+(fail) openai-responses stripPreviousResponseId > leads each DeepSeek assistant step with its first readable reasoning (stream=true replay=true) [1.95ms]
+(fail) openai-responses stripPreviousResponseId > never moves DeepSeek reasoning across boundary {"role":"user","content":"new turn"} [0.76ms]
+(fail) openai-responses stripPreviousResponseId > never moves DeepSeek reasoning across boundary {"type":"message","role":"system","content":"system"} [0.20ms]
+(fail) openai-responses stripPreviousResponseId > never moves DeepSeek reasoning across boundary {"role":"developer","content":"developer"} [0.15ms]
+(fail) openai-responses stripPreviousResponseId > never moves DeepSeek reasoning across boundary {"type":"function_call_output","call_id":"c1","output":"data"} [0.13ms]
+(fail) openai-responses stripPreviousResponseId > never moves DeepSeek reasoning across boundary {"type":"custom_tool_call_output","call_id":"c1","output":"data"} [0.09ms]
+(fail) openai-responses stripPreviousResponseId > never moves DeepSeek reasoning across boundary {"type":"unknown","role":"assistant","content":"opaque boundary"} [0.08ms]
+(fail) openai-responses stripPreviousResponseId > never moves DeepSeek reasoning across boundary {"type":"unknown"} [0.08ms]
+
+ 27 pass
+ 9 fail
+ 64 expect() calls
+Ran 36 tests across 1 file. [360.00ms]

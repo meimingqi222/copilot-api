@@ -126,6 +126,248 @@ async function drain(
 }
 
 describe("openai-responses stripPreviousResponseId", () => {
+  test.each([
+    { stream: false, replay: true },
+    { stream: true, replay: true },
+    { stream: false, replay: false },
+    { stream: true, replay: false },
+  ])(
+    "leads each DeepSeek assistant step with its first readable reasoning (stream=$stream replay=$replay)",
+    async ({ stream, replay }) => {
+      const captured: Array<{ url: string; body: string }> = []
+      mockFetchSequence([{ id: "resp_order", output: [] }], captured)
+      const thought = (text: string) => ({
+        type: "reasoning",
+        summary: [],
+        content: [{ type: "reasoning_text", text }],
+      })
+      const user = { role: "user", content: "start" }
+      const said = { role: "assistant", content: "checking" }
+      const typedSaid = { type: "message", role: "assistant", content: "next" }
+      const first = thought("first")
+      const later = thought("later")
+      const second = thought("second")
+      const call = {
+        type: "function_call",
+        call_id: "c1",
+        name: "read",
+        arguments: "{}",
+      }
+      const result = {
+        type: "function_call_output",
+        call_id: "c1",
+        output: "data",
+      }
+      const customCall = {
+        type: "custom_tool_call",
+        call_id: "c2",
+        name: "run",
+        input: "pwd",
+      }
+      const customResult = {
+        type: "custom_tool_call_output",
+        call_id: "c2",
+        output: "data",
+      }
+      const input = [
+        user,
+        said,
+        first,
+        call,
+        later,
+        result,
+        typedSaid,
+        customCall,
+        second,
+        customResult,
+        said,
+        call,
+        result,
+        first,
+        said,
+        later,
+      ]
+      const payload = {
+        model: "client-alias",
+        input,
+        stream,
+      } as ResponsesPayload
+      const original = structuredClone(payload)
+      await openAIResponsesCompatibleAdapter.createResponses?.({
+        target: buildTarget({
+          upstreamModelId: replay ? "deepseek-flash" : "gpt-test",
+        }),
+        connection: buildConnection(),
+        credential: buildCredential(),
+        payload,
+      })
+      const sent = JSON.parse(captured[0]?.body ?? "{}") as Record<
+        string,
+        unknown
+      >
+      expect(sent.input).toEqual(
+        replay ?
+          [
+            user,
+            first,
+            said,
+            call,
+            later,
+            result,
+            second,
+            typedSaid,
+            customCall,
+            customResult,
+            said,
+            call,
+            result,
+            first,
+            said,
+            later,
+          ]
+        : input,
+      )
+      expect(sent.stream).toBe(stream)
+      expect(sent.model).toBe(replay ? "deepseek-flash" : "gpt-test")
+      expect(payload).toEqual(original)
+    },
+  )
+
+  test.each([
+    { role: "user", content: "new turn" },
+    { type: "message", role: "system", content: "system" },
+    { role: "developer", content: "developer" },
+    { type: "function_call_output", call_id: "c1", output: "data" },
+    { type: "custom_tool_call_output", call_id: "c1", output: "data" },
+    { type: "unknown", role: "assistant", content: "opaque boundary" },
+    { type: "unknown" },
+  ])("never moves DeepSeek reasoning across boundary %j", async (boundary) => {
+    const captured: Array<{ url: string; body: string }> = []
+    mockFetchSequence([{ id: "resp_boundary", output: [] }], captured)
+    const said = { role: "assistant", content: "before" }
+    const thought = {
+      type: "reasoning",
+      summary: [],
+      content: [{ type: "reasoning_text", text: "after boundary" }],
+    }
+    const call = {
+      type: "function_call",
+      call_id: "c1",
+      name: "read",
+      arguments: "{}",
+    }
+    const input = [said, call, boundary, said, thought, call]
+    const payload = {
+      model: "deepseek-flash",
+      input,
+      stream: false,
+    } as ResponsesPayload
+    const original = structuredClone(payload)
+    await openAIResponsesCompatibleAdapter.createResponses?.({
+      target: buildTarget({ upstreamModelId: "deepseek-flash" }),
+      connection: buildConnection(),
+      credential: buildCredential(),
+      payload,
+    })
+    const sent = JSON.parse(captured[0]?.body ?? "{}") as Record<
+      string,
+      unknown
+    >
+    expect(sent.input).toEqual([said, call, boundary, thought, said, call])
+    expect(payload).toEqual(original)
+  })
+
+  test.each([
+    {
+      baseUrl: "https://api.deepseek.com/v1",
+      model: "model-alias",
+      replay: true,
+    },
+    {
+      baseUrl: "https://third-party.test/v1",
+      model: "vendor/DeepSeek-flash",
+      replay: true,
+    },
+    {
+      baseUrl: "https://third-party.test/deepseek",
+      model: "gpt-test",
+      replay: false,
+    },
+    ...[
+      "api.openai.com",
+      "api.x.ai",
+      "api.githubcopilot.com",
+      "chatgpt.com",
+      "api.anthropic.com",
+      "test.openai.azure.com",
+    ].map((host) => ({
+      baseUrl: `https://${host}/v1`,
+      model: "deepseek-flash",
+      replay: false,
+    })),
+  ])(
+    "replays Responses reasoning text only for eligible upstreams ($baseUrl $model)",
+    async ({ baseUrl, model, replay }) => {
+      const captured: Array<{ url: string; body: string }> = []
+      mockFetchSequence([{ id: "resp_done", model }], captured)
+      const input = [
+        {
+          type: "reasoning",
+          id: "r1",
+          summary: [{ type: "summary_text", text: "summary A" }],
+          encrypted_content: "opaque",
+        },
+        { type: "function_call", call_id: "c1", name: "read", arguments: "{}" },
+        { type: "function_call_output", call_id: "c1", output: "data A" },
+        {
+          type: "reasoning",
+          summary: [{ type: "summary_text", text: "short summary" }],
+          content: [{ type: "reasoning_text", text: "full thought B" }],
+        },
+        { type: "function_call", call_id: "c2", name: "read", arguments: "{}" },
+        { type: "function_call_output", call_id: "c2", output: "data B" },
+        { type: "reasoning", summary: [], encrypted_content: "unreadable" },
+      ]
+      const payload = {
+        model: "deepseek-client-alias",
+        input,
+        stream: false,
+      } as ResponsesPayload
+      const original = structuredClone(payload)
+      await openAIResponsesCompatibleAdapter.createResponses?.({
+        target: buildTarget({ upstreamModelId: model }),
+        connection: buildConnection({ baseUrl }),
+        credential: buildCredential(),
+        payload,
+      })
+      const sent = JSON.parse(captured[0]?.body ?? "{}") as Record<
+        string,
+        unknown
+      >
+      expect(sent.input).toEqual(
+        replay ?
+          [
+            {
+              type: "reasoning",
+              summary: [],
+              content: [{ type: "reasoning_text", text: "summary A" }],
+            },
+            input[1],
+            input[2],
+            {
+              type: "reasoning",
+              summary: [],
+              content: [{ type: "reasoning_text", text: "full thought B" }],
+            },
+            input[4],
+            input[5],
+          ]
+        : input,
+      )
+      expect(payload).toEqual(original)
+    },
+  )
+
   test("strips previous_response_id when enabled", async () => {
     const captured: Array<{ url: string; body: string }> = []
     mockFetchSequence(

@@ -63,6 +63,7 @@ import {
 } from "./response-parsers"
 import { resolveWindsurfRuntimeSettings } from "./settings"
 import { createWindsurfStructuredOutput } from "~/services/windsurf/structured-output"
+import { WindsurfThinkingSignatures } from "~/services/windsurf/thinking-signatures"
 import {
   primeWindsurfStream,
   WindsurfFirstFrameTimeoutError,
@@ -360,6 +361,7 @@ async function* streamToOpenAI(
   let upstreamFrameBytes = 0
   let decodedDeltaCount = 0
   let nextCheckpointBytes = 1024 * 1024
+  const thinkingSignatures = new WindsurfThinkingSignatures()
 
   // Hoisted: this is checked once per stream, not once per frame.
   const debugLogging = isDebugLoggingEnabled()
@@ -411,6 +413,7 @@ async function* streamToOpenAI(
     }
 
     for (const delta of parsed.deltas) {
+      thinkingSignatures.accept(delta.kind, "text" in delta ? delta.text : "")
       switch (delta.kind) {
         case "content": {
           yield emitEvent(
@@ -538,6 +541,7 @@ async function* streamToOpenAI(
     }
   }
 
+  thinkingSignatures.accept("end")
   updateMemoryTrace(memoryTraceId, "windsurf_stream_decoded", {
     upstreamFrameCount,
     upstreamFrameBytes,

@@ -12,7 +12,10 @@ import type { WindsurfStreamEvent } from "~/services/windsurf/collect-response"
 import type { RequestIR, StreamEvent } from "~/services/ir/types"
 
 import { planTranslation } from "~/services/ir"
-import { encodeChatRequest } from "~/services/ir/codecs/messages-chat/request"
+import {
+  encodeChatRequest,
+  encodeMessagesRequest,
+} from "~/services/ir/codecs/messages-chat/request"
 import { encodeChatStream } from "~/services/ir/codecs/messages-chat/stream"
 import {
   decodeResponsesRequest,
@@ -41,6 +44,119 @@ function payload(
 }
 
 describe("Responses IR request codec", () => {
+  test("consecutive reasoning blocks survive DeepSeek Messages replay without crossing boundaries", () => {
+    const thought = (text: string) => ({
+      type: "reasoning",
+      summary: [],
+      content: [{ type: "reasoning_text", text }],
+    })
+    const request = decodeResponsesRequest(
+      payload([
+        { role: "user", content: "inspect" },
+        thought("first thought"),
+        thought("second distinct thought"),
+        thought(""),
+        { type: "function_call", call_id: "c1", name: "read", arguments: "{}" },
+        { type: "function_call_output", call_id: "c1", output: "data" },
+        thought("discard before user"),
+        thought("discard too"),
+        { role: "user", content: "next" },
+        thought("discard before tool output"),
+        { type: "function_call_output", call_id: "c1", output: "later data" },
+        thought("discard before instruction"),
+        { role: "developer", content: "updated rules" },
+        thought("third thought"),
+        { type: "function_call", call_id: "c2", name: "read", arguments: "{}" },
+      ]),
+    )
+    const translated = encodeMessagesRequest(request, {
+      replayReasoningText: true,
+    })
+    expect(
+      translated.messages
+        .filter((turn) => turn.role === "assistant")
+        .map((turn) => turn.content),
+    ).toEqual([
+      [
+        { type: "thinking", thinking: "first thought" },
+        { type: "thinking", thinking: "second distinct thought" },
+        { type: "tool_use", id: "c1", name: "read", input: {} },
+      ],
+      [
+        { type: "thinking", thinking: "third thought" },
+        { type: "tool_use", id: "c2", name: "read", input: {} },
+      ],
+    ])
+    expect(JSON.stringify(translated)).not.toContain("discard")
+    expect(
+      encodeResponsesRequest(request, { replayReasoningText: true }).input,
+    ).toEqual(
+      expect.arrayContaining([
+        thought("first thought"),
+        thought("second distinct thought"),
+        thought("third thought"),
+      ]),
+    )
+  })
+
+  test("native reasoning replay stays native; foreign signed thinking never becomes prose or ciphertext", () => {
+    const input: ResponsesPayload["input"] = [
+      {
+        type: "reasoning",
+        summary: [{ type: "summary_text", text: "native summary" }],
+        encrypted_content: "opaque-native-state",
+      },
+      {
+        type: "function_call",
+        call_id: "call_native",
+        name: "read",
+        arguments: "{}",
+      },
+      { type: "function_call_output", call_id: "call_native", output: "data" },
+    ]
+    const native = decodeResponsesRequest(payload(input))
+    native.source.issuer = "native-connection"
+    expect(encodeResponsesRequest(native).input as unknown).toEqual(input)
+    expect(
+      encodeResponsesRequest(native, { replayReasoningText: true }).input,
+    ).toEqual([
+      {
+        type: "reasoning",
+        summary: [],
+        content: [{ type: "reasoning_text", text: "native summary" }],
+      },
+      ...input.slice(1),
+    ])
+    expect(
+      planTranslation(native, {
+        wire: "responses",
+        issuer: "native-connection",
+      }).losses.records,
+    ).toEqual([])
+    const foreign = structuredClone(native)
+    const thinking = foreign.turns[0].parts[0]
+    if (thinking.type !== "thinking")
+      throw new Error("expected thinking fixture")
+    thinking.source = { wire: "messages", issuer: "other-connection" }
+    thinking.signature = "anthropic-signature"
+    thinking.signedText = thinking.text
+    expect(encodeResponsesRequest(foreign).input as unknown).toEqual(
+      input.slice(1),
+    )
+    expect(
+      planTranslation(foreign, {
+        wire: "responses",
+        issuer: "native-connection",
+      }).losses.records,
+    ).toContainEqual(
+      expect.objectContaining({
+        feature: "signed_thinking",
+        action: "drop",
+        reason: "Responses cannot replay historical thinking from another wire",
+      }),
+    )
+  })
+
   test("hosted tool dropping cannot weaken a required or named tool contract", () => {
     for (const choice of ["required", { type: "function", name: "hosted" }])
       expect(() =>
@@ -491,6 +607,291 @@ describe("Responses IR request codec", () => {
 })
 
 describe("Responses IR result and stream codec", () => {
+  test.each(
+    ["output_item.done", "completed", "empty_done_completed"].flatMap(
+      (completion) =>
+        ["reasoning_text", "summary_text"].flatMap((format) =>
+          [false, true].map((legacy) => ({ completion, format, legacy })),
+        ),
+    ),
+  )(
+    "reasoning snapshots recover per-item suffixes and terminal-only blocks ($completion $format legacy=$legacy)",
+    async ({ completion, format, legacy }) => {
+      for (const prefix of ["", "first ", "first thought"]) {
+        const reasoning = (id: string, text: string) => ({
+          type: "reasoning",
+          id,
+          summary:
+            format === "summary_text" ? [{ type: "summary_text", text }] : [],
+          ...(format === "reasoning_text" && {
+            content: [{ type: "reasoning_text", text }],
+          }),
+        })
+        const frames = [
+          ...(!legacy ?
+            [
+              {
+                type: "response.output_item.added",
+                output_index: 0,
+                item: reasoning("rs_first", ""),
+              },
+            ]
+          : []),
+          {
+            type:
+              format === "reasoning_text" ?
+                "response.reasoning_text.delta"
+              : "response.reasoning_summary_text.delta",
+            ...(!legacy && { output_index: 0 }),
+            delta: prefix,
+          },
+          ...(completion !== "completed" ?
+            [
+              {
+                type: "response.output_item.done",
+                ...(!legacy && { output_index: 0 }),
+                item: reasoning(
+                  "rs_first",
+                  completion === "empty_done_completed" ? "" : "first thought",
+                ),
+              },
+            ]
+          : []),
+          {
+            type: "response.completed",
+            response: {
+              id: "r",
+              model: "deepseek-flash",
+              status: "completed",
+              output: [
+                reasoning("rs_first", "first thought"),
+                reasoning("rs_second", "second distinct thought"),
+              ],
+            },
+          },
+        ]
+        const parts = new Map<string, string>()
+        const ended = new Set<string>()
+        const indices = new Set<number>()
+        for await (const event of decodeResponsesStream(
+          (async function* () {
+            for (const frame of frames) yield { data: JSON.stringify(frame) }
+          })(),
+          "deepseek-flash",
+        )) {
+          if (event.type === "part_start" && event.part.type === "thinking") {
+            expect(indices.has(event.index)).toBe(false)
+            indices.add(event.index)
+            parts.set(event.partId, event.part.text)
+          }
+          if (event.type === "part_delta" && event.delta.type === "thinking") {
+            expect(ended.has(event.partId)).toBe(false)
+            parts.set(
+              event.partId,
+              (parts.get(event.partId) ?? "") + event.delta.text,
+            )
+          }
+          if (event.type === "part_end") {
+            expect(ended.has(event.partId)).toBe(false)
+            ended.add(event.partId)
+          }
+        }
+        expect([...parts.values()]).toEqual([
+          "first thought",
+          "second distinct thought",
+        ])
+        expect(ended.size).toBe(2)
+      }
+    },
+  )
+
+  test.each(["delta", "done"])(
+    "recovers reasoning with only %s events, without duplicate parts",
+    async (mode) => {
+      const item = {
+        type: "reasoning",
+        id: "rs",
+        content: [{ type: "reasoning_text", text: "first thought" }],
+      }
+      const frames = [
+        ...(mode === "delta" ?
+          [
+            {
+              type: "response.reasoning_text.delta",
+              output_index: 0,
+              delta: "first ",
+            },
+          ]
+        : []),
+        { type: "response.output_item.done", output_index: 0, item },
+        { type: "response.output_item.done", output_index: 0, item },
+        {
+          type: "response.completed",
+          response: {
+            id: "r",
+            model: "deepseek-flash",
+            output: [
+              item,
+              {
+                type: "reasoning",
+                content: [{ type: "reasoning_text", text: "second thought" }],
+              },
+            ],
+          },
+        },
+      ]
+      const events: StreamEvent[] = []
+      for await (const event of decodeResponsesStream(
+        (async function* () {
+          for (const frame of frames) yield { data: JSON.stringify(frame) }
+        })(),
+        "deepseek-flash",
+      ))
+        events.push(event)
+      expect(
+        events
+          .filter((event) => event.type === "part_start")
+          .map((event) => event.index),
+      ).toEqual([0, 1])
+      expect(
+        events
+          .filter((event) => event.type === "part_end")
+          .map((event) => event.index),
+      ).toEqual([0, 1])
+      expect(
+        events
+          .flatMap((event) =>
+            event.type === "part_delta" && event.delta.type === "thinking" ?
+              [event.delta.text]
+            : [],
+          )
+          .join(""),
+      ).toBe("first thoughtsecond thought")
+    },
+  )
+
+  test.each([false, true])(
+    "rejects a reasoning snapshot that contradicts already streamed text (closed=%s)",
+    async (closed) => {
+      const frames = [
+        {
+          type: "response.reasoning_text.delta",
+          output_index: 0,
+          delta: "first thought",
+        },
+        ...(closed ?
+          [
+            {
+              type: "response.output_item.done",
+              output_index: 0,
+              item: {
+                type: "reasoning",
+                content: [{ type: "reasoning_text", text: "first thought" }],
+              },
+            },
+          ]
+        : []),
+        {
+          type: "response.completed",
+          response: {
+            id: "r",
+            model: "deepseek-flash",
+            output: [
+              {
+                type: "reasoning",
+                content: [
+                  { type: "reasoning_text", text: "different thought" },
+                ],
+              },
+            ],
+          },
+        },
+      ]
+      const consume = async () => {
+        for await (const event of decodeResponsesStream(
+          (async function* () {
+            for (const frame of frames) yield { data: JSON.stringify(frame) }
+          })(),
+          "deepseek-flash",
+        ))
+          void event
+      }
+      await expect(consume()).rejects.toThrow(
+        "reasoning changed after being streamed",
+      )
+    },
+  )
+
+  test("DeepSeek reasoning_text streams before the terminal snapshot without duplication", async () => {
+    const iterator = decodeResponsesStream(
+      (async function* () {
+        yield {
+          data: JSON.stringify({
+            type: "response.output_item.added",
+            output_index: 0,
+            item: { type: "reasoning", id: "r", summary: [], content: [] },
+          }),
+        }
+        yield {
+          data: JSON.stringify({
+            type: "response.reasoning_text.delta",
+            output_index: 0,
+            delta: "early thought",
+          }),
+        }
+        yield {
+          data: JSON.stringify({
+            type: "response.output_item.done",
+            output_index: 0,
+            item: {
+              type: "reasoning",
+              id: "r",
+              summary: [],
+              content: [{ type: "reasoning_text", text: "early thought" }],
+            },
+          }),
+        }
+        yield {
+          data: JSON.stringify({
+            type: "response.completed",
+            response: {
+              id: "resp",
+              model: "deepseek-flash",
+              status: "completed",
+              output: [
+                {
+                  type: "reasoning",
+                  summary: [],
+                  content: [{ type: "reasoning_text", text: "early thought" }],
+                },
+              ],
+            },
+          }),
+        }
+      })(),
+      "deepseek-flash",
+    )[Symbol.asyncIterator]()
+    expect((await iterator.next()).value).toMatchObject({
+      type: "message_start",
+    })
+    expect((await iterator.next()).value).toMatchObject({
+      type: "part_start",
+      part: { type: "thinking" },
+    })
+    expect((await iterator.next()).value).toMatchObject({
+      type: "part_delta",
+      delta: { type: "thinking", text: "early thought" },
+    })
+    const rest: Array<StreamEvent> = []
+    for (
+      let item = await iterator.next();
+      !item.done;
+      item = await iterator.next()
+    )
+      rest.push(item.value)
+    expect(rest.map((event) => event.type)).toEqual(["part_end", "message_end"])
+  })
+
   test.each([false, true])(
     "Messages upstream restores custom and search calls (stream=%s)",
     async (stream) => {

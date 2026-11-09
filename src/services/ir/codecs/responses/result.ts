@@ -18,6 +18,7 @@ import {
 } from "~/services/ir/image-generation"
 
 import { asRecord, asString } from "~/lib/json-shape"
+import { getResponsesReasoningText } from "~/services/protocols/responses/types"
 import { customToolInput } from "~/services/ir/codecs/responses/custom-tool"
 
 type WireRecord = Record<string, unknown>
@@ -112,15 +113,9 @@ export function decodeResponsesResult(response: ResponsesResponse): ResultIR {
     const item = asRecord(raw)
     if (!item) continue
     if (item.type === "reasoning") {
-      const summary =
-        Array.isArray(item.summary) ?
-          item.summary
-            .map((rawPart) => asString(asRecord(rawPart)?.text) ?? "")
-            .join("")
-        : ""
       parts.push({
         type: "thinking",
-        text: summary,
+        text: getResponsesReasoningText(item),
         source,
         ...(asString(item.id) ? { id: asString(item.id) } : {}),
         ...(asString(item.encrypted_content) ?

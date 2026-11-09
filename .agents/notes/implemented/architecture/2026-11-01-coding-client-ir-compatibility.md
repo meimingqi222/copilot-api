@@ -46,6 +46,12 @@ existing loss telemetry. Records contain paths and reasons, never payloads.
 Malformed known calls/media still reject; compaction triggers and unsatisfied
 required/named tools are never downgraded to ordinary text requests.
 
+Responses request history also omits foreign thinking with explicit preflight
+losses rather than recategorizing it as published text. That deliberate policy
+change and its native-replay control are owned by
+`2026-11-09-responses-foreign-thinking-replay.md`; the dialect, tool and file
+contracts above remain unchanged in the expanded request-codec regressions.
+
 ## Alternatives considered
 
 Reject every unfamiliar historical item: this prevents entire ongoing coding

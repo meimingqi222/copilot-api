@@ -90,6 +90,10 @@ block；剥空的 assistant turn 用 `EMPTY_TEXT_PLACEHOLDER`（`"(no content)"`
 **不要做**：不要为了"保住" thinking 而伪造 signature；不要移除
 `EMPTY_TEXT_PLACEHOLDER` 兜底。
 
+**DeepSeek Messages 例外**：它接受无签名的明文 thinking，并要求工具续轮保留
+完整历史思考。实际 DeepSeek 目标由共享 replay 策略识别，编码器保留独立
+thinking blocks，但不携带其他服务的签名。该例外不放宽 Claude 的签名边界。
+
 ### 2.3 messages → chat：`cache_control` 断点被丢弃
 
 Chat Completions 上游没有显式缓存断点的概念，只能吃上游自己的隐式前缀缓存。
@@ -194,6 +198,14 @@ thinking block `join("\n\n")` 成单个 `reasoning_content`，签名用 `.find(.
 测试：`tests/anthropic-request.test.ts` →
 `"multiple thinking blocks round-trip with their own signatures"`（含经枢纽往返的
 逐块还原断言）。
+
+**Devin / Windsurf 原生协议例外**：每个 prompt 的 field 11/12/18 分别携带一块
+思考原文、签名和签名类型，但一个请求可以包含多个 prompt。不能因此把整轮思考合并，
+也不能把不同块的签名串起来当成整轮签名。IR → Windsurf 的 Chat 中间表示保留有序
+thinking/text parts，再逐块编码；其他 Chat 上游保持既有字段约定。
+响应 field 10 只在当前思考块内拼接，field 21 的类型在进程内有界缓存中按完整签名
+保存，回传时写入 field 18。未知、被淘汰或重启后丢失的类型按 Magpie 回退为
+`anthropic`，不宣称能跨进程无损恢复非默认类型。
 
 ### 3.6 Responses `output` 里 reasoning item 必须排在最前
 
@@ -331,10 +343,26 @@ IR 不经 Chat 枢纽，两个方向各自直连，没有专属行为，因此�
 
 开放时验证过的契约，回归时不要回退：
 
-1. Messages 的带签名 thinking 转 Responses **不冒充** `encrypted_content`：
-   `encodeResponsesResult()` 只在 `part.source.wire === "responses"` 时透传
-   密文，其余来源的 thinking 变成可读的 `[historical reasoning]` 文本。
-   Responses reasoning summary 转 Messages 时同样不会伪造 Anthropic 签名。
+1. **请求历史不是新生成的推理输出**：`encodeResponsesRequest()` 仅将 Responses
+   来源的 thinking 编为原生 reasoning 回放。Chat、Messages、Gemini 来源的历史
+   thinking 不转成 assistant `output_text`，也不伪造 summary 或
+   `encrypted_content`；预检记录 `drop` + `foreign_reasoning_dropped`。
+   正常正文、工具声明及调用/结果配对保留，直接 Chat 上游的推理字段不受影响。
+   新响应的 thinking 仍由结果/流编码器作为推理输出；Responses summary 转
+   Messages 时不伪造 Anthropic 签名。旧会话已经保存成正文的推理不会自动还原，
+   不要靠删除标记或输出去重冒充修复，复测使用干净会话。
+   **DeepSeek Responses 例外**：它接收 `content: [{type: "reasoning_text", text}]`，
+   不接收 OpenAI 的 `summary` / `encrypted_content` 回放。共享策略只对兼容协议的
+   DeepSeek 官方站点或非排除站点上的 DeepSeek 上游模型启用明文回传，客户端别名
+   不参与识别；OpenAI、xAI、Copilot、Azure、Anthropic 官方站点不启用。
+   同协议 Responses 重放也规范化历史 summary，优先已有完整 reasoning_text；
+   只有密文、没有可读文本时不伪造思考。响应侧同时读取 JSON content.reasoning_text
+   和 SSE response.reasoning_text.delta，避免下一轮因思考未下发而无法回传。
+   每个连续 assistant 步骤的首个可读 reasoning 必须置于该步骤正文/调用之前，
+   不能越过用户、指令、工具结果或未知项目边界。连续 reasoning 按块累积，空块
+   不得抹掉前文。流式 done/completed 快照按 output item 补齐已发前缀的剩余
+   内容，不能因一个块已发就跳过所有 reasoning；终态才出现的后续块也要恢复。
+   空 done 可等待最终快照，已结束的非空块不可再追加或改写，矛盾快照明确报错。
 2. Messages 的 `cache_control` 断点在 Responses 目标上按 §3 的能力表记录损失
    （`drop` + `cache_breakpoint_unsupported`）；Responses 的 `file_id` 只留给
    同发行方可识别的目标，否则在预检阶段 `reject`。

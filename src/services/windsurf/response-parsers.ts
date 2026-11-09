@@ -8,6 +8,7 @@ type ChatStreamDelta =
   | { kind: "content"; text: string }
   | { kind: "reasoning_text"; text: string }
   | { kind: "reasoning_signature"; text: string }
+  | { kind: "reasoning_signature_type"; text: string }
   | { kind: "tool_call_init"; callId: string; toolName: string }
   | { kind: "tool_call_args"; args: string; callId?: string }
 
@@ -293,6 +294,12 @@ export function parseChatStreamFrame(frame: Uint8Array): ChatStreamFrame {
       if (signature) {
         deltas.push({ kind: "reasoning_signature", text: signature })
       }
+      continue
+    }
+
+    if (node.field === 21 && node.wire === 2 && node.raw) {
+      const text = decodeFrameText(node.raw)
+      if (text) deltas.push({ kind: "reasoning_signature_type", text })
       continue
     }
 

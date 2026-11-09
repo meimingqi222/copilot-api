@@ -331,35 +331,47 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     })
 
     expect(assistantMessageFields(decodeFramedPayload(built))).toEqual([
-      1, 2, 3, 11, 12,
+      1, 2, 3, 11, 12, 18,
     ])
   })
 
-  test("extracts signatures from reasoning content parts", async () => {
-    const built = await buildRequest({
-      payload: {
-        ...basePayload,
-        messages: [
-          {
-            role: "assistant",
-            content: [
-              {
-                type: "reasoning",
-                text: "private reasoning",
-                signature: "sig-2",
-              },
-              { type: "text", text: "answer" },
-            ],
-          },
-        ],
-      },
-      apiKey: "test-key",
-      requestModel: "MODEL_PRIVATE_11",
-      cascadeId: "cc232f62-2495-407a-bd78-502af5ece433",
-    })
+  test.each(["part", "top-level", "mismatched"])(
+    "extracts only paired signatures from reasoning content parts (%s)",
+    async (location) => {
+      const built = await buildRequest({
+        payload: {
+          ...basePayload,
+          messages: [
+            {
+              role: "assistant",
+              content: [
+                {
+                  type: "reasoning",
+                  text: "private reasoning",
+                  signature: location === "part" ? "sig-2" : undefined,
+                },
+                { type: "text", text: "answer" },
+              ],
+              reasoning_text:
+                location === "mismatched" ? "edited reasoning" : (
+                  "private reasoning"
+                ),
+              reasoning_opaque: "top-sig",
+            },
+          ],
+        },
+        apiKey: "test-key",
+        requestModel: "MODEL_PRIVATE_11",
+        cascadeId: "cc232f62-2495-407a-bd78-502af5ece433",
+      })
 
-    expect(assistantMessageFields(decodeFramedPayload(built))).toContain(12)
-  })
+      expect(assistantMessageString(decodeFramedPayload(built), 12)).toBe(
+        location === "part" ? "sig-2"
+        : location === "top-level" ? "top-sig"
+        : undefined,
+      )
+    },
+  )
 
   test("round-trips its own reply: reasoning_opaque returns as field 12", async () => {
     // The exact assistant message shape `collect-response.ts` hands back, fed
@@ -435,11 +447,64 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     )
   })
 
-  test("drops the signature when it cannot cover the merged reasoning", async () => {
-    // Two separately signed thinking blocks — what an Anthropic client sends
-    // back after interleaved reasoning. Field 11 is their concatenation, which
-    // neither signature signs, so field 12 must be omitted rather than carry
-    // the first block's signature.
+  test("keeps interleaved thinking signatures on separate upstream prompts", async () => {
+    const built = await buildRequest({
+      payload: {
+        ...basePayload,
+        messages: [
+          {
+            role: "assistant",
+            content: [
+              { type: "reasoning", text: "inspect alpha", signature: "sig-a" },
+              { type: "text", text: "Reading alpha." },
+              { type: "reasoning", text: "then beta", signature: "sig-b" },
+            ],
+            // Compatibility aliases must not override the per-block identities.
+            reasoning_text: "inspect alphathen beta",
+            reasoning_opaque: "sig-asig-b",
+            tool_calls: [
+              {
+                id: "call_beta",
+                type: "function",
+                function: {
+                  name: "read_file",
+                  arguments: '{"path":"beta"}',
+                },
+              },
+            ],
+          },
+        ],
+      },
+      apiKey: "test-key",
+      requestModel: "claude-opus-5-5",
+      cascadeId: "interleaved-signatures",
+      turnIndex: 0,
+    })
+    const prompts = parseMessage(decodeFramedPayload(built), 0, 0)
+      .filter((node) => node.field === 3)
+      .map((node) => parseMessage(node.raw!, 0, 0))
+    const text = (fields: (typeof prompts)[number], field: number) => {
+      const raw = fields.find((node) => node.field === field)?.raw
+      return raw ? new TextDecoder().decode(raw) : undefined
+    }
+    expect(
+      prompts.map((fields) => [
+        text(fields, 3),
+        text(fields, 11),
+        text(fields, 12),
+        text(fields, 18),
+      ]),
+    ).toEqual([
+      ["Reading alpha.", "inspect alpha", "sig-a", "anthropic"],
+      [undefined, "then beta", "sig-b", "anthropic"],
+    ])
+    expect(
+      prompts.map((fields) => fields.filter((node) => node.field === 6).length),
+    ).toEqual([0, 1])
+    expect(new Set(prompts.map((fields) => text(fields, 1))).size).toBe(2)
+  })
+
+  test("keeps consecutive signed reasoning blocks separate", async () => {
     const built = await buildRequest({
       payload: {
         ...basePayload,
@@ -460,11 +525,12 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     })
 
     const decoded = decodeFramedPayload(built)
-    expect(assistantMessageString(decoded, 11)).toBe("first halfsecond half")
-    expect(assistantMessageFields(decoded)).not.toContain(12)
+    expect(messageNodeCount(decoded)).toBe(2)
+    expect(assistantMessageString(decoded, 11)).toBe("first half")
+    expect(assistantMessageString(decoded, 12)).toBe("sig-a")
   })
 
-  test("drops a reasoning_details signature that only signs a fragment", async () => {
+  test("splits reasoning_details instead of losing their signatures", async () => {
     const built = await buildRequest({
       payload: {
         ...basePayload,
@@ -485,14 +551,13 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
       cascadeId: "cc232f62-2495-407a-bd78-502af5ece433",
     })
 
-    expect(assistantMessageFields(decodeFramedPayload(built))).not.toContain(12)
+    const decoded = decodeFramedPayload(built)
+    expect(messageNodeCount(decoded)).toBe(2)
+    expect(assistantMessageString(decoded, 11)).toBe("first half")
+    expect(assistantMessageString(decoded, 12)).toBe("sig-a")
   })
 
-  test("drops a top-level signature that cannot cover merged reasoning", async () => {
-    // `reasoning_content` concatenates several signed blocks (the shape
-    // `messages-to-chat.ts` emits), and the client re-attaches only the first
-    // block's signature at the top level. Field 11 is the concatenation, which
-    // that signature does not cover, so field 12 must be omitted.
+  test("prefers split detail signatures to a top-level aggregate signature", async () => {
     const built = await buildRequest({
       payload: {
         ...basePayload,
@@ -515,14 +580,12 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     })
 
     const decoded = decodeFramedPayload(built)
-    expect(assistantMessageString(decoded, 11)).toBe("first halfsecond half")
-    expect(assistantMessageFields(decoded)).not.toContain(12)
+    expect(messageNodeCount(decoded)).toBe(2)
+    expect(assistantMessageString(decoded, 11)).toBe("first half")
+    expect(assistantMessageString(decoded, 12)).toBe("sig-a")
   })
 
-  test("round-trips interleaved reasoning via reasoning_opaque", async () => {
-    // An interleaved Windsurf reply carries both per-part signatures and the
-    // accumulated `reasoning_opaque`. Only the latter covers the whole
-    // reasoning text, so it — not the part signature — must be field 12.
+  test("reasoning_opaque cannot override a block's own signature", async () => {
     const built = await buildRequest({
       payload: {
         ...basePayload,
@@ -545,7 +608,33 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
 
     const decoded = decodeFramedPayload(built)
     expect(assistantMessageString(decoded, 11)).toBe("first half")
-    expect(assistantMessageString(decoded, 12)).toBe("full-stream-sig")
+    expect(assistantMessageString(decoded, 12)).toBe("part-sig")
+  })
+
+  test("does not attach an aggregate signature to inconsistent detail text", async () => {
+    const built = await buildRequest({
+      payload: {
+        ...basePayload,
+        messages: [
+          {
+            role: "assistant",
+            content: "answer",
+            reasoning_text: "edited reasoning",
+            reasoning_opaque: "sig-asig-b",
+            reasoning_details: [
+              { text: "first half", signature: "sig-a" },
+              { text: "second half", signature: "sig-b" },
+            ],
+          },
+        ],
+      },
+      apiKey: "test-key",
+      requestModel: "MODEL_PRIVATE_11",
+      cascadeId: "inconsistent",
+    })
+    const decoded = decodeFramedPayload(built)
+    expect(assistantMessageString(decoded, 11)).toBe("edited reasoning")
+    expect(assistantMessageFields(decoded)).not.toContain(12)
   })
 
   test("skips an assistant turn carrying only a signature", async () => {
