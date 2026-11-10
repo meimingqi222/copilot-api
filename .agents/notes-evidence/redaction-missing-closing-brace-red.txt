@@ -1,0 +1,196 @@
+bun test v1.4.2 (744846f84)
+
+tests/redaction-stream-progress.test.ts:
+(pass) empty reasoning details do not discard a fragmented Chat signature [9.71ms]
+(pass) Gemini accepts a thought signature alias when the other alias is empty [0.95ms]
+(pass) a held chat tail never blocks other channels and is sent before the finish chunk [12.64ms]
+(pass) trailing braces and fragmented placeholders restore across chat frames, including JSON escaping [0.97ms]
+289 |         )
+290 |         const restored = outputs
+291 |           .map(({ packet }) => (packet ? read(packet) : ""))
+292 |           .join("")
+293 |         if (wire === "custom") expect(restored).toBe(expected)
+294 |         else expect(JSON.parse(restored)).toEqual({ command: expected })
+                                                ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "command": 
+- "cd fixture"quoted\path
+- next/work"
+- ,
++   "command": "cd {{WORD_pi2gr7iq}/work",
+  }
+
+- Expected  - 4
++ Received  + 1
+
+      at <anonymous> ([repo]/tests/redaction-stream-progress.test.ts:294:43)
+(fail) chat tool streams restore a missing closing brace across every split [6.90ms]
+289 |         )
+290 |         const restored = outputs
+291 |           .map(({ packet }) => (packet ? read(packet) : ""))
+292 |           .join("")
+293 |         if (wire === "custom") expect(restored).toBe(expected)
+294 |         else expect(JSON.parse(restored)).toEqual({ command: expected })
+                                                ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "command": 
+- "cd fixture"quoted\path
+- next/work"
+- ,
++   "command": "cd {{WORD_ypghogtt}/work",
+  }
+
+- Expected  - 4
++ Received  + 1
+
+      at <anonymous> ([repo]/tests/redaction-stream-progress.test.ts:294:43)
+(fail) legacy-chat tool streams restore a missing closing brace across every split [2.19ms]
+289 |         )
+290 |         const restored = outputs
+291 |           .map(({ packet }) => (packet ? read(packet) : ""))
+292 |           .join("")
+293 |         if (wire === "custom") expect(restored).toBe(expected)
+294 |         else expect(JSON.parse(restored)).toEqual({ command: expected })
+                                                ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "command": 
+- "cd fixture"quoted\path
+- next/work"
+- ,
++   "command": "cd {{WORD_5jpypzgu}/work",
+  }
+
+- Expected  - 4
++ Received  + 1
+
+      at <anonymous> ([repo]/tests/redaction-stream-progress.test.ts:294:43)
+(fail) messages tool streams restore a missing closing brace across every split [1.00ms]
+289 |         )
+290 |         const restored = outputs
+291 |           .map(({ packet }) => (packet ? read(packet) : ""))
+292 |           .join("")
+293 |         if (wire === "custom") expect(restored).toBe(expected)
+294 |         else expect(JSON.parse(restored)).toEqual({ command: expected })
+                                                ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "command": 
+- "cd fixture"quoted\path
+- next/work"
+- ,
++   "command": "cd {{WORD_etx24giu}/work",
+  }
+
+- Expected  - 4
++ Received  + 1
+
+      at <anonymous> ([repo]/tests/redaction-stream-progress.test.ts:294:43)
+(fail) responses tool streams restore a missing closing brace across every split [0.69ms]
+288 |           scope,
+289 |         )
+290 |         const restored = outputs
+291 |           .map(({ packet }) => (packet ? read(packet) : ""))
+292 |           .join("")
+293 |         if (wire === "custom") expect(restored).toBe(expected)
+                                                      ^
+error: expect(received).toBe(expected)
+
+- "cd fixture"quoted\path
+- next/work"
++ "cd {{WORD_pl4ud5jm}/work"
+
+- Expected  - 2
++ Received  + 1
+
+      at <anonymous> ([repo]/tests/redaction-stream-progress.test.ts:293:49)
+(fail) custom tool streams restore a missing closing brace across every split [0.74ms]
+303 |   const token = scope.maskText(original)
+304 |   for (const terminal of [undefined, DONE, sse(chat({}, "stop"))]) {
+305 |     const frames = [sse(chat({ content: `read ${token.slice(0, -1)}` }))]
+306 |     if (terminal) frames.push(terminal)
+307 |     const outputs = await run(frames, scope)
+308 |     expect(joinField(chatDeltas(outputs), "content")).toBe(`read ${original}`)
+                                                            ^
+error: expect(received).toBe(expected)
+
+Expected: "read /Users/terminal-brace-fixture"
+Received: "read {{HOME_6aoawl6t}"
+
+      at <anonymous> ([repo]/tests/redaction-stream-progress.test.ts:308:55)
+(fail) a missing closing brace at stream end restores without leaking a held token [0.50ms]
+(pass) EOF and [DONE] flush every pending tail before ending, in emission order [0.54ms]
+(pass) signed chat reasoning with a held tail still restores and replays its signature [0.40ms]
+(pass) Messages streams keep other blocks moving and emit the held tail before content_block_stop [2.54ms]
+(pass) a Responses item .done flushes only its own pending fragment [0.94ms]
+(pass) Gemini object streams emit the held tail before a finish-only chunk [0.64ms]
+(pass) all Chat reasoning and signature aliases restore split tokens and preserve signed replay [16.39ms]
+(pass) Chat content parts restore independently, including duplicated signed reasoning aliases [0.50ms]
+(pass) Messages block starts participate in text and signed thinking reassembly [0.37ms]
+
+tests/redaction-literal-tool-input.test.ts:
+(pass) source literals round-trip in tool arguments without granting another caller's mapping [0.44ms]
+(pass) memoized history preserves literal tool-input provenance on every request [0.20ms]
+(pass) Responses continuations retain literal provenance without exposing mappings [0.13ms]
+(pass) tool argument streams preserve unmapped placeholders across every split [13.71ms]
+(pass) SECRET examples remain literal in nested tool-result history [0.33ms]
+(pass) PASSWORD examples remain literal in nested tool-result history [0.93ms]
+(pass) API_KEY examples remain literal in nested tool-result history [0.21ms]
+(pass) HOME examples remain literal in nested tool-result history [0.09ms]
+(pass) WORD examples remain literal in nested tool-result history [0.07ms]
+(pass) real mappings still restore alongside source literals in the same tool argument [0.15ms]
+223 |       { functionCall: { name: "exec", args: { command } } },
+224 |     ]
+225 |     for (const echoed of [token, token.slice(0, -1)]) {
+226 |       const command = `cd ${echoed}/work/code/agents/fixture`
+227 |       const expected = `cd ${original}/work/code/agents/fixture`
+228 |       expect(scope.restoreText(echoed)).toBe(original)
+                                              ^
+error: expect(received).toBe(expected)
+
+Expected: "/Users/brace-fixture"
+Received: "{{HOME_ibelhptw}"
+
+      at <anonymous> ([repo]/tests/redaction-literal-tool-input.test.ts:228:41)
+(fail) mapped HOME placeholders missing one closing brace restore in tool arguments [0.51ms]
+223 |       { functionCall: { name: "exec", args: { command } } },
+224 |     ]
+225 |     for (const echoed of [token, token.slice(0, -1)]) {
+226 |       const command = `cd ${echoed}/work/code/agents/fixture`
+227 |       const expected = `cd ${original}/work/code/agents/fixture`
+228 |       expect(scope.restoreText(echoed)).toBe(original)
+                                              ^
+error: expect(received).toBe(expected)
+
+- "fixture"quoted\path
+- next"
++ "{{WORD_ljhjpz3s}"
+
+- Expected  - 2
++ Received  + 1
+
+      at <anonymous> ([repo]/tests/redaction-literal-tool-input.test.ts:228:41)
+(fail) mapped WORD placeholders missing one closing brace restore in tool arguments [0.17ms]
+(pass) missing-brace restoration requires the exact mapping allowed by this request [0.17ms]
+(pass) unmapped generated placeholders do not abort a tool response or borrow tenant secrets [0.10ms]
+
+8 tests failed:
+(fail) chat tool streams restore a missing closing brace across every split [6.90ms]
+(fail) legacy-chat tool streams restore a missing closing brace across every split [2.19ms]
+(fail) messages tool streams restore a missing closing brace across every split [1.00ms]
+(fail) responses tool streams restore a missing closing brace across every split [0.69ms]
+(fail) custom tool streams restore a missing closing brace across every split [0.74ms]
+(fail) a missing closing brace at stream end restores without leaking a held token [0.50ms]
+(fail) mapped HOME placeholders missing one closing brace restore in tool arguments [0.51ms]
+(fail) mapped WORD placeholders missing one closing brace restore in tool arguments [0.17ms]
+
+ 24 pass
+ 8 fail
+ 1819 expect() calls
+Ran 32 tests across 2 files. [209.00ms]

@@ -18,7 +18,7 @@ interface Packet {
     content: { role?: string; parts: Array<Packet> }
     finishReason?: string
   }>
-  tool_calls?: Array<{ function: { arguments: string } }>
+  tool_calls?: Array<{ index?: number; function: { arguments: string } }>
   function?: { arguments: string }
 }
 interface Output {
@@ -219,6 +219,119 @@ test("trailing braces and fragmented placeholders restore across chat frames, in
     .join("")
   expect(JSON.parse(args)).toEqual({ path: value })
   expect(JSON.stringify(outputs)).not.toContain("{{HOME_")
+})
+
+test.each(["chat", "legacy-chat", "messages", "responses", "custom"])(
+  "%s tool streams restore a missing closing brace across every split",
+  async (wire) => {
+    const original = 'fixture"quoted\\path\nnext'
+    const scope = new RedactionScope(
+      redactionConfigSchema.parse({ enabled: true, words: [original] }),
+      randomUUID(),
+    )
+    const token = scope.maskText(original)
+    const foreignScope = createScope()
+    const unknown = foreignScope
+      .maskText(["/Users", "foreign-brace-fixture"].join("/"))
+      .slice(0, -1)
+    const frame = (fragment: string) => {
+      if (wire === "chat")
+        return chat({
+          tool_calls: [{ index: 0, function: { arguments: fragment } }],
+        })
+      if (wire === "legacy-chat")
+        return chat({ function_call: { arguments: fragment } })
+      if (wire === "messages")
+        return {
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "input_json_delta", partial_json: fragment },
+        }
+      return {
+        type:
+          wire === "custom" ?
+            "response.custom_tool_call_input.delta"
+          : "response.function_call_arguments.delta",
+        item_id: "call_fixture",
+        delta: fragment,
+      }
+    }
+    const read = (packet: Packet): string => {
+      if (wire === "chat")
+        return (
+          packet.choices?.[0]?.delta.tool_calls?.[0]?.function.arguments ?? ""
+        )
+      if (wire === "legacy-chat") {
+        const call = packet.choices?.[0]?.delta.function_call as
+          | Packet
+          | undefined
+        return (call?.arguments as string | undefined) ?? ""
+      }
+      if (typeof packet.delta === "string") return packet.delta
+      return (packet.delta?.partial_json as string | undefined) ?? ""
+    }
+    for (const [echoed, value] of [
+      [token, original],
+      [token.slice(0, -1), original],
+      [unknown, unknown],
+    ]) {
+      const command = `cd ${echoed}/work`
+      const expected = `cd ${value}/work`
+      const args = wire === "custom" ? command : JSON.stringify({ command })
+      for (let split = 0; split <= args.length; split++) {
+        const outputs = await run(
+          [
+            sse(frame(args.slice(0, split))),
+            sse(frame(args.slice(split))),
+            DONE,
+          ],
+          scope,
+        )
+        const restored = outputs
+          .map(({ packet }) => (packet ? read(packet) : ""))
+          .join("")
+        if (wire === "custom") expect(restored).toBe(expected)
+        else expect(JSON.parse(restored)).toEqual({ command: expected })
+      }
+    }
+  },
+)
+
+test("a missing closing brace at stream end restores without leaking a held token", async () => {
+  const scope = createScope()
+  const original = ["/Users", "terminal-brace-fixture"].join("/")
+  const token = scope.maskText(original)
+  for (const terminal of [undefined, DONE, sse(chat({}, "stop"))]) {
+    const frames = [sse(chat({ content: `read ${token.slice(0, -1)}` }))]
+    if (terminal) frames.push(terminal)
+    const outputs = await run(frames, scope)
+    expect(joinField(chatDeltas(outputs), "content")).toBe(`read ${original}`)
+  }
+  const outputs = await run(
+    [
+      sse({
+        type: "response.custom_tool_call_input.delta",
+        item_id: "call_fixture",
+        delta: `cd ${token.slice(0, -1)}`,
+      }),
+      sse({
+        type: "response.custom_tool_call_input.done",
+        item_id: "call_fixture",
+        input: `cd ${token.slice(0, -1)}`,
+      }),
+    ],
+    scope,
+  )
+  expect(
+    outputs
+      .filter(
+        ({ packet }) =>
+          packet?.type === "response.custom_tool_call_input.delta",
+      )
+      .map(({ packet }) => packet?.delta)
+      .join(""),
+  ).toBe(`cd ${original}`)
+  expect(outputs.at(-1)?.packet?.input).toBe(`cd ${original}`)
 })
 
 test("EOF and [DONE] flush every pending tail before ending, in emission order", async () => {

@@ -201,6 +201,70 @@ test("real mappings still restore alongside source literals in the same tool arg
   expect(scope.diagnostics().restored).toBe(1)
 })
 
+test.each([
+  ["HOME", ["/Users", "brace-fixture"].join("/")],
+  ["WORD", 'fixture"quoted\\path\nnext'],
+])(
+  "mapped %s placeholders missing one closing brace restore in tool arguments",
+  (label, original) => {
+    const scope = new RedactionScope(
+      redactionConfigSchema.parse({
+        enabled: true,
+        words: label === "WORD" ? [original] : [],
+      }),
+      randomUUID(),
+    )
+    const token = scope.maskText(original)
+    expect(token).toStartWith(`{{${label}_`)
+    const calls = (command: string) => [
+      { type: "tool_use", input: { command } },
+      { type: "function_call", arguments: JSON.stringify({ command }) },
+      { type: "custom_tool_call", input: command },
+      { functionCall: { name: "exec", args: { command } } },
+    ]
+    for (const echoed of [token, token.slice(0, -1)]) {
+      const command = `cd ${echoed}/work/code/agents/fixture`
+      const expected = `cd ${original}/work/code/agents/fixture`
+      expect(scope.restoreText(echoed)).toBe(original)
+      expect(
+        JSON.parse(scope.restoreText(JSON.stringify({ command }), true)),
+      ).toEqual({ command: expected })
+      expect(scope.restore(calls(command), "issuer")).toEqual(calls(expected))
+    }
+  },
+)
+
+test("missing-brace restoration requires the exact mapping allowed by this request", () => {
+  const identity = randomUUID()
+  const owner = new RedactionScope(config, identity)
+  const original = ["/Users", "brace-mapping-owner"].join("/")
+  const token = owner.maskText(original)
+  const malformed = token.slice(0, -1)
+  for (const caller of [identity, randomUUID()]) {
+    const request = new RedactionScope(config, caller)
+    expect(request.maskText(malformed)).toBe(malformed)
+    expect(request.restoreText(malformed)).toBe(malformed)
+    expect(
+      request.restore(
+        { type: "tool_use", input: { command: malformed } },
+        "issuer",
+      ),
+    ).toEqual({ type: "tool_use", input: { command: malformed } })
+    expect(request.diagnostics().restored).toBe(0)
+  }
+  const suffix = token.slice(7, -2)
+  const changed = (suffix[0] === "a" ? "b" : "a") + suffix.slice(1)
+  for (const literal of [
+    token.slice(0, -2),
+    token.slice(1),
+    malformed.replace("HOME_", "WORD_"),
+    `{{HOME_${changed}}`,
+    `{{HOME_${suffix}a}`,
+    `{{HOME_${suffix.slice(1)}}`,
+  ])
+    expect(owner.restoreText(literal)).toBe(literal)
+})
+
 test("unmapped generated placeholders do not abort a tool response or borrow tenant secrets", () => {
   const identity = randomUUID()
   const owner = new RedactionScope(config, identity)

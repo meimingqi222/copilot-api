@@ -57,10 +57,11 @@ export function tokenPattern(): RegExp {
 }
 
 /**
- * Placeholders as a model may echo them: spaces inside the braces or another
- * case. Group 1 is the label, group 2 the suffix.
+ * Placeholders as a model may echo them: spaces, another case, or one missing
+ * closing brace. Both opening braces and an exact mapped suffix are still
+ * required for restoration. Group 1 is the label, group 2 the suffix.
  */
-const LOOSE_SOURCE = String.raw`\{\{\s*([A-Za-z_]+?)_([A-Za-z0-9]{16}|[A-Za-z0-9]{8}|[A-Fa-f0-9]{32})\s*\}\}`
+const LOOSE_SOURCE = String.raw`\{\{\s*([A-Za-z_]+?)_([A-Za-z0-9]{16}|[A-Za-z0-9]{8}|[A-Fa-f0-9]{32})\s*\}{1,2}`
 
 export function loosePattern(): RegExp {
   return new RegExp(LOOSE_SOURCE, "g")
@@ -102,5 +103,6 @@ export function pendingTokenSuffix(text: string): string {
   const suffix = text.slice(start)
   // Longest loose placeholder: braces, spaces, the longest label, "_", 32.
   if (suffix.length > 64) return ""
+  // Hold one closing brace until the next chunk can supply the second.
   return /^\{\{\s*[A-Za-z0-9_]*\s*\}?$/.test(suffix) ? suffix : ""
 }
