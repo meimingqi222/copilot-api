@@ -218,6 +218,7 @@ export type ResponsesReasoningEffort =
   | "max"
 
 export interface ResponsesPayload {
+  include?: Array<string>
   model: string
   input: string | Array<ResponsesInputItem>
   background?: boolean | null

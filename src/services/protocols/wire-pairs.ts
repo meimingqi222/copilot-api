@@ -86,10 +86,16 @@ import {
 } from "~/services/ir/codecs/responses/stream"
 import { applyPromptCaching } from "~/services/claude/prompt-cache"
 import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
-import type { ResponsesPayload } from "~/services/protocols/responses/types"
+import type {
+  ResponsesPayload,
+  ResponsesResponse,
+} from "~/services/protocols/responses/types"
 import type { AnthropicMessagesPayload } from "./anthropic"
 import { isPlainResult } from "./result-shape"
 import { replaysReasoningText } from "~/services/protocols/reasoning-replay"
+import { resolveTranscriptScopeId } from "~/lib/request-scope"
+import { hashKeyPart } from "~/lib/cache/persistent-map"
+import { ResponsesToolReplay } from "~/services/protocols/responses-tool-replay"
 
 /** Every codec reads SSE frames off `.data`; the rest of the frame is ignored. */
 type SseLike = { data?: string }
@@ -538,8 +544,26 @@ export async function createTranslatedCall(
     preserveReasoningOrder: connection.protocol === "windsurf-native",
     replayReasoningText,
   })
-  const targetRequest =
+  let targetRequest =
     transformTargetRequest ? transformTargetRequest(encoded) : encoded
+  const replay =
+    source === "chat" && target === "responses" && !replayReasoningText ?
+      new ResponsesToolReplay(
+        JSON.stringify([
+          params.ctx?.c ?
+            resolveTranscriptScopeId(params.ctx.c)
+          : (params.ctx?.transcriptScopeId ?? "anonymous"),
+          connection.id,
+          connection.protocol,
+          connection.baseUrl,
+          params.credential.id,
+          hashKeyPart(params.credential.value),
+          routeTarget.upstreamModelId,
+        ]),
+      )
+    : undefined
+  if (replay)
+    targetRequest = await replay.restore(targetRequest as ResponsesPayload)
   onPhase?.("request_encoded", {
     request: requestIR,
     targetPayload: targetRequest,
@@ -550,8 +574,12 @@ export async function createTranslatedCall(
   )
   const result = await executor(targetRequest)
   if (targetSpec.isResult(result.response)) {
+    const upstreamResponse =
+      replay ?
+        await replay.response(result.response as ResponsesResponse)
+      : result.response
     const decoded = measureLocalWork("responseTranslationMs", () =>
-      targetSpec.decodeResult(result.response, {
+      targetSpec.decodeResult(upstreamResponse, {
         model: routeTarget.upstreamModelId,
         request: requestIR,
       }),
@@ -569,7 +597,9 @@ export async function createTranslatedCall(
   return {
     credentialId: result.credentialId,
     response: measureTranslatedStream(
-      result.response as AsyncIterable<SseLike>,
+      replay ?
+        replay.stream(result.response as AsyncIterable<SseLike>)
+      : (result.response as AsyncIterable<SseLike>),
       (upstream) =>
         sourceSpec.encodeStream(
           targetSpec.decodeStream(upstream, {

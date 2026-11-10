@@ -1,0 +1,17 @@
+Command: bun test tests/messages-via-responses.test.ts -t 'Chat tool rounds recover native'
+Parent: f593212349befa1a6a9c03f79e7139a48a45bb2f
+Observed before adding responses-tool-replay.ts or integrating it into wire-pairs.ts.
+
+[FAIL] FAILURES:
+  (fail) Chat tool rounds recover native Responses reasoning without session headers (stream=%s) [48.08ms]
+  (fail) Chat tool rounds recover native Responses reasoning without session headers (stream=%s) [15.53ms]
+  error: Received value must be an array type, or both received and expected values must be strings.
+  at tests/messages-via-responses.test.ts:168:30
+
+Failing assertion: expect(sent[0]?.include).toContain("reasoning.encrypted_content")
+The pre-fix converted request had no include field.
+
+SUMMARY:
+   0 pass
+   2 fail
+  Ran 2 tests across 1 file. [417.00ms]

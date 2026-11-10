@@ -24,10 +24,39 @@ the preflight loss contract shared by all translated source wires.
 
 The Responses guide's manual-history contract replays original output items,
 including native reasoning accompanying tool calls. It does not establish a
-portable replay contract for foreign Chat thought text. Keep the existing
-native replay path and cache behavior unchanged; do not introduce a new cache
-or broaden issuer eligibility. Direct Chat targets keep historical
-reasoning extensions. New response reasoning remains a separate output channel.
+portable replay contract for foreign Chat thought text. Direct Chat targets keep
+historical reasoning extensions. New response reasoning remains a separate output
+channel. Native Responses clients keep their existing replay behavior.
+
+Chat clients cannot carry the original Responses reasoning item, so the reverse
+translation must preserve its provenance outside Chat text. For Chat → generic
+Responses, `src/services/protocols/responses-tool-replay.ts` asks for
+`reasoning.encrypted_content`, saves original reasoning/function-call items in
+the existing PersistentTTLMap mechanism, and gives each call a random bounded
+Chat-compatible reference ID. On the next request, a reference recovers only the
+same caller/connection/protocol/base URL/credential id/credential value/model's
+batch. Credential values contribute only a hash to the scope. No explicit session
+header is required, and concurrent conversations do not share a latest-turn slot.
+
+The next upstream input gets the original call IDs and native call snapshots,
+with reasoning ahead of the corresponding calls and deduplicated across parallel
+tools. Client JSON whitespace/key ordering may change, but editing a referenced
+call's name, namespace or argument value invalidates its entire batch. Ordinary
+unreferenced Chat thoughts still follow the foreign-reasoning loss policy.
+
+Streaming references are assigned before tool deltas reach the client; final
+native items are saved before completion is forwarded. A complete item carrying
+ciphertext is retained when a terminal summary-only snapshot omits that field.
+Raw ciphertext never goes into a custom Chat field or into assistant prose.
+Failed/incomplete responses do not publish replay state. Missing, expired,
+oversized or out-of-scope entries leave the Chat call/result IDs paired and do
+not inject state. The versioned cache is limited to 256 batches of at most
+120 KiB each, with one-hour sliding expiration and existing graceful-shutdown
+persistence. The DeepSeek readable-history exception bypasses this mechanism.
+
+This mechanism preserves upstream-native state, rather than manufacturing native
+provenance for a client's arbitrary reasoning_content. It does not reclassify
+old persisted prose or prove that any specific live model will stop looping.
 
 DeepSeek is an explicit readable-history exception, not a relaxation of native
 OpenAI or Anthropic replay validation. `src/services/protocols/reasoning-replay.ts`
@@ -102,6 +131,21 @@ Reference behavior: Magpie `internal/gateway/responses.go`, revision
 is deliberately not adopted.
 
 ## Verification
+
+- `tests/messages-via-responses.test.ts::Chat tool rounds recover native Responses reasoning without session headers`
+  verifies three HTTP requests with two tool rounds, parallel calls, visible and
+  opaque-only reasoning, original IDs/argument snapshots, and JSON reserialization.
+  It covers non-streaming, incremental SSE, terminal-only SSE and terminal
+  snapshots that omit previously delivered ciphertext.
+- `tests/messages-via-responses.test.ts::Chat native replay does not reuse state after`
+  covers caller, upstream URL, credential id/value and model isolation, amended
+  parallel calls, expiry, missing references, incomplete responses and size limits.
+
+Proved: Before native carry was implemented, both HTTP tool-round cases failed
+because the upstream request did not request encrypted reasoning; the observed
+red output is retained in `.agents/notes-evidence/chat-native-response-replay-red.log`.
+The same flow now restores the original reasoning and tool snapshots across two
+rounds. This is an offline protocol regression, not a paid live model experiment.
 
 - `tests/chat-responses-codec.test.ts::drops foreign reasoning with telemetry`
   covers multi-round tools, a thought-only tool turn, ordinary prose and a

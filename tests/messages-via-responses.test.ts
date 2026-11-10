@@ -1,10 +1,19 @@
-import { afterEach, beforeEach, expect, mock, test } from "bun:test"
+import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test"
+
+import type {
+  ChatCompletionChunk,
+  Message,
+} from "~/services/protocols/chat/types"
 
 import { resetProtectedRouteGuardForTest } from "~/lib/protected-route-guard"
+import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
 import {
   __resetProviderConnectionsForTest,
   createConnection,
+  addCredential,
+  deleteCredential,
   updateConnection,
+  updateCredential,
 } from "~/lib/provider-connections"
 import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
@@ -15,8 +24,350 @@ import {
 
 const originalFetch = globalThis.fetch
 
+async function chatAssistant(
+  response: Response,
+  stream: boolean,
+): Promise<Message> {
+  if (!stream) {
+    const body = (await response.json()) as {
+      choices: Array<{ message: Message }>
+    }
+    return body.choices[0]!.message
+  }
+  const message: Message = {
+    role: "assistant",
+    content: "",
+  }
+  for (const line of (await response.text()).split("\n")) {
+    if (!line.startsWith("data:") || line.slice(5).trim() === "[DONE]") continue
+    const chunk = JSON.parse(line.slice(5)) as ChatCompletionChunk
+    for (const { delta } of chunk.choices ?? []) {
+      if (typeof delta.content === "string")
+        message.content = String(message.content ?? "") + delta.content
+      if (delta.reasoning_content)
+        message.reasoning_content =
+          (message.reasoning_content ?? "") + delta.reasoning_content
+      for (const call of delta.tool_calls ?? []) {
+        message.tool_calls ??= []
+        const tool = (message.tool_calls[call.index] ??= {
+          id: "",
+          type: "function",
+          function: { name: "", arguments: "" },
+        })
+        if (call.id) tool.id = call.id
+        if (call.function?.name) tool.function.name = call.function.name
+        tool.function.arguments += call.function?.arguments ?? ""
+      }
+    }
+  }
+  return message
+}
+
+test.each([
+  { stream: false, terminalOnly: false },
+  { stream: true, terminalOnly: false },
+  { stream: true, terminalOnly: true },
+  { stream: true, terminalOnly: false, terminalOmitsCiphertext: true },
+])(
+  "Chat tool rounds recover native Responses reasoning without session headers (stream=$stream terminalOnly=$terminalOnly)",
+  async ({ stream, terminalOnly, terminalOmitsCiphertext }) => {
+    const sent: Array<Record<string, unknown>> = []
+    const thoughts = [0, 1].map((round) => ({
+      id: `rs_native_${round}`,
+      type: "reasoning",
+      summary: [{ type: "summary_text", text: `native thought ${round}` }],
+      encrypted_content: `opaque-native-state-${round}`,
+      status: "completed",
+    }))
+    const sealed = thoughts.map((thought, round) => ({
+      ...thought,
+      id: `rs_sealed_${round}`,
+      summary: [],
+      encrypted_content: `opaque-native-hidden-${round}`,
+    }))
+    globalThis.fetch = mock((_url: unknown, options?: RequestInit) => {
+      const round = sent.length
+      sent.push(JSON.parse(String(options?.body)) as Record<string, unknown>)
+      const output: Array<Record<string, unknown>> =
+        round < 2 ?
+          [
+            thoughts[round],
+            sealed[round],
+            {
+              id: `msg_${round}`,
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: `step ${round}` }],
+            },
+            ...[0, 1].map((index) => ({
+              id: `fc_${round}_${index}`,
+              type: "function_call",
+              call_id: `call_original_${round}_${index}`,
+              name: "read",
+              arguments: '{"path":"file","limit":2}',
+              status: "completed",
+            })),
+          ]
+        : [
+            {
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: "done" }],
+            },
+          ]
+      const body = {
+        id: `resp_${round}`,
+        model: "gpt-responses",
+        status: "completed",
+        output,
+        usage: { input_tokens: 20, output_tokens: 10 },
+      }
+      if (!stream) return Promise.resolve(Response.json(body))
+      const events =
+        terminalOnly ?
+          []
+        : output.flatMap((item, output_index) => [
+            {
+              type: "response.output_item.added",
+              output_index,
+              item:
+                item.type === "function_call" ?
+                  { ...item, arguments: "" }
+                : item,
+            },
+            { type: "response.output_item.done", output_index, item },
+          ])
+      return Promise.resolve(
+        new Response(
+          [
+            ...events,
+            {
+              type: "response.completed",
+              response:
+                terminalOmitsCiphertext ?
+                  {
+                    ...body,
+                    output: output.map((item) => {
+                      if (item.type !== "reasoning") return item
+                      const { encrypted_content: _encrypted, ...summary } = item
+                      return summary
+                    }),
+                  }
+                : body,
+            },
+          ]
+            .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+            .join(""),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      )
+    }) as unknown as typeof fetch
+    const messages: Array<Message> = [
+      { role: "user", content: "implement resume" },
+    ]
+    for (let round = 0; round < 3; round++) {
+      const response = await server.fetch(
+        new Request("http://localhost/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: "Bearer native-replay-caller",
+          },
+          body: JSON.stringify({
+            model: "gpt-responses",
+            stream,
+            reasoning_effort: "high",
+            messages,
+            tools: [
+              {
+                type: "function",
+                function: { name: "read", parameters: { type: "object" } },
+              },
+            ],
+          }),
+        }),
+      )
+      expect(response.status).toBe(200)
+      const assistant = await chatAssistant(response, stream)
+      if (round === 2) {
+        expect(assistant.content).toBe("done")
+        break
+      }
+      expect(assistant.reasoning_content).toBe(`native thought ${round}`)
+      expect(assistant.tool_calls).toHaveLength(2)
+      expect(JSON.stringify(assistant)).not.toContain("opaque-native-state")
+      for (const call of assistant.tool_calls ?? []) {
+        expect(call.id.length).toBeLessThanOrEqual(64)
+        call.function.arguments = '{ "limit": 2, "path": "file" }'
+      }
+      messages.push(assistant)
+      for (const call of assistant.tool_calls ?? [])
+        messages.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: "file contents",
+        })
+    }
+    expect(sent[0]?.include).toContain("reasoning.encrypted_content")
+    for (const round of [1, 2]) {
+      const input = sent[round]?.input as Array<Record<string, unknown>>
+      expect(input.filter((item) => item.type === "reasoning")).toEqual(
+        thoughts
+          .slice(0, round)
+          .flatMap((thought, index) => [thought, sealed[index]]),
+      )
+      for (let previous = 0; previous < round; previous++) {
+        const reasoningIndex = input.findIndex(
+          (item) => item.id === thoughts[previous]?.id,
+        )
+        const textIndex = input.findIndex((item) => item.role === "assistant")
+        if (previous === 0) expect(reasoningIndex).toBeLessThan(textIndex)
+        for (const index of [0, 1]) {
+          const callId = `call_original_${previous}_${index}`
+          expect(
+            input.find(
+              (item) =>
+                item.type === "function_call" && item.call_id === callId,
+            ),
+          ).toMatchObject({
+            id: `fc_${previous}_${index}`,
+            arguments: '{"path":"file","limit":2}',
+          })
+          expect(
+            input.find(
+              (item) =>
+                item.type === "function_call_output" && item.call_id === callId,
+            ),
+          ).toBeDefined()
+        }
+      }
+      expect(JSON.stringify(input)).not.toContain("[historical reasoning]")
+    }
+  },
+)
+
+test.each([
+  "caller",
+  "upstream",
+  "credential",
+  "credential-value",
+  "model",
+  "arguments",
+  "expired",
+  "missing",
+  "incomplete",
+  "oversized",
+])(
+  "Chat native replay does not reuse state after %s changes",
+  async (boundary) => {
+    const thought = {
+      id: "rs_isolated",
+      type: "reasoning",
+      summary: [],
+      encrypted_content:
+        boundary === "oversized" ?
+          "x".repeat(121 * 1024)
+        : "isolated-native-state",
+    }
+    const sent: Array<Record<string, unknown>> = []
+    globalThis.fetch = mock((_url: unknown, options?: RequestInit) => {
+      sent.push(JSON.parse(String(options?.body)) as Record<string, unknown>)
+      return Promise.resolve(
+        Response.json({
+          id: "resp_isolated",
+          model: "gpt-responses",
+          status: boundary === "incomplete" ? "incomplete" : "completed",
+          output: [
+            thought,
+            ...[0, 1].map((index) => ({
+              id: `fc_isolated_${index}`,
+              type: "function_call",
+              call_id: `call_isolated_${index}`,
+              name: "read",
+              arguments: "{}",
+            })),
+          ],
+        }),
+      )
+    }) as unknown as typeof fetch
+    async function post(messages: Array<Message>, caller: string) {
+      const response = await server.fetch(
+        new Request("http://localhost/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${caller}`,
+          },
+          body: JSON.stringify({ model: "gpt-responses", messages }),
+        }),
+      )
+      expect(response.status).toBe(200)
+      return chatAssistant(response, false)
+    }
+    const messages: Array<Message> = [{ role: "user", content: "work" }]
+    const assistant = await post(messages, "caller-a")
+    const call = assistant.tool_calls![0]!
+    expect(call.id).not.toBe("call_isolated_0")
+    messages.push(assistant)
+    for (const tool of assistant.tool_calls!)
+      messages.push({ role: "tool", tool_call_id: tool.id, content: "ok" })
+    if (boundary === "upstream")
+      await updateConnection("responses-conn", {
+        baseUrl: "https://other.responses.test/v1",
+      })
+    if (boundary === "credential") {
+      await addCredential("responses-conn", {
+        id: "cred-other",
+        value: "other",
+        authMode: "bearer",
+      })
+      await deleteCredential("responses-conn", "cred-1")
+    }
+    if (boundary === "credential-value")
+      await updateCredential("responses-conn", "cred-1", {
+        value: "changed-credential",
+      })
+    if (boundary === "model")
+      await updateConnection("responses-conn", {
+        models: [
+          {
+            publicId: "gpt-responses",
+            upstreamId: "other-model",
+            endpoints: ["responses"],
+            enabled: true,
+          },
+        ],
+      })
+    if (boundary === "arguments") call.function.arguments = '{"changed":true}'
+    if (boundary === "missing")
+      for (const [index, tool] of assistant.tool_calls!.entries())
+        tool.id = messages[index + 2]!.tool_call_id =
+          `call_rp_00000000000000000000000000000000_${index}`
+    const now = Date.now()
+    const clock =
+      boundary === "expired" ?
+        spyOn(Date, "now").mockReturnValue(now + 3_600_001)
+      : undefined
+    try {
+      await post(messages, boundary === "caller" ? "caller-b" : "caller-a")
+    } finally {
+      clock?.mockRestore()
+    }
+    const input = sent[1]!.input as Array<Record<string, unknown>>
+    expect(input.filter((item) => item.type === "reasoning")).toEqual([])
+    expect(input.find((item) => item.type === "function_call")?.call_id).toBe(
+      call.id,
+    )
+    expect(
+      input.find((item) => item.type === "function_call_output")?.call_id,
+    ).toBe(call.id)
+    expect(JSON.stringify(input)).not.toContain("isolated-native-state")
+  },
+)
+
 beforeEach(async () => {
   statsStore.clearUsageStatsForTest()
+  resetAdaptiveRateLimiterForTest()
   resetTranslationLossMetricsForTest()
   resetProtectedRouteGuardForTest()
   __resetProviderConnectionsForTest()
@@ -39,6 +390,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   statsStore.clearUsageStatsForTest()
+  resetAdaptiveRateLimiterForTest()
   globalThis.fetch = originalFetch
   __resetProviderConnectionsForTest()
 })

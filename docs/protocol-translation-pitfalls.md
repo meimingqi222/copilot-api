@@ -335,6 +335,30 @@ user 消息中的工具结果转换为独立 Responses 项，周围文字的顺�
 回归：`tests/ir-responses.test.ts`、`tests/ir-messages-chat.test.ts`。
 决策：`.agents/notes/implemented/architecture/2026-11-01-coding-client-ir-compatibility.md`。
 
+### 3.14 Chat 客户端访问 Responses 上游时保留原生推理状态
+
+Chat 的 `reasoning_content` 不能代替 Responses 上游的原始 reasoning item。
+仅删除历史推理正文回填，还不能保证 Grok 等模型的工具循环具有推理连续性。
+
+`wire-pairs.ts` 在 Chat → 非 DeepSeek-readable Responses 路径请求
+`reasoning.encrypted_content`，通过 `responses-tool-replay.ts` 保存上游原始
+reasoning/function-call 快照，并以不超过 64 字符的工具 ID 引用跨过标准 Chat
+客户端。下一轮依据引用恢复原 ID、原始参数和对应推理的位置；并行工具不重复
+插入同一段推理。流式和非流式使用同一回放契约，不要求客户端另传 session header。
+
+缓存按调用者、连接、协议、base URL、凭证 ID/凭证值摘要和实际上游模型隔离，
+使用已有持久 TTL map，格式为 `responses-tool-replay-v1`。最多保存 256 个批次，
+每批不超过 120 KiB，滑动有效期一小时。修改调用的工具名或参数会使该批次失效；
+过期、丢失、超限、未完成或作用域不符时不注入原生状态，保留调用与结果的 ID 配对。
+客户端不会收到明文自定义密文字段，也不会将推理降格为普通正文。
+
+这与为任意 Chat 历史伪造 reasoning item 不同。普通外来推理继续记录转换损失，
+DeepSeek 明文推理回放与原生 Responses 客户端的路径保持各自契约。旧会话中已经
+成为正文的历史标记不会被自动清理；部署后应以新的隔离会话验证模型行为。
+
+回归：`tests/messages-via-responses.test.ts`。
+决策：`.agents/notes/implemented/spec-change/2026-11-09-responses-foreign-thinking-replay.md`。
+
 ## 4. messages ↔ responses（已开放）
 
 IR 不经 Chat 枢纽，两个方向各自直连，没有专属行为，因此不设 wrapper：
