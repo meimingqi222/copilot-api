@@ -120,6 +120,20 @@ export function createTables(db: Database): void {
     CREATE INDEX IF NOT EXISTS idx_usage_connection ON usage_stats(connection_id)
   `)
 
+  // Trae answers 0/0 for a turn it bills at its cache price, so those rows
+  // were never a measured miss. Rows written before the column existed read
+  // as counted, and a path that missed the flag would too; fix both here
+  // rather than leave them to dilute the hit rate. Idempotent, and the
+  // provider index keeps later startups from scanning the table.
+  db.run(`
+    UPDATE usage_stats
+    SET cache_unknown = 1
+    WHERE provider = 'trae-cn'
+      AND cache_read_tokens = 0
+      AND cache_write_tokens = 0
+      AND cache_unknown = 0
+  `)
+
   db.run(`
     CREATE TABLE IF NOT EXISTS model_pricing (
       model TEXT PRIMARY KEY,

@@ -1,0 +1,39 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/stats-wal.test.ts:
+58 |     expect(db.query("PRAGMA table_info(usage_stats)").all()).toContainEqual(
+59 |       expect.objectContaining({ name: "cache_unknown" }),
+60 |     )
+61 |     expect(
+62 |       db.query("SELECT id, cache_unknown FROM usage_stats ORDER BY id").all(),
+63 |     ).toEqual([
+           ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+-     "cache_unknown": 1,
++     "cache_unknown": 0,
+      "id": 1,
+    },
+    {
+      "cache_unknown": 0,
+      "id": 2,
+    },
+    {
+      "cache_unknown": 0,
+      "id": 3,
+    },
+  ]
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (/Users/meimingqi222/Developer/amp-workspace/copilot-api/tests/stats-wal.test.ts:63:7)
+(fail) a stats DB from before cache-unknown gains the column and backfills Trae 0/0 rows [2.29ms]
+
+ 0 pass
+ 2 filtered out
+ 1 fail
+ 2 expect() calls
+Ran 1 test across 1 file. [108.00ms]

@@ -28,7 +28,7 @@ test("file-backed statistics use WAL while another reader has a snapshot open", 
   }
 })
 
-test("a stats DB from before cache-unknown gains the column, keeping old rows counted", () => {
+test("a stats DB from before cache-unknown gains the column and backfills Trae 0/0 rows", () => {
   const db = new Database(":memory:")
   try {
     db.run(`CREATE TABLE usage_stats (
@@ -43,20 +43,28 @@ test("a stats DB from before cache-unknown gains the column, keeping old rows co
       cache_write_tokens INTEGER DEFAULT 0,
       total_tokens INTEGER DEFAULT 0,
       cost REAL DEFAULT 0,
-      timestamp INTEGER NOT NULL
+      timestamp INTEGER NOT NULL,
+      provider TEXT
     )`)
     db.run(
       `INSERT INTO usage_stats
-        (date, account_id, model, prompt_tokens, timestamp)
-       VALUES ('2026-03-10', 'old-account', 'm', 5, 1)`,
+        (date, account_id, model, prompt_tokens, cache_read_tokens, timestamp, provider)
+       VALUES
+        ('2026-03-10', 'old-account', 'glm-5.2', 1000, 0, 1, 'trae-cn'),
+        ('2026-03-10', 'old-account', 'gpt-5', 500, 0, 2, 'copilot'),
+        ('2026-03-10', 'old-account', 'kimi-k3', 1000, 400, 3, 'trae-cn')`,
     )
     createTables(db)
     expect(db.query("PRAGMA table_info(usage_stats)").all()).toContainEqual(
       expect.objectContaining({ name: "cache_unknown" }),
     )
-    expect(db.query("SELECT cache_unknown FROM usage_stats").get()).toEqual({
-      cache_unknown: 0,
-    })
+    expect(
+      db.query("SELECT id, cache_unknown FROM usage_stats ORDER BY id").all(),
+    ).toEqual([
+      { id: 1, cache_unknown: 1 },
+      { id: 2, cache_unknown: 0 },
+      { id: 3, cache_unknown: 0 },
+    ])
   } finally {
     db.close()
   }

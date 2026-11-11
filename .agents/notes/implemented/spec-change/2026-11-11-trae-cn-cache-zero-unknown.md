@@ -29,10 +29,11 @@ names no cache is unknown, so the usage goes on without cache details.
 
 The usage recorder marks a Trae call uncounted when its answer names no cache
 or counts 0/0, and stores that in `usage_stats.cache_unknown` (a migration
-adds the column; legacy rows keep the counted default). The dashboard and the
-usage API leave an uncounted call's prompt tokens out of the hit-rate
-denominator, while its tokens still count in the request, prompt and cost
-totals.
+adds the column). An idempotent startup backfill also marks older Trae rows
+with 0/0, which were written before the distinction existed; other providers'
+rows keep the counted default. The dashboard and the usage API leave an
+uncounted call's prompt tokens out of the hit-rate denominator, while its
+tokens still count in the request, prompt and cost totals.
 
 ## Alternatives considered
 
@@ -61,12 +62,14 @@ is counted twice.
 - `tests/trae-cn-conversion-regression.test.ts::Trae reads cache counts under every spelling and treats 0/0 as unknown`
 - `tests/usage-recorder.test.ts::Trae's 0/0 cache answer is recorded as uncounted; another provider's is not`
 - `tests/admin-usage-summary.test.ts::uncounted cache stays in the token totals but out of the hit rate`
-- `tests/stats-wal.test.ts::a stats DB from before cache-unknown gains the column, keeping old rows counted`
+- `tests/stats-wal.test.ts::a stats DB from before cache-unknown gains the column and backfills Trae 0/0 rows`
 
 Proved: the spelling regression failed at the `prompt_cache_hit_tokens`
 assertion before the fix, and the old 0/0 expectation conflicted with the new
 requirement; `.agents/notes-evidence/trae-cache-red.log` retains the red run.
 With the recorder and hit-rate changes reverted, the uncounted-cache and API
 regressions failed (2 of 12) at their assertions, as
-`.agents/notes-evidence/stats-cache-unknown-red.log` shows. The usage,
+`.agents/notes-evidence/stats-cache-unknown-red.log` shows. With the startup
+backfill removed, the migration regression failed at the old Trae row's flag
+(`.agents/notes-evidence/stats-cache-backfill-red.log`). The usage,
 admin-summary, migration and Trae regression tests pass after the change.
