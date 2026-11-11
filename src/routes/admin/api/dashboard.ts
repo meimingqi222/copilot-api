@@ -18,6 +18,7 @@ import {
 } from "~/lib/provider-connections"
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
+import { countedInputTokens } from "~/lib/stats/cache-counting"
 import {
   addDays,
   resolveTimeZone,
@@ -400,6 +401,7 @@ dashboardApiRoutes.get("/", (c) => {
   let completionTokens = 0
   let cacheReadTokens = 0
   let cacheWriteTokens = 0
+  let cacheUnknownPromptTokens = 0
   let totalTokens = 0
   let cost = 0
   const modelUsageMap = new Map<
@@ -412,6 +414,7 @@ dashboardApiRoutes.get("/", (c) => {
     completionTokens += day.completionTokens
     cacheReadTokens += day.cacheReadTokens
     cacheWriteTokens += day.cacheWriteTokens
+    cacheUnknownPromptTokens += day.cacheUnknownPromptTokens
     totalTokens += day.totalTokens
     cost += day.cost
 
@@ -428,11 +431,13 @@ dashboardApiRoutes.get("/", (c) => {
     }
   }
 
-  const inputTokens = promptTokens + cacheReadTokens
+  const counted = countedInputTokens({
+    promptTokens,
+    cacheReadTokens,
+    cacheUnknownPromptTokens,
+  })
   const cacheHitRate =
-    inputTokens > 0 ?
-      Number(((cacheReadTokens / inputTokens) * 100).toFixed(1))
-    : null
+    counted > 0 ? Number(((cacheReadTokens / counted) * 100).toFixed(1)) : null
 
   const modelRequests = dayStats.reduce((sum, day) => sum + day.requests, 0)
   const topModels = [...modelUsageMap.entries()]

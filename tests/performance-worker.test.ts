@@ -13,6 +13,7 @@ test("large aggregation keeps the event loop responsive and matches the synchron
     completion_tokens: 30,
     cache_read_tokens: 0,
     cache_write_tokens: 0,
+    cache_unknown: 0,
     total_tokens: 40,
     cost: 0,
     timestamp: i,

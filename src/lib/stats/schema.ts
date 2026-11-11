@@ -40,6 +40,7 @@ export function createTables(db: Database): void {
       completion_tokens INTEGER DEFAULT 0,
       cache_read_tokens INTEGER DEFAULT 0,
       cache_write_tokens INTEGER DEFAULT 0,
+      cache_unknown INTEGER DEFAULT 0,
       total_tokens INTEGER DEFAULT 0,
       cost REAL DEFAULT 0,
       timestamp INTEGER NOT NULL
@@ -101,6 +102,9 @@ export function createTables(db: Database): void {
   ensureColumn(db, "usage_stats", "tps", "REAL")
   ensureColumn(db, "usage_stats", "performance_json", "TEXT")
   ensureColumn(db, "usage_stats", "streaming", "INTEGER DEFAULT 0")
+  // Older rows keep the counted (0) default: their vendor answered with
+  // numbers, so they stay in the cache hit rate.
+  ensureColumn(db, "usage_stats", "cache_unknown", "INTEGER DEFAULT 0")
   // Existing rows remain one client request; internal/failed upstream usage
   // can add tokens and cost without inflating client request totals.
   ensureColumn(db, "usage_stats", "request_count", "INTEGER NOT NULL DEFAULT 1")

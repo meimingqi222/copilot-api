@@ -25,6 +25,7 @@ function emptyModelStats(): UsageModelStats {
     completionTokens: 0,
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
+    cacheUnknownPromptTokens: 0,
     totalTokens: 0,
     cost: 0,
   }
@@ -36,6 +37,8 @@ function addRowToModelStats(target: UsageModelStats, row: UsageRawRow): void {
   target.completionTokens += row.completion_tokens
   target.cacheReadTokens += row.cache_read_tokens
   target.cacheWriteTokens += row.cache_write_tokens
+  if (row.cache_unknown === 1)
+    target.cacheUnknownPromptTokens += row.prompt_tokens
   target.totalTokens += row.total_tokens
   target.cost += row.cost
 }

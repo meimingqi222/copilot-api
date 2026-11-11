@@ -28,6 +28,40 @@ test("file-backed statistics use WAL while another reader has a snapshot open", 
   }
 })
 
+test("a stats DB from before cache-unknown gains the column, keeping old rows counted", () => {
+  const db = new Database(":memory:")
+  try {
+    db.run(`CREATE TABLE usage_stats (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      date TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      user_id TEXT,
+      model TEXT NOT NULL,
+      prompt_tokens INTEGER DEFAULT 0,
+      completion_tokens INTEGER DEFAULT 0,
+      cache_read_tokens INTEGER DEFAULT 0,
+      cache_write_tokens INTEGER DEFAULT 0,
+      total_tokens INTEGER DEFAULT 0,
+      cost REAL DEFAULT 0,
+      timestamp INTEGER NOT NULL
+    )`)
+    db.run(
+      `INSERT INTO usage_stats
+        (date, account_id, model, prompt_tokens, timestamp)
+       VALUES ('2026-03-10', 'old-account', 'm', 5, 1)`,
+    )
+    createTables(db)
+    expect(db.query("PRAGMA table_info(usage_stats)").all()).toContainEqual(
+      expect.objectContaining({ name: "cache_unknown" }),
+    )
+    expect(db.query("SELECT cache_unknown FROM usage_stats").get()).toEqual({
+      cache_unknown: 0,
+    })
+  } finally {
+    db.close()
+  }
+})
+
 test("legacy request migration preserves daily totals and persists its exact-data coverage across restarts", () => {
   const db = new Database(":memory:")
   try {

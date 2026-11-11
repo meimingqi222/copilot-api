@@ -24,6 +24,7 @@ import {
   resolveModelRouting,
 } from "~/lib/route-target/model-reference"
 import { statsStore } from "~/lib/stats-store"
+import { cacheUncounted } from "~/lib/stats/cache-counting"
 import {
   takeUsagePricingRounds,
   type PricingRound,
@@ -158,6 +159,8 @@ interface UsageRecordInput {
   cacheReadTokens?: number
   cacheWriteTokens?: number
   cacheWrite1hTokens?: number
+  /** Override the provider's uncounted-cache rule (rarely needed). */
+  cacheUnknown?: boolean
   timestamp?: number
   ttftMs?: number
   tps?: number
@@ -208,6 +211,7 @@ export function recordUsage(input: UsageRecordInput): void {
     cacheReadTokens = 0,
     cacheWriteTokens = 0,
     cacheWrite1hTokens,
+    cacheUnknown: explicitCacheUnknown,
     timestamp,
     ttftMs,
     tps,
@@ -277,6 +281,9 @@ export function recordUsage(input: UsageRecordInput): void {
       totalTokens,
       cacheReadTokens,
       cacheWriteTokens,
+      cacheUnknown:
+        explicitCacheUnknown
+        ?? cacheUncounted(provider, cacheReadTokens, cacheWriteTokens),
       cost,
       timestamp: now,
       ttftMs,

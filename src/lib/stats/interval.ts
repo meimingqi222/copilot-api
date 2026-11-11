@@ -21,6 +21,8 @@ export function getUsageStatsByIntervalData(
       SUM(completion_tokens) as completion_tokens,
       SUM(cache_read_tokens) as cache_read_tokens,
       SUM(cache_write_tokens) as cache_write_tokens,
+      SUM(CASE WHEN cache_unknown = 1 THEN prompt_tokens ELSE 0 END)
+        as cache_unknown_prompt_tokens,
       SUM(total_tokens) as total_tokens,
       SUM(cost) as cost,
       model
@@ -45,6 +47,7 @@ export function getUsageStatsByIntervalData(
     completion_tokens: number
     cache_read_tokens: number
     cache_write_tokens: number
+    cache_unknown_prompt_tokens: number
     total_tokens: number
     cost: number
     model: string
@@ -60,6 +63,7 @@ export function getUsageStatsByIntervalData(
         completionTokens: 0,
         cacheReadTokens: 0,
         cacheWriteTokens: 0,
+        cacheUnknownPromptTokens: 0,
         totalTokens: 0,
         cost: 0,
         models: {},
@@ -71,6 +75,7 @@ export function getUsageStatsByIntervalData(
     slot.completionTokens += row.completion_tokens
     slot.cacheReadTokens += row.cache_read_tokens
     slot.cacheWriteTokens += row.cache_write_tokens
+    slot.cacheUnknownPromptTokens += row.cache_unknown_prompt_tokens
     slot.totalTokens += row.total_tokens
     slot.cost += row.cost
     const modelKey = row.model || "unknown"
@@ -83,6 +88,7 @@ export function getUsageStatsByIntervalData(
           completionTokens: 0,
           cacheReadTokens: 0,
           cacheWriteTokens: 0,
+          cacheUnknownPromptTokens: 0,
           totalTokens: 0,
           cost: 0,
         }
@@ -92,6 +98,9 @@ export function getUsageStatsByIntervalData(
       completionTokens: existingModel.completionTokens + row.completion_tokens,
       cacheReadTokens: existingModel.cacheReadTokens + row.cache_read_tokens,
       cacheWriteTokens: existingModel.cacheWriteTokens + row.cache_write_tokens,
+      cacheUnknownPromptTokens:
+        existingModel.cacheUnknownPromptTokens
+        + row.cache_unknown_prompt_tokens,
       totalTokens: existingModel.totalTokens + row.total_tokens,
       cost: existingModel.cost + row.cost,
     }

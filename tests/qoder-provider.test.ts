@@ -1103,6 +1103,7 @@ describe("Qoder decode speed samples", () => {
           total_tokens: 310,
           cache_read_tokens: 0,
           cache_write_tokens: 0,
+          cache_unknown: 0,
           cost: 0,
           timestamp: 0,
           ttft_ms: 9400,

@@ -371,6 +371,7 @@ function filterClaudeFamilyUsage(
     completionTokens: 0,
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
+    cacheUnknownPromptTokens: 0,
     totalTokens: 0,
     cost: 0,
     models: {},

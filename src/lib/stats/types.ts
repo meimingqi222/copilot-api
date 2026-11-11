@@ -16,6 +16,8 @@ export interface UsageStats {
   completionTokens: number
   cacheReadTokens?: number
   cacheWriteTokens?: number
+  /** Upstream did not count this call's cache; leave it out of hit rates. */
+  cacheUnknown?: boolean
   totalTokens: number
   cost?: number
   timestamp: number
@@ -31,6 +33,8 @@ export type UsageModelStats = {
   completionTokens: number
   cacheReadTokens: number
   cacheWriteTokens: number
+  /** Prompt tokens of calls whose upstream counted no cache. */
+  cacheUnknownPromptTokens: number
   totalTokens: number
   cost: number
 }
@@ -42,6 +46,7 @@ export type UsageDayStats = {
   completionTokens: number
   cacheReadTokens: number
   cacheWriteTokens: number
+  cacheUnknownPromptTokens: number
   totalTokens: number
   cost: number
   models: Record<string, UsageModelStats>
@@ -54,6 +59,7 @@ export type UsageIntervalStats = {
   completionTokens: number
   cacheReadTokens: number
   cacheWriteTokens: number
+  cacheUnknownPromptTokens: number
   totalTokens: number
   cost: number
   models: Record<string, UsageModelStats>
@@ -65,6 +71,7 @@ export type TimestampRangeUsage = {
   completionTokens: number
   cacheReadTokens: number
   cacheWriteTokens: number
+  cacheUnknownPromptTokens: number
   totalTokens: number
   cost: number
   models: Record<string, UsageModelStats>
@@ -77,6 +84,7 @@ export type UsageDayRow = {
   completion_tokens: number
   cache_read_tokens: number
   cache_write_tokens: number
+  cache_unknown_prompt_tokens: number
   total_tokens: number
   cost: number
 }
@@ -88,6 +96,7 @@ export type UsageModelRow = {
   completion_tokens: number
   cache_read_tokens: number
   cache_write_tokens: number
+  cache_unknown_prompt_tokens: number
   total_tokens: number
   cost: number
 }
@@ -101,6 +110,7 @@ export type UsageProviderRow = {
   completion_tokens: number
   cache_read_tokens: number
   cache_write_tokens: number
+  cache_unknown_prompt_tokens: number
   total_tokens: number
   cost: number
 }
@@ -118,6 +128,7 @@ export type UsageRawRow = {
   completion_tokens: number
   cache_read_tokens: number
   cache_write_tokens: number
+  cache_unknown: number | null
   total_tokens: number
   cost: number
   timestamp: number
@@ -134,6 +145,7 @@ export type ProviderAccountUsage = {
   completionTokens: number
   cacheReadTokens: number
   cacheWriteTokens: number
+  cacheUnknownPromptTokens: number
   totalTokens: number
   cost: number
   models: Record<string, UsageModelStats>
@@ -147,6 +159,7 @@ export type UsageProviderStats = {
   completionTokens: number
   cacheReadTokens: number
   cacheWriteTokens: number
+  cacheUnknownPromptTokens: number
   totalTokens: number
   cost: number
   accounts: Record<string, ProviderAccountUsage>

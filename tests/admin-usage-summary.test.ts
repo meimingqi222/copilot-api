@@ -19,6 +19,7 @@ type UsageMetrics = {
   completionTokens: number
   cacheReadTokens: number
   cacheWriteTokens: number
+  cacheUnknownPromptTokens: number
   totalTokens: number
   cost: number
   inputTokens: number
@@ -222,6 +223,54 @@ test("GET /admin/api/usage/summary returns per-model request counts and time ser
     inputTokens: 500,
     cacheHitRate: 0,
   })
+})
+
+test("uncounted cache stays in the token totals but out of the hit rate", async () => {
+  const timestamp = new Date("2026-03-10T08:00:00.000Z").getTime()
+  // Counted: 1000 prompt + 500 cache read = 1500 input, one third hit.
+  statsStore.recordUsage({
+    date: "2026-03-10",
+    accountId: "account-1",
+    model: "glm-5.2",
+    promptTokens: 1000,
+    completionTokens: 100,
+    cacheReadTokens: 500,
+    cacheWriteTokens: 0,
+    totalTokens: 1600,
+    cost: 0,
+    timestamp,
+  })
+  // Trae said nothing about its cache: its 3000 prompt tokens are not a miss.
+  statsStore.recordUsage({
+    date: "2026-03-10",
+    accountId: "account-1",
+    model: "glm-5.2",
+    promptTokens: 3000,
+    completionTokens: 100,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    cacheUnknown: true,
+    totalTokens: 3100,
+    cost: 0,
+    timestamp: timestamp + 1,
+  })
+
+  const response = await server.fetch(
+    adminRequest(
+      "http://localhost/admin/api/usage/summary?startDate=2026-03-10&endDate=2026-03-10",
+    ),
+  )
+  expect(response.status).toBe(200)
+  const body = (await response.json()) as UsageSummaryResponse
+
+  expect(body.totals).toMatchObject({
+    promptTokens: 4000,
+    cacheReadTokens: 500,
+    cacheUnknownPromptTokens: 3000,
+    inputTokens: 4500,
+    cacheHitRate: 500 / 1500,
+  })
+  expect(body.byModel["glm-5.2"].cacheHitRate).toBe(500 / 1500)
 })
 
 test("GET /admin/api/usage/summary returns null cacheHitRate when no input tokens", async () => {

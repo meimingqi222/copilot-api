@@ -49,6 +49,8 @@ function queryUsageDayRows(
       SUM(completion_tokens) as completion_tokens,
       SUM(cache_read_tokens) as cache_read_tokens,
       SUM(cache_write_tokens) as cache_write_tokens,
+      SUM(CASE WHEN cache_unknown = 1 THEN prompt_tokens ELSE 0 END)
+        as cache_unknown_prompt_tokens,
       SUM(total_tokens) as total_tokens,
       SUM(cost) as cost
     FROM usage_stats
@@ -94,6 +96,8 @@ function queryUsageModelsByDate(
       SUM(completion_tokens) as completion_tokens,
       SUM(cache_read_tokens) as cache_read_tokens,
       SUM(cache_write_tokens) as cache_write_tokens,
+      SUM(CASE WHEN cache_unknown = 1 THEN prompt_tokens ELSE 0 END)
+        as cache_unknown_prompt_tokens,
       SUM(total_tokens) as total_tokens,
       SUM(cost) as cost
     FROM usage_stats
@@ -123,6 +127,7 @@ function queryUsageModelsByDate(
       completionTokens: row.completion_tokens,
       cacheReadTokens: row.cache_read_tokens,
       cacheWriteTokens: row.cache_write_tokens,
+      cacheUnknownPromptTokens: row.cache_unknown_prompt_tokens,
       totalTokens: row.total_tokens,
       cost: row.cost,
     }
@@ -150,6 +155,7 @@ export function getUsageStatsForUserData(
     completionTokens: row.completion_tokens,
     cacheReadTokens: row.cache_read_tokens,
     cacheWriteTokens: row.cache_write_tokens,
+    cacheUnknownPromptTokens: row.cache_unknown_prompt_tokens,
     totalTokens: row.total_tokens,
     cost: row.cost,
     models: queryUsageModelsByDate(db, row.date, undefined, userId),
@@ -175,6 +181,7 @@ export function getUsageStatsData(
     completionTokens: row.completion_tokens,
     cacheReadTokens: row.cache_read_tokens,
     cacheWriteTokens: row.cache_write_tokens,
+    cacheUnknownPromptTokens: row.cache_unknown_prompt_tokens,
     totalTokens: row.total_tokens,
     cost: row.cost,
     models: queryUsageModelsByDate(db, row.date, accountId),
@@ -202,6 +209,8 @@ export function getUsageStatsByProviderData(
       SUM(completion_tokens) as completion_tokens,
       SUM(cache_read_tokens) as cache_read_tokens,
       SUM(cache_write_tokens) as cache_write_tokens,
+      SUM(CASE WHEN cache_unknown = 1 THEN prompt_tokens ELSE 0 END)
+        as cache_unknown_prompt_tokens,
       SUM(total_tokens) as total_tokens,
       SUM(cost) as cost
     FROM usage_stats
@@ -230,6 +239,7 @@ export function getUsageStatsByProviderData(
         completionTokens: 0,
         cacheReadTokens: 0,
         cacheWriteTokens: 0,
+        cacheUnknownPromptTokens: 0,
         totalTokens: 0,
         cost: 0,
         accounts: {},
@@ -249,6 +259,7 @@ export function getUsageStatsByProviderData(
         completionTokens: 0,
         cacheReadTokens: 0,
         cacheWriteTokens: 0,
+        cacheUnknownPromptTokens: 0,
         totalTokens: 0,
         cost: 0,
         models: {},
@@ -267,6 +278,7 @@ export function getUsageStatsByProviderData(
       completionTokens: row.completion_tokens,
       cacheReadTokens: row.cache_read_tokens,
       cacheWriteTokens: row.cache_write_tokens,
+      cacheUnknownPromptTokens: row.cache_unknown_prompt_tokens,
       totalTokens: row.total_tokens,
       cost: row.cost,
     }
@@ -275,6 +287,7 @@ export function getUsageStatsByProviderData(
     provider.completionTokens += metrics.completionTokens
     provider.cacheReadTokens += metrics.cacheReadTokens
     provider.cacheWriteTokens += metrics.cacheWriteTokens
+    provider.cacheUnknownPromptTokens += metrics.cacheUnknownPromptTokens
     provider.totalTokens += metrics.totalTokens
     provider.cost += metrics.cost
     account.requests += metrics.requests
@@ -282,6 +295,7 @@ export function getUsageStatsByProviderData(
     account.completionTokens += metrics.completionTokens
     account.cacheReadTokens += metrics.cacheReadTokens
     account.cacheWriteTokens += metrics.cacheWriteTokens
+    account.cacheUnknownPromptTokens += metrics.cacheUnknownPromptTokens
     account.totalTokens += metrics.totalTokens
     account.cost += metrics.cost
     account.models[row.model] = metrics
@@ -375,6 +389,7 @@ export function queryUsageRawRows(
       completion_tokens,
       cache_read_tokens,
       cache_write_tokens,
+      cache_unknown,
       total_tokens,
       cost,
       timestamp,
@@ -434,6 +449,8 @@ export function getUsageByTimestampRangeData(
       SUM(completion_tokens) as completion_tokens,
       SUM(cache_read_tokens) as cache_read_tokens,
       SUM(cache_write_tokens) as cache_write_tokens,
+      SUM(CASE WHEN cache_unknown = 1 THEN prompt_tokens ELSE 0 END)
+        as cache_unknown_prompt_tokens,
       SUM(total_tokens) as total_tokens,
       SUM(cost) as cost
     FROM usage_stats
@@ -449,6 +466,7 @@ export function getUsageByTimestampRangeData(
     completion_tokens: number
     cache_read_tokens: number
     cache_write_tokens: number
+    cache_unknown_prompt_tokens: number
     total_tokens: number
     cost: number
   }>
@@ -459,6 +477,7 @@ export function getUsageByTimestampRangeData(
     completionTokens: 0,
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
+    cacheUnknownPromptTokens: 0,
     totalTokens: 0,
     cost: 0,
     models: {},
@@ -470,6 +489,7 @@ export function getUsageByTimestampRangeData(
     summary.completionTokens += row.completion_tokens
     summary.cacheReadTokens += row.cache_read_tokens
     summary.cacheWriteTokens += row.cache_write_tokens
+    summary.cacheUnknownPromptTokens += row.cache_unknown_prompt_tokens
     summary.totalTokens += row.total_tokens
     summary.cost += row.cost
     summary.models[row.model] = {
@@ -478,6 +498,7 @@ export function getUsageByTimestampRangeData(
       completionTokens: row.completion_tokens,
       cacheReadTokens: row.cache_read_tokens,
       cacheWriteTokens: row.cache_write_tokens,
+      cacheUnknownPromptTokens: row.cache_unknown_prompt_tokens,
       totalTokens: row.total_tokens,
       cost: row.cost,
     }

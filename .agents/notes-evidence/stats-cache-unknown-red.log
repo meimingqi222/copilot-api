@@ -1,0 +1,178 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/usage-recorder.test.ts:
+58 | 
+59 |   const byProvider = statsStore.getUsageStatsByProviderInRange({
+60 |     startMs: now - 60_000,
+61 |     endMs: now + 60_000,
+62 |   })
+63 |   expect(byProvider["trae-cn"]?.cacheUnknownPromptTokens).toBe(1000)
+                                                               ^
+error: expect(received).toBe(expected)
+
+Expected: 1000
+Received: 0
+
+      at <anonymous> (/Users/meimingqi222/Developer/amp-workspace/copilot-api/tests/usage-recorder.test.ts:63:59)
+(fail) Trae's 0/0 cache answer is recorded as uncounted; another provider's is not [3.91ms]
+(pass) recordDirectStreamingUsage (Anthropic shape) > missing usage falls back to the local estimate [0.93ms]
+(pass) recordDirectStreamingUsage (Anthropic shape) > missing usage without estimate preserves one zero-token request [0.69ms]
+(pass) updateLastUsage > merges real input_tokens from final message_delta (Volcengine Ark glm-5.2) [0.06ms]
+(pass) updateLastUsage > keeps Anthropic-style message_start input when message_delta only has output [0.01ms]
+(pass) updateLastUsage > does not let a later zero overwrite a known positive input count [0.01ms]
+
+tests/admin-usage-summary.test.ts:
+<-- GET /admin/api/usage/summary?startDate=2026-03-10&endDate=2026-03-11
+--> GET /admin/api/usage/summary?startDate=2026-03-10&endDate=2026-03-11 200 3ms
+(pass) GET /admin/api/usage/summary returns per-model request counts and time series token breakdown [5.82ms]
+<-- GET /admin/api/usage/summary?startDate=2026-03-10&endDate=2026-03-10
+--> GET /admin/api/usage/summary?startDate=2026-03-10&endDate=2026-03-10 200 1ms
+261 |     ),
+262 |   )
+263 |   expect(response.status).toBe(200)
+264 |   const body = (await response.json()) as UsageSummaryResponse
+265 | 
+266 |   expect(body.totals).toMatchObject({
+                            ^
+error: expect(received).toMatchObject(expected)
+
+  {
+-   "cacheHitRate": 0.3333333333333333,
++   "cacheHitRate": 0.1111111111111111,
+    "cacheReadTokens": 500,
+    "cacheUnknownPromptTokens": 3000,
++   "cacheWriteTokens": 0,
++   "completionTokens": 200,
++   "cost": 0,
+    "inputTokens": 4500,
+    "promptTokens": 4000,
++   "requests": 2,
++   "totalTokens": 4700,
+  }
+
+- Expected  - 1
++ Received  + 6
+
+      at <anonymous> (/Users/meimingqi222/Developer/amp-workspace/copilot-api/tests/admin-usage-summary.test.ts:266:23)
+(fail) uncounted cache stays in the token totals but out of the hit rate [1.75ms]
+<-- GET /admin/api/usage/summary?startDate=2026-03-10&endDate=2026-03-10
+--> GET /admin/api/usage/summary?startDate=2026-03-10&endDate=2026-03-10 200 0ms
+(pass) GET /admin/api/usage/summary returns null cacheHitRate when no input tokens [1.51ms]
+<-- GET /admin/api/usage/summary?startDate=2026-06-27&endDate=2026-06-27
+--> GET /admin/api/usage/summary?startDate=2026-06-27&endDate=2026-06-27 200 1ms
+(pass) GET /admin/api/usage/summary keeps swe-1-6 and swe-1-6-fast separate [1.53ms]
+<-- GET /admin/api/usage/summary?month=2026-13
+[error] Error occurred: Invalid month "2026-13". Expected YYYY-MM with MM in 01-12.
+  at resolveDateRange (src/routes/admin/api/usage.ts:453:17)
+  at <anonymous> (src/routes/admin/api/usage.ts:875:22)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at <anonymous> (src/routes/admin/route.ts:160:9)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at requireApiKey (src/lib/request-auth.ts:45:11)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at guardMiddleware (src/lib/guard-middleware.ts:19:11)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at <anonymous> (src/lib/log-middleware.ts:53:11)
+  at async <anonymous> (src/server.ts:30:9)
+  at async dispatch (node_modules/hono/dist/compose.js:22:23)
+  at async <anonymous> (node_modules/hono/dist/hono-base.js:201:31)
+  at async <anonymous> (tests/admin-usage-summary.test.ts:361:35)
+[error] HTTP error: Invalid month "2026-13". Expected YYYY-MM with MM in 01-12.
+--> GET /admin/api/usage/summary?month=2026-13 400 0ms
+<-- GET /admin/api/usage/summary?month=2026-00
+[error] Error occurred: Invalid month "2026-00". Expected YYYY-MM with MM in 01-12.
+  at resolveDateRange (src/routes/admin/api/usage.ts:453:17)
+  at <anonymous> (src/routes/admin/api/usage.ts:875:22)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at <anonymous> (src/routes/admin/route.ts:160:9)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at requireApiKey (src/lib/request-auth.ts:45:11)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at guardMiddleware (src/lib/guard-middleware.ts:19:11)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at <anonymous> (src/lib/log-middleware.ts:53:11)
+  at async <anonymous> (src/server.ts:30:9)
+  at async dispatch (node_modules/hono/dist/compose.js:22:23)
+  at async <anonymous> (node_modules/hono/dist/hono-base.js:201:31)
+  at async <anonymous> (tests/admin-usage-summary.test.ts:361:35)
+[error] HTTP error: Invalid month "2026-00". Expected YYYY-MM with MM in 01-12.
+--> GET /admin/api/usage/summary?month=2026-00 400 0ms
+<-- GET /admin/api/usage/summary?startDate=2026-13-01&endDate=2026-13-02
+[error] Error occurred: Invalid startDate "2026-13-01". Expected a real calendar date.
+  at assertValidDate (src/routes/admin/api/usage.ts:552:15)
+  at resolveDateRange (src/routes/admin/api/usage.ts:443:5)
+  at <anonymous> (src/routes/admin/api/usage.ts:875:22)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at <anonymous> (src/routes/admin/route.ts:160:9)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at requireApiKey (src/lib/request-auth.ts:45:11)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at guardMiddleware (src/lib/guard-middleware.ts:19:11)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at async <anonymous> (src/server.ts:30:9)
+  at async dispatch (node_modules/hono/dist/compose.js:22:23)
+  at async <anonymous> (node_modules/hono/dist/hono-base.js:201:31)
+  at async <anonymous> (tests/admin-usage-summary.test.ts:361:35)
+[error] HTTP error: Invalid startDate "2026-13-01". Expected a real calendar date.
+--> GET /admin/api/usage/summary?startDate=2026-13-01&endDate=2026-13-02 400 1ms
+<-- GET /admin/api/usage/summary?startDate=2026-02-30&endDate=2026-03-01
+[error] Error occurred: Invalid startDate "2026-02-30". Expected a real calendar date.
+  at assertValidDate (src/routes/admin/api/usage.ts:552:15)
+  at resolveDateRange (src/routes/admin/api/usage.ts:443:5)
+  at <anonymous> (src/routes/admin/api/usage.ts:875:22)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at <anonymous> (src/routes/admin/route.ts:160:9)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at requireApiKey (src/lib/request-auth.ts:45:11)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at guardMiddleware (src/lib/guard-middleware.ts:19:11)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at async <anonymous> (src/server.ts:30:9)
+  at async dispatch (node_modules/hono/dist/compose.js:22:23)
+  at async <anonymous> (node_modules/hono/dist/hono-base.js:201:31)
+  at async <anonymous> (tests/admin-usage-summary.test.ts:361:35)
+[error] HTTP error: Invalid startDate "2026-02-30". Expected a real calendar date.
+--> GET /admin/api/usage/summary?startDate=2026-02-30&endDate=2026-03-01 400 0ms
+<-- GET /admin/api/usage/summary?startDate=not-a-date&endDate=2026-03-01
+[error] Error occurred: Invalid startDate "not-a-date". Expected YYYY-MM-DD.
+  at assertValidDate (src/routes/admin/api/usage.ts:536:15)
+  at resolveDateRange (src/routes/admin/api/usage.ts:443:5)
+  at <anonymous> (src/routes/admin/api/usage.ts:875:22)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at <anonymous> (src/routes/admin/route.ts:160:9)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at requireApiKey (src/lib/request-auth.ts:45:11)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at guardMiddleware (src/lib/guard-middleware.ts:19:11)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at async <anonymous> (src/server.ts:30:9)
+  at async dispatch (node_modules/hono/dist/compose.js:22:23)
+  at async <anonymous> (node_modules/hono/dist/hono-base.js:201:31)
+  at async <anonymous> (tests/admin-usage-summary.test.ts:361:35)
+[error] HTTP error: Invalid startDate "not-a-date". Expected YYYY-MM-DD.
+--> GET /admin/api/usage/summary?startDate=not-a-date&endDate=2026-03-01 400 0ms
+(pass) GET /admin/api/usage/summary rejects invalid month and dates with 400 [1.92ms]
+<-- GET /admin/api/usage/performance?month=2026-13
+[error] Error occurred: Invalid month "2026-13". Expected YYYY-MM with MM in 01-12.
+  at resolveDateRange (src/routes/admin/api/usage.ts:453:17)
+  at <anonymous> (src/routes/admin/api/usage.ts:947:62)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at <anonymous> (src/routes/admin/route.ts:160:9)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at requireApiKey (src/lib/request-auth.ts:45:11)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at guardMiddleware (src/lib/guard-middleware.ts:19:11)
+  at dispatch (node_modules/hono/dist/compose.js:22:23)
+  at <anonymous> (src/lib/log-middleware.ts:53:11)
+  at async <anonymous> (src/server.ts:30:9)
+  at async dispatch (node_modules/hono/dist/compose.js:22:23)
+  at async <anonymous> (node_modules/hono/dist/hono-base.js:201:31)
+  at async <anonymous> (tests/admin-usage-summary.test.ts:369:33)
+[error] HTTP error: Invalid month "2026-13". Expected YYYY-MM with MM in 01-12.
+--> GET /admin/api/usage/performance?month=2026-13 400 0ms
+(pass) GET /admin/api/usage/performance rejects invalid month with 400 [1.20ms]
+
+ 10 pass
+ 2 fail
+ 40 expect() calls
+Ran 12 tests across 2 files. [128.00ms]

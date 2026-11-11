@@ -46,6 +46,7 @@ function row(performanceJson?: string | null): UsageRawRow {
     completion_tokens: 300,
     cache_read_tokens: 0,
     cache_write_tokens: 0,
+    cache_unknown: 0,
     total_tokens: 310,
     cost: 0,
     timestamp: Date.now(),

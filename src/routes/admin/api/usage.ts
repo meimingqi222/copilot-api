@@ -17,6 +17,7 @@ import { readJsonBody } from "~/lib/request-body"
 import { recordTraceError } from "~/lib/request-log"
 import { state } from "~/lib/state"
 import { onStateChange } from "~/lib/state-events"
+import { countedInputTokens } from "~/lib/stats/cache-counting"
 import {
   PROVIDER_LABELS,
   providerBucketLabel,
@@ -101,6 +102,8 @@ type UsageMetricsBase = {
   completionTokens: number
   cacheReadTokens: number
   cacheWriteTokens: number
+  /** Prompt tokens of calls whose upstream counted no cache (left out of the rate). */
+  cacheUnknownPromptTokens: number
   totalTokens: number
   cost: number
 }
@@ -580,6 +583,7 @@ function createUsageMetrics(): UsageMetricsBase {
     completionTokens: 0,
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
+    cacheUnknownPromptTokens: 0,
     totalTokens: 0,
     cost: 0,
   }
@@ -587,8 +591,10 @@ function createUsageMetrics(): UsageMetricsBase {
 
 function enrichUsageMetrics(metrics: UsageMetricsBase): UsageMetrics {
   const inputTokens = metrics.promptTokens + metrics.cacheReadTokens
-  const cacheHitRate =
-    inputTokens > 0 ? metrics.cacheReadTokens / inputTokens : null
+  // Calls whose upstream counted no cache stay in the token totals but not
+  // in the hit rate; otherwise they read as a 0% miss.
+  const counted = countedInputTokens(metrics)
+  const cacheHitRate = counted > 0 ? metrics.cacheReadTokens / counted : null
 
   return {
     ...metrics,
@@ -616,6 +622,7 @@ function mergeUsageMetrics(
   target.completionTokens += source.completionTokens
   target.cacheReadTokens += source.cacheReadTokens
   target.cacheWriteTokens += source.cacheWriteTokens
+  target.cacheUnknownPromptTokens += source.cacheUnknownPromptTokens
   target.totalTokens += source.totalTokens
   target.cost += source.cost
 }
@@ -816,6 +823,7 @@ function aggregateByProvider(range: { startMs: number; endMs: number }) {
           completionTokens: account.completionTokens,
           cacheReadTokens: account.cacheReadTokens,
           cacheWriteTokens: account.cacheWriteTokens,
+          cacheUnknownPromptTokens: account.cacheUnknownPromptTokens,
           totalTokens: account.totalTokens,
           cost: account.cost,
         }),
@@ -831,6 +839,7 @@ function aggregateByProvider(range: { startMs: number; endMs: number }) {
         completionTokens: provider.completionTokens,
         cacheReadTokens: provider.cacheReadTokens,
         cacheWriteTokens: provider.cacheWriteTokens,
+        cacheUnknownPromptTokens: provider.cacheUnknownPromptTokens,
         totalTokens: provider.totalTokens,
         cost: provider.cost,
       }),

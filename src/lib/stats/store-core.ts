@@ -225,9 +225,9 @@ class StatsStore {
       INSERT INTO usage_stats (
         date, account_id, user_id, model, provider, connection_id, credential_id,
         prompt_tokens, completion_tokens, cache_read_tokens, cache_write_tokens,
-        total_tokens, cost, timestamp, ttft_ms, tps, streaming, performance_json,
-        request_count
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        cache_unknown, total_tokens, cost, timestamp, ttft_ms, tps, streaming,
+        performance_json, request_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     stmt.run(
       stats.date,
@@ -241,6 +241,7 @@ class StatsStore {
       stats.completionTokens,
       stats.cacheReadTokens ?? 0,
       stats.cacheWriteTokens ?? 0,
+      stats.cacheUnknown ? 1 : 0,
       stats.totalTokens,
       stats.cost ?? 0,
       stats.timestamp,

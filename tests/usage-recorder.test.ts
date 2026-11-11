@@ -3,6 +3,7 @@ import type { Context } from "hono"
 import { beforeEach, describe, expect, test } from "bun:test"
 
 import { statsStore } from "~/lib/stats-store"
+import { recordUsage } from "~/lib/usage"
 import {
   recordDirectStreamingUsage,
   updateLastUsage,
@@ -29,6 +30,39 @@ function rowCount(accountId = "acc-1"): number {
     .getUsageStats(accountId, date, date)
     .reduce((n, s) => n + Object.keys(s.models).length, 0)
 }
+
+test("Trae's 0/0 cache answer is recorded as uncounted; another provider's is not", () => {
+  statsStore.clearUsageStatsForTest()
+  const now = Date.now()
+  const c = fakeContext("glm-5.2")
+  recordUsage({
+    c,
+    accountId: "trae-acc",
+    provider: "trae-cn",
+    model: "glm-5.2",
+    promptTokens: 1000,
+    completionTokens: 100,
+    totalTokens: 1100,
+    timestamp: now,
+  })
+  recordUsage({
+    c,
+    accountId: "copilot-acc",
+    provider: "copilot",
+    model: "gpt-5",
+    promptTokens: 500,
+    completionTokens: 50,
+    totalTokens: 550,
+    timestamp: now + 1,
+  })
+
+  const byProvider = statsStore.getUsageStatsByProviderInRange({
+    startMs: now - 60_000,
+    endMs: now + 60_000,
+  })
+  expect(byProvider["trae-cn"]?.cacheUnknownPromptTokens).toBe(1000)
+  expect(byProvider["copilot"]?.cacheUnknownPromptTokens).toBe(0)
+})
 
 describe("recordDirectStreamingUsage (Anthropic shape)", () => {
   beforeEach(() => {

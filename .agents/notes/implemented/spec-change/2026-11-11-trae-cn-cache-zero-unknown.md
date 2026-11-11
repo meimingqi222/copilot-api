@@ -27,6 +27,13 @@ first one named wins), and the write from
 names no cache is unknown, so the usage goes on without cache details.
 `reasoning_tokens` keeps its existing mapping.
 
+The usage recorder marks a Trae call uncounted when its answer names no cache
+or counts 0/0, and stores that in `usage_stats.cache_unknown` (a migration
+adds the column; legacy rows keep the counted default). The dashboard and the
+usage API leave an uncounted call's prompt tokens out of the hit-rate
+denominator, while its tokens still count in the request, prompt and cost
+totals.
+
 ## Alternatives considered
 
 **Re-query `get_session_usage`.** The IDE's own traffic does call
@@ -39,11 +46,12 @@ counters to 0.
 
 ## Consequences
 
-Clients now show unknown rather than a false 0% hit rate for Trae turns. The
-stats store still records absent cache counters as 0, so dashboards cannot yet
-distinguish unknown from a miss; that is the existing shared limitation, not a
-new one. Upstream token totals are unchanged and no cache token is counted
-twice.
+Clients now show unknown rather than a false 0% hit rate for Trae turns.
+Uncounted calls keep their tokens in the request, prompt and cost totals but
+no longer read as a miss; a period with only uncounted calls reports no hit
+rate instead of 0%. Legacy rows keep the counted default, so old data keeps
+its original meaning. Upstream token totals are unchanged and no cache token
+is counted twice.
 
 ## Verification
 
@@ -51,8 +59,14 @@ twice.
 - `tests/trae-cn-usage.test.ts::Trae cache read/write and reasoning counts survive non-streaming collection`
 - `tests/trae-cn-usage.test.ts::absent Trae cache metrics remain absent rather than being reported as measured zero`
 - `tests/trae-cn-conversion-regression.test.ts::Trae reads cache counts under every spelling and treats 0/0 as unknown`
+- `tests/usage-recorder.test.ts::Trae's 0/0 cache answer is recorded as uncounted; another provider's is not`
+- `tests/admin-usage-summary.test.ts::uncounted cache stays in the token totals but out of the hit rate`
+- `tests/stats-wal.test.ts::a stats DB from before cache-unknown gains the column, keeping old rows counted`
 
 Proved: the spelling regression failed at the `prompt_cache_hit_tokens`
 assertion before the fix, and the old 0/0 expectation conflicted with the new
 requirement; `.agents/notes-evidence/trae-cache-red.log` retains the red run.
-The four usage/regression tests pass after the change.
+With the recorder and hit-rate changes reverted, the uncounted-cache and API
+regressions failed (2 of 12) at their assertions, as
+`.agents/notes-evidence/stats-cache-unknown-red.log` shows. The usage,
+admin-summary, migration and Trae regression tests pass after the change.
