@@ -97,7 +97,7 @@ const devNameByModel = new Map<string, { fn: string; name: string }>()
 const lastFunctionByConnection = new Map<string, string>()
 const FUNCTION_STATE_MAX = 2048
 
-export interface TraeCnModelCapabilities {
+interface TraeCnModelCapabilities {
   multimodal?: boolean
   reasoningLevels?: Array<string>
 }
