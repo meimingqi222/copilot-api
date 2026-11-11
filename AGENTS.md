@@ -771,6 +771,8 @@ Before committing changes:
 
 - [ ] Run `bun run format:check` — formatting is Prettier-clean (enforced in CI)
 
+- [ ] Run `bun run knip` — no unused exports or dependencies (enforced in CI)
+
 - [ ] Update tests for new functionality
 
 - [ ] Check for breaking changes in translation logic
