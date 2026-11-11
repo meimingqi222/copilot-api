@@ -11,6 +11,9 @@ interface TextCall {
 interface TextResult {
   text: string
   calls: Array<TraeChatCall>
+  parts?: Array<
+    { text: string } | { reasoning: string } | { call: TraeChatCall }
+  >
   error?: string
 }
 
@@ -21,9 +24,29 @@ const MARKS = [
   "</｜DSML｜",
   "<|DSML|",
   "</|DSML|",
+  '{"reasoning_content"',
 ]
 const OPEN = /<tool_?call(?=[\s>{])|<\/?[｜|]DSML[｜|]/
+const REASON = /\{\s*"reasoning_content"\s*:/
 const UNREADABLE = "Trae returned an unreadable or truncated tool call"
+
+/** The first complete JSON object; braces inside quoted strings are data. */
+function objectEnd(value: string): number {
+  let depth = 0
+  let quoted = false
+  let escaped = false
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i]
+    if (quoted) {
+      if (escaped) escaped = false
+      else if (ch === "\\") escaped = true
+      else if (ch === '"') quoted = false
+    } else if (ch === '"') quoted = true
+    else if (ch === "{") depth++
+    else if (ch === "}" && --depth === 0) return i + 1
+  }
+  return -1
+}
 
 function object(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ?
@@ -214,8 +237,41 @@ export class TraeCnTextTools {
     this.buf += piece
     let text = ""
     const calls: Array<TraeChatCall> = []
+    const parts: NonNullable<TextResult["parts"]> = []
+    let emitted = 0
+    const flushText = () => {
+      if (text.length > emitted) parts.push({ text: text.slice(emitted) })
+      emitted = text.length
+    }
     for (;;) {
       const opening = OPEN.exec(this.buf)
+      const reason = REASON.exec(this.buf)
+      if (reason && (!opening || reason.index < opening.index)) {
+        const head = this.buf.slice(0, reason.index)
+        if (inCode(this.sent + text + head)) {
+          text += head + "{"
+          this.buf = this.buf.slice(reason.index + 1)
+          continue
+        }
+        const at = this.buf.slice(reason.index)
+        const endAt = objectEnd(at)
+        if (endAt < 0 && !end) {
+          text += head
+          this.buf = at
+          break
+        }
+        const value = endAt > 0 ? jsonObject(at.slice(0, endAt)) : undefined
+        if (typeof value?.reasoning_content === "string") {
+          text += head
+          flushText()
+          parts.push({ reasoning: value.reasoning_content })
+          this.buf = at.slice(endAt)
+        } else {
+          text += head + "{"
+          this.buf = at.slice(1)
+        }
+        continue
+      }
       if (!opening) break
       const at = opening.index
       const head = this.buf.slice(0, at)
@@ -265,12 +321,15 @@ export class TraeCnTextTools {
       )
       if (!call && intended && !end) break
       if (call) {
-        calls.push({
+        const parsed = {
           upstreamId: "",
           id: `call_${randomUUID().replaceAll("-", "")}`,
           name: call.name,
           arguments: JSON.stringify(call.arguments),
-        })
+        }
+        calls.push(parsed)
+        flushText()
+        parts.push({ call: parsed })
       } else if (intended) {
         return this.failure(text)
       } else {
@@ -289,7 +348,8 @@ export class TraeCnTextTools {
       text += this.buf
       this.buf = ""
     } else {
-      let keep = OPEN.test(this.buf) ? this.buf.length : 0
+      let keep =
+        OPEN.test(this.buf) || REASON.test(this.buf) ? this.buf.length : 0
       if (!keep) {
         for (const mark of MARKS) {
           for (let n = Math.min(mark.length, this.buf.length); n > keep; n--) {
@@ -304,6 +364,7 @@ export class TraeCnTextTools {
       this.buf = this.buf.slice(this.buf.length - keep)
     }
     this.sent += text
-    return { text, calls }
+    flushText()
+    return { text, calls, parts }
   }
 }

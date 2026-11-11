@@ -1,0 +1,32 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/trae-cn-conversion-regression.test.ts:
+157 |     await usageOf({
+158 |       prompt_tokens: 10,
+159 |       completion_tokens: 2,
+160 |       prompt_cache_hit_tokens: 7,
+161 |     }),
+162 |   ).toMatchObject({ prompt_tokens_details: { cached_tokens: 7 } })
+          ^
+error: expect(received).toMatchObject(expected)
+
+  {
+-   "prompt_tokens_details": {
+-     "cached_tokens": 7,
+-   },
++   "completion_tokens": 2,
++   "prompt_tokens": 10,
++   "total_tokens": 12,
+  }
+
+- Expected  - 3
++ Received  + 3
+
+      at <anonymous> (/Users/meimingqi222/Developer/amp-workspace/copilot-api/tests/trae-cn-conversion-regression.test.ts:162:5)
+(fail) Trae reads cache counts under every spelling and treats 0/0 as unknown [0.96ms]
+
+ 0 pass
+ 20 filtered out
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [98.00ms]

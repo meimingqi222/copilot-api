@@ -35,6 +35,7 @@ import {
   traeCnFirstParts,
   traeCnFunctionOrder,
   traeCnIdeHeaders,
+  traeCnModelCapabilities,
   traeCnNoteFunction,
   traeCnParts,
   traeCnSse,
@@ -84,6 +85,11 @@ export const traeCnNativeAdapter: ProtocolAdapter = {
     signal,
   }) {
     const upstreamModel = target.upstreamModelId
+    // 按账号发现的能力：看不见图的模型别收到图片，档位要翻成 Trae 的叫法。
+    const capabilities = traeCnModelCapabilities(
+      connection.models,
+      upstreamModel,
+    )
     const token = await ensureOAuthConnectionAccessToken(connection, credential)
     const account = traeCnAccount(connection, token)
     if (!account.token) {
@@ -105,7 +111,7 @@ export const traeCnNativeAdapter: ProtocolAdapter = {
             Accept: "text/event-stream",
           }),
           body: serializeUpstreamBody(
-            traeCnChatBody(payload, fn, upstreamModel, modelName),
+            traeCnChatBody(payload, fn, upstreamModel, modelName, capabilities),
           ),
           signal,
         },

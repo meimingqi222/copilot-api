@@ -11,6 +11,217 @@ import {
   traeCnMessages,
 } from "~/services/trae-cn/client"
 
+test("Trae preserves user images and puts tool images after all parallel results", () => {
+  const image = {
+    type: "image_url" as const,
+    image_url: { url: "https://example.com/red.png" },
+  }
+  const payload = {
+    model: "kimi-k3",
+    tools: [
+      { type: "function" as const, function: { name: "read", parameters: {} } },
+    ],
+    messages: [
+      { role: "user" as const, content: [image] },
+      {
+        role: "assistant" as const,
+        content: null,
+        tool_calls: ["a", "b"].map((id) => ({
+          id,
+          type: "function" as const,
+          function: { name: "read", arguments: "{}" },
+        })),
+      },
+      { role: "tool" as const, tool_call_id: "a", content: [image] },
+      { role: "tool" as const, tool_call_id: "b", content: "second" },
+    ],
+  }
+  const before = structuredClone(payload)
+  const messages = traeCnMessages(payload)
+  expect(messages.map((m) => m.role)).toEqual([
+    "user",
+    "assistant",
+    "tool",
+    "tool",
+    "user",
+  ])
+  expect(messages[0].content).toEqual([image])
+  expect(messages[2].content).toEqual([
+    { type: "text", text: "(the result's image follows)" },
+  ])
+  expect(messages[4].content).toEqual([image])
+  expect(payload).toEqual(before)
+})
+
+test("Trae rejects empty and interrupted streams in both client modes", async () => {
+  for (const rows of [
+    [],
+    [{ event: "done", data: {} }],
+    [
+      { event: "output", data: { content: " " } },
+      { event: "done", data: {} },
+    ],
+    [{ event: "output", data: { content: "partial" } }],
+  ]) {
+    const source = () =>
+      traeCnParts(
+        (async function* () {
+          yield* rows
+        })(),
+      )
+    expect((await traeCnCollect(source(), "test")).error).toBeDefined()
+    const chunks = []
+    for await (const chunk of traeCnStreamEvents(source(), "test"))
+      chunks.push(chunk.data)
+    expect(chunks.some((data) => data.includes('"error":'))).toBe(true)
+    expect(chunks.some((data) => data.includes('"finish_reason":"stop"'))).toBe(
+      false,
+    )
+  }
+})
+
+test("Trae extracts embedded reasoning across every chunk boundary but leaves quoted JSON alone", async () => {
+  const encoded = '{"reasoning_content":"check \\"quoted\\" value"}answer'
+  for (let size = 1; size <= encoded.length; size++) {
+    const events = async function* () {
+      for (let i = 0; i < encoded.length; i += size)
+        yield {
+          event: "output",
+          data: { response: encoded.slice(i, i + size) },
+        }
+      yield { event: "done", data: {} }
+    }
+    expect(
+      (await traeCnCollect(traeCnParts(events()), "test")).choices,
+    ).toMatchObject([
+      {
+        message: {
+          content: "answer",
+          reasoning_content: 'check "quoted" value',
+        },
+      },
+    ])
+  }
+  const quoted = '`{"reasoning_content":"example"}`'
+  expect(
+    (await traeCnCollect(upstream("output", { response: quoted }), "test"))
+      .choices,
+  ).toMatchObject([{ message: { content: quoted } }])
+})
+
+test("Trae removes cumulative reasoning replays and preserves non-streaming interleaving", async () => {
+  const first = "a sufficiently long first thought"
+  const events = async function* () {
+    yield { event: "output", data: { reasoning_content: first } }
+    yield { event: "output", data: { reasoning_content: first } }
+    yield { event: "output", data: { content: "first answer" } }
+    yield {
+      event: "output",
+      data: { reasoning_content: first + " then reconsider" },
+    }
+    yield { event: "output", data: { content: "second answer" } }
+    yield { event: "done", data: {} }
+  }
+  const result = await traeCnCollect(traeCnParts(events()), "test")
+  expect(result.choices).toMatchObject([
+    {
+      message: {
+        content: [
+          { type: "reasoning", text: first },
+          { type: "text", text: "first answer" },
+          { type: "reasoning", text: " then reconsider" },
+          { type: "text", text: "second answer" },
+        ],
+        reasoning_content: first + " then reconsider",
+      },
+    },
+  ])
+
+  // A snapshot that re-sends the tail already sent is a replay too, not a
+  // new thought (the upstream Thoughts.add rule).
+  const replayed = await traeCnCollect(
+    traeCnParts(
+      (async function* () {
+        yield {
+          event: "output",
+          data: { reasoning_content: "0123456789abcdefghij" },
+        }
+        yield { event: "output", data: { reasoning_content: "klmnopqrst" } }
+        yield {
+          event: "output",
+          data: { reasoning_content: "efghijklmnopqrst" },
+        }
+        yield { event: "output", data: { content: "done" } }
+        yield { event: "done", data: {} }
+      })(),
+    ),
+    "test",
+  )
+  expect(replayed.choices).toMatchObject([
+    {
+      message: {
+        content: "done",
+        reasoning_content: "0123456789abcdefghijklmnopqrst",
+      },
+    },
+  ])
+})
+
+test("Trae reads cache counts under every spelling and treats 0/0 as unknown", async () => {
+  const usageOf = async (counts: Record<string, unknown>) => {
+    const response = await traeCnCollect(
+      traeCnParts(
+        (async function* () {
+          yield { event: "output", data: { content: "ok" } }
+          yield { event: "token_usage", data: counts }
+          yield { event: "done", data: {} }
+        })(),
+      ),
+      "test",
+    )
+    return response.usage as Record<string, unknown> | undefined
+  }
+
+  expect(
+    await usageOf({
+      prompt_tokens: 10,
+      completion_tokens: 2,
+      prompt_cache_hit_tokens: 7,
+    }),
+  ).toMatchObject({ prompt_tokens_details: { cached_tokens: 7 } })
+  expect(
+    await usageOf({
+      prompt_tokens: 10,
+      completion_tokens: 2,
+      input_tokens_details: { cached_tokens: 6 },
+    }),
+  ).toMatchObject({ prompt_tokens_details: { cached_tokens: 6 } })
+  expect(
+    await usageOf({
+      prompt_tokens: 10,
+      completion_tokens: 2,
+      cache_read_input_tokens: 5,
+      cache_creation_input_tokens: 3,
+    }),
+  ).toMatchObject({
+    prompt_tokens_details: {
+      cached_tokens: 5,
+      cache_creation_input_tokens: 3,
+    },
+  })
+  expect(
+    await usageOf({
+      prompt_tokens: 10,
+      completion_tokens: 2,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+    }),
+  ).not.toHaveProperty("prompt_tokens_details")
+  expect(
+    await usageOf({ prompt_tokens: 10, completion_tokens: 2 }),
+  ).not.toHaveProperty("prompt_tokens_details")
+})
+
 test("Trae replays parallel calls natively and keeps empty results as answered calls", () => {
   const payload = {
     model: "glm",

@@ -1,0 +1,131 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/trae-cn-conversion-regression.test.ts:
+23 |       { role: "tool" as const, tool_call_id: "b", content: "second" },
+24 |     ],
+25 |   }
+26 |   const before = structuredClone(payload)
+27 |   const messages = traeCnMessages(payload)
+28 |   expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "tool", "user"])
+                                           ^
+error: expect(received).toEqual(expected)
+
+  [
+    "user",
+    "assistant",
+    "tool",
+    "tool",
+-   "user",
+  ]
+
+- Expected  - 1
++ Received  + 0
+
+      at <anonymous> (/Users/meimingqi222/Developer/amp-workspace/copilot-api/tests/trae-cn-conversion-regression.test.ts:28:39)
+(fail) Trae preserves user images and puts tool images after all parallel results [0.29ms]
+33 | })
+34 | 
+35 | test("Trae rejects empty and interrupted streams in both client modes", async () => {
+36 |   for (const rows of [[], [{ event: "done", data: {} }], [{ event: "output", data: { content: " " } }, { event: "done", data: {} }], [{ event: "output", data: { content: "partial" } }]]) {
+37 |     const source = () => traeCnParts((async function* () { yield* rows })())
+38 |     expect((await traeCnCollect(source(), "test")).error).toBeDefined()
+                                                               ^
+error: expect(received).toBeDefined()
+
+Received: undefined
+
+      at <anonymous> (/Users/meimingqi222/Developer/amp-workspace/copilot-api/tests/trae-cn-conversion-regression.test.ts:38:59)
+(fail) Trae rejects empty and interrupted streams in both client modes [0.56ms]
+48 |   for (let size = 1; size <= encoded.length; size++) {
+49 |     const events = async function* () {
+50 |       for (let i = 0; i < encoded.length; i += size) yield { event: "output", data: { response: encoded.slice(i, i + size) } }
+51 |       yield { event: "done", data: {} }
+52 |     }
+53 |     expect((await traeCnCollect(traeCnParts(events()), "test")).choices).toMatchObject([{ message: { content: "answer", reasoning_content: 'check "quoted" value' } }])
+                                                                              ^
+error: expect(received).toMatchObject(expected)
+
+  [
+    {
++     "finish_reason": "stop",
++     "index": 0,
+      "message": {
+-       "content": "answer",
+-       "reasoning_content": "check "quoted" value",
++       "content": "{"reasoning_content":"check \"quoted\" value"}answer",
++       "role": "assistant",
+      },
+    },
+  ]
+
+- Expected  - 2
++ Received  + 4
+
+      at <anonymous> (/Users/meimingqi222/Developer/amp-workspace/copilot-api/tests/trae-cn-conversion-regression.test.ts:53:74)
+(fail) Trae extracts embedded reasoning across every chunk boundary but leaves quoted JSON alone [0.25ms]
+65 |     yield { event: "output", data: { reasoning_content: first + " then reconsider" } }
+66 |     yield { event: "output", data: { content: "second answer" } }
+67 |     yield { event: "done", data: {} }
+68 |   }
+69 |   const result = await traeCnCollect(traeCnParts(events()), "test")
+70 |   expect(result.choices).toMatchObject([{ message: {
+                              ^
+error: expect(received).toMatchObject(expected)
+
+  [
+    {
++     "finish_reason": "stop",
++     "index": 0,
+      "message": {
+-       "content": [
+-         {
+-           "text": "a sufficiently long first thought",
+-           "type": "reasoning",
+-         },
+-         {
+-           "text": "first answer",
+-           "type": "text",
+-         },
+-         {
+-           "text": " then reconsider",
+-           "type": "reasoning",
+-         },
+-         {
+-           "text": "second answer",
+-           "type": "text",
+-         },
+-       ],
+-       "reasoning_content": "a sufficiently long first thought then reconsider",
++       "content": "first answersecond answer",
++       "reasoning_content": "a sufficiently long first thoughta sufficiently long first thoughta sufficiently long first thought then reconsider",
++       "role": "assistant",
+      },
+    },
+  ]
+
+- Expected  - 19
++ Received  + 5
+
+      at <anonymous> (/Users/meimingqi222/Developer/amp-workspace/copilot-api/tests/trae-cn-conversion-regression.test.ts:70:26)
+(fail) Trae removes cumulative reasoning replays and preserves non-streaming interleaving [0.11ms]
+(pass) Trae replays parallel calls natively and keeps empty results as answered calls [0.11ms]
+(pass) Trae parses GLM and DSML calls across every chunk boundary without trimming code [3.05ms]
+(pass) Trae repairs raw controls and inner quotes while preserving valid escaped paths [0.14ms]
+(pass) Trae keeps inline and fenced tool examples as prose and tolerates null [0.06ms]
+(pass) Trae fails unreadable and truncated calls instead of leaking them or guessing arguments [0.12ms]
+(pass) Trae delta events and finish reasons survive both client modes [0.73ms]
+(pass) Trae malformed calls produce an error in streaming and non-streaming output [0.12ms]
+(pass) Trae respects string schemas and literal closing tags inside tool arguments [0.46ms]
+(pass) Trae rejects partial openers and incomplete XML parameters [0.05ms]
+(pass) Trae preserves DSML calls wrapped in a tool_call block [0.08ms]
+(pass) Trae closes the upstream iterator when the downstream stops consuming [0.10ms]
+(pass) Trae does not invent empty arguments for a malformed native call [0.10ms]
+(pass) Trae rejects XML trailing garbage and truncated call prefixes [0.05ms]
+(pass) Trae rejects explicit null inputs in text and native calls [0.06ms]
+(pass) Trae retains nested delta finish reasons in both client modes [0.12ms]
+(pass) Trae preserves literal closing tags in XML and GLM code arguments [1.23ms]
+
+ 16 pass
+ 4 fail
+ 2598 expect() calls
+Ran 20 tests across 1 file. [99.00ms]

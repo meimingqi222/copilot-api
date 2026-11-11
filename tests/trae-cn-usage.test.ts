@@ -8,7 +8,7 @@ import {
 } from "~/services/trae-cn/client"
 
 function parts(usage: Record<string, unknown>) {
-  const sse = `event: token_usage\ndata: ${JSON.stringify(usage)}\n\nevent: done\ndata: {}\n\n`
+  const sse = `event: output\ndata: {"content":"ok"}\n\nevent: token_usage\ndata: ${JSON.stringify(usage)}\n\nevent: done\ndata: {}\n\n`
   return traeCnParts(traeCnSse(new Response(sse).body!))
 }
 
@@ -58,7 +58,7 @@ test("absent Trae cache metrics remain absent rather than being reported as meas
   })
 })
 
-test("live Doubao token_usage preserves explicit zero cache counters and reasoning", async () => {
+test("live Doubao token_usage 0/0 cache counters are unknown, not a measured miss", async () => {
   const result = await traeCnCollect(
     parts({
       prompt_tokens: 51,
@@ -74,7 +74,6 @@ test("live Doubao token_usage preserves explicit zero cache counters and reasoni
     prompt_tokens: 51,
     completion_tokens: 235,
     total_tokens: 286,
-    prompt_tokens_details: { cached_tokens: 0, cache_creation_input_tokens: 0 },
     completion_tokens_details: { reasoning_tokens: 234 },
   })
 })

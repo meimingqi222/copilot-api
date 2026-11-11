@@ -1,0 +1,202 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/trae-cn-schema.test.ts:
+59 |     ["moonshot-v1", undefined],
+60 |     ["opaque-config", "Moonshot-Kimi__dev"],
+61 |     ["kimi-config", "other-display-name"],
+62 |   ])("normalizes nested tool schemas for %s / %s", (model, name) => {
+63 |     const before = structuredClone(schema)
+64 |     expect(toolParameters(schema, model!, name)).toEqual(expected)
+                                                      ^
+error: expect(received).toEqual(expected)
+
+  {
+    "properties": {
+      "ops": {
+        "items": {
+          "properties": {
+            "op": {
+              "description": "Operation",
+              "enum": [
+                "add",
+                "remove",
+              ],
+-             "type": "string",
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "const": "x",
+-                 "type": "string",
+                },
+                {
+                  "const": null,
+                },
+              ],
++             "type": "string",
+            },
+          },
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "type": "object",
+  }
+
+- Expected  - 2
++ Received  + 1
+
+      at <anonymous> (<repo>/tests/trae-cn-schema.test.ts:64:50)
+(fail) Trae Kimi schema integration > normalizes nested tool schemas for KIMI-K2.5 / %s [0.27ms]
+59 |     ["moonshot-v1", undefined],
+60 |     ["opaque-config", "Moonshot-Kimi__dev"],
+61 |     ["kimi-config", "other-display-name"],
+62 |   ])("normalizes nested tool schemas for %s / %s", (model, name) => {
+63 |     const before = structuredClone(schema)
+64 |     expect(toolParameters(schema, model!, name)).toEqual(expected)
+                                                      ^
+error: expect(received).toEqual(expected)
+
+  {
+    "properties": {
+      "ops": {
+        "items": {
+          "properties": {
+            "op": {
+              "description": "Operation",
+              "enum": [
+                "add",
+                "remove",
+              ],
+-             "type": "string",
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "const": "x",
+-                 "type": "string",
+                },
+                {
+                  "const": null,
+                },
+              ],
++             "type": "string",
+            },
+          },
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "type": "object",
+  }
+
+- Expected  - 2
++ Received  + 1
+
+      at <anonymous> (<repo>/tests/trae-cn-schema.test.ts:64:50)
+(fail) Trae Kimi schema integration > normalizes nested tool schemas for moonshot-v1 / %s [0.04ms]
+59 |     ["moonshot-v1", undefined],
+60 |     ["opaque-config", "Moonshot-Kimi__dev"],
+61 |     ["kimi-config", "other-display-name"],
+62 |   ])("normalizes nested tool schemas for %s / %s", (model, name) => {
+63 |     const before = structuredClone(schema)
+64 |     expect(toolParameters(schema, model!, name)).toEqual(expected)
+                                                      ^
+error: expect(received).toEqual(expected)
+
+  {
+    "properties": {
+      "ops": {
+        "items": {
+          "properties": {
+            "op": {
+              "description": "Operation",
+              "enum": [
+                "add",
+                "remove",
+              ],
+-             "type": "string",
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "const": "x",
+-                 "type": "string",
+                },
+                {
+                  "const": null,
+                },
+              ],
++             "type": "string",
+            },
+          },
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "type": "object",
+  }
+
+- Expected  - 2
++ Received  + 1
+
+      at <anonymous> (<repo>/tests/trae-cn-schema.test.ts:64:50)
+(fail) Trae Kimi schema integration > normalizes nested tool schemas for opaque-config / Moonshot-Kimi__dev [0.03ms]
+59 |     ["moonshot-v1", undefined],
+60 |     ["opaque-config", "Moonshot-Kimi__dev"],
+61 |     ["kimi-config", "other-display-name"],
+62 |   ])("normalizes nested tool schemas for %s / %s", (model, name) => {
+63 |     const before = structuredClone(schema)
+64 |     expect(toolParameters(schema, model!, name)).toEqual(expected)
+                                                      ^
+error: expect(received).toEqual(expected)
+
+  {
+    "properties": {
+      "ops": {
+        "items": {
+          "properties": {
+            "op": {
+              "description": "Operation",
+              "enum": [
+                "add",
+                "remove",
+              ],
+-             "type": "string",
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "const": "x",
+-                 "type": "string",
+                },
+                {
+                  "const": null,
+                },
+              ],
++             "type": "string",
+            },
+          },
+          "type": "object",
+        },
+        "type": "array",
+      },
+    },
+    "type": "object",
+  }
+
+- Expected  - 2
++ Received  + 1
+
+      at <anonymous> (<repo>/tests/trae-cn-schema.test.ts:64:50)
+(fail) Trae Kimi schema integration > normalizes nested tool schemas for kimi-config / other-display-name [0.03ms]
+(pass) Trae Kimi schema integration > does not normalize other upstreams or match a client alias [0.01ms]
+(pass) Trae Kimi schema integration > leaves an already accepted schema unchanged on Kimi
+
+ 2 pass
+ 4 fail
+ 21 expect() calls
+Ran 6 tests across 1 file. [96.00ms]

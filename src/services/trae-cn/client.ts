@@ -22,6 +22,7 @@
 import { randomBytes, randomUUID } from "node:crypto"
 import { iterateLines } from "~/lib/stream-lines"
 import { TraeCnTextTools } from "~/services/trae-cn/text-tools"
+import { normalizeTraeToolSchema } from "~/services/trae-cn/tool-schema"
 
 import { TraeCnNativeTools } from "~/services/trae-cn/native-tools"
 import {
@@ -29,6 +30,7 @@ import {
   TOOL_CALL_OPEN as TOOL_OPEN,
 } from "~/services/tool-call-text"
 
+import type { ModelMapping } from "~/lib/provider-connections"
 import type {
   ChatCompletionChunk,
   ChatCompletionsPayload,
@@ -51,6 +53,7 @@ const TRAE_CN_FUNCTIONS = [
   "solo_work_lite",
   "solo_agent",
   "solo_agent_lite",
+  "solo_coder",
 ] as const
 
 const TRAE_CN_DEVICE_BRAND = "ASUS TUF Gaming A15 FA507RM_FA507RM"
@@ -93,6 +96,71 @@ const devNameByModel = new Map<string, { fn: string; name: string }>()
 // 账号 → 上次成功服务的 function。
 const lastFunctionByConnection = new Map<string, string>()
 const FUNCTION_STATE_MAX = 2048
+
+export interface TraeCnModelCapabilities {
+  multimodal?: boolean
+  reasoningLevels?: Array<string>
+}
+
+/**
+ * 连接上某个模型的能力：按账号发现，写进 mapping 的 `metadata`
+ * （`multimodal` / `reasoningLevels`）后随 connection 落盘——只放内存表
+ * 的话重启后就把图片发给了看不见图的模型、也认不出档位。
+ */
+export function traeCnModelCapabilities(
+  models: ReadonlyArray<ModelMapping> | undefined,
+  upstreamModel: string,
+): TraeCnModelCapabilities {
+  const model = models?.find(
+    (m) => m.upstreamId === upstreamModel || m.publicId === upstreamModel,
+  )
+  const metadata = model?.metadata ?? {}
+  const levels = metadata.reasoningLevels
+  return {
+    ...(typeof metadata.multimodal === "boolean" ?
+      { multimodal: metadata.multimodal }
+    : {}),
+    ...(Array.isArray(levels) ?
+      {
+        reasoningLevels: levels.filter(
+          (level): level is string => typeof level === "string",
+        ),
+      }
+    : {}),
+  }
+}
+
+const TRAE_LEVELS: Record<string, string> = {
+  light: "low",
+  medium: "medium",
+  high: "high",
+  extra_high: "xhigh",
+  max: "max",
+}
+
+function traeEfforts(levels: Array<string>): Array<string> {
+  const offered = levels
+    .map((level) => TRAE_LEVELS[level])
+    .filter((level): level is string => Boolean(level))
+  if (offered.includes("xhigh") && !offered.includes("max")) offered.push("max")
+  return offered
+}
+
+function traeEffort(
+  levels: Array<string> | undefined,
+  requested: unknown,
+): string | undefined {
+  if (!levels || typeof requested !== "string") return undefined
+  if (
+    requested === "max"
+    && levels.includes("extra_high")
+    && !levels.includes("max")
+  )
+    return "extra_high"
+  return levels.find(
+    (level) => level === requested || TRAE_LEVELS[level] === requested,
+  )
+}
 
 /** FIFO 上限：模型/账号数有限，但别让状态表无界涨。 */
 function cappedSet<K, V>(map: Map<K, V>, key: K, value: V): void {
@@ -166,7 +234,7 @@ function partText(content: unknown): string {
 
 interface TraeMessage {
   role: string
-  content: Array<{ type: string; text: string }> | null
+  content: Array<{ type: "text"; text: string } | TraeImage> | null
   tool_calls?: Array<{
     id: string
     type: "function"
@@ -175,9 +243,15 @@ interface TraeMessage {
   tool_call_id?: string
 }
 
+interface TraeImage {
+  type: "image_url"
+  image_url: { url: string }
+}
+
 /** OpenAI 消息 → Trae 消息；原生历史与原生 tools 使用同一协议。 */
 export function traeCnMessages(
   payload: ChatCompletionsPayload,
+  sees = true,
 ): Array<TraeMessage> {
   const native =
     Array.isArray(payload.tools)
@@ -188,12 +262,31 @@ export function traeCnMessages(
   const out: Array<{
     role: string
     text: string
+    images?: Array<TraeImage>
     tool_calls?: TraeMessage["tool_calls"]
     tool_call_id?: string
   }> = []
+  let pending: Array<TraeImage> = []
+  const flushImages = () => {
+    if (pending.length) out.push({ role: "user", text: "", images: pending })
+    pending = []
+  }
   for (const m of payload.messages ?? []) {
     const role = m.role === "developer" ? "system" : m.role
-    let text = partText(m.content)
+    if (role !== "tool") flushImages()
+    const images: Array<TraeImage> = []
+    const content =
+      Array.isArray(m.content) && sees ?
+        m.content.filter((p) => {
+          if (p.type !== "image_url" || !p.image_url?.url) return true
+          images.push({
+            type: "image_url",
+            image_url: { url: p.image_url.url },
+          })
+          return false
+        })
+      : m.content
+    let text = partText(content)
     if (native && role === "assistant" && m.tool_calls?.length) {
       const calls: NonNullable<TraeMessage["tool_calls"]> = []
       for (const c of m.tool_calls) {
@@ -209,7 +302,12 @@ export function traeCnMessages(
           function_call: { name, arguments: c.function.arguments },
         })
       }
-      out.push({ role, text, ...(calls.length ? { tool_calls: calls } : {}) })
+      out.push({
+        role,
+        text,
+        images,
+        ...(calls.length ? { tool_calls: calls } : {}),
+      })
       continue
     }
     if (role === "assistant") {
@@ -231,29 +329,39 @@ export function traeCnMessages(
         )
       })
       text = [text, ...calls].filter(Boolean).join("\n")
-      out.push({ role: "assistant", text })
+      out.push({ role: "assistant", text, images })
     } else if (role === "tool") {
       const id = m.tool_call_id ?? ""
       if (native && dropped.has(id)) continue
       if (native && names.has(id)) {
-        out.push({ role, tool_call_id: id, text: text || "(no output)" })
+        pending.push(...images)
+        out.push({
+          role,
+          tool_call_id: id,
+          text:
+            text
+            || (images.length ? "(the result's image follows)" : "(no output)"),
+        })
         continue
       }
       out.push({
         role: "user",
         text: `Result of ${names.get(m.tool_call_id ?? "") || m.name || "the tool"} (call ${m.tool_call_id ?? "?"}):\n${text}`,
+        images,
       })
     } else {
-      out.push({ role: role === "system" ? "system" : "user", text })
+      out.push({ role: role === "system" ? "system" : "user", text, images })
     }
   }
+  flushImages()
   // 并行调用的 tool 结果必须独立且连续；只合并普通同角色消息。
   const merged: typeof out = []
   for (const m of out) {
-    if (!m.text && !m.tool_calls?.length) continue
+    if (!m.text && !m.images?.length && !m.tool_calls?.length) continue
     const last = merged[merged.length - 1]
     if (last && last.role === m.role && !["system", "tool"].includes(m.role)) {
       last.text = [last.text, m.text].filter(Boolean).join("\n\n")
+      last.images = [...(last.images ?? []), ...(m.images ?? [])]
       if (m.tool_calls)
         last.tool_calls = [...(last.tool_calls ?? []), ...m.tool_calls]
     } else {
@@ -262,7 +370,13 @@ export function traeCnMessages(
   }
   return merged.map((m) => ({
     role: m.role,
-    content: m.text ? [{ type: "text", text: m.text }] : null,
+    content:
+      m.text || m.images?.length ?
+        [
+          ...(m.text ? [{ type: "text" as const, text: m.text }] : []),
+          ...(m.images ?? []),
+        ]
+      : null,
     ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
     ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
   }))
@@ -271,21 +385,31 @@ export function traeCnMessages(
 /** tools → Trae 的原生形状：parameters 是 JSON 字符串。 */
 function traeCnNativeTools(
   tools: Array<Record<string, unknown>>,
+  moonshot: boolean,
 ): Array<Record<string, unknown>> {
   return tools.map((t) => {
     const f =
       typeof t.function === "object" && t.function ?
         (t.function as TraeToolSpec)
       : (t as TraeToolSpec)
+    const parameters =
+      (
+        moonshot
+        && f.parameters
+        && typeof f.parameters === "object"
+        && !Array.isArray(f.parameters)
+      ) ?
+        normalizeTraeToolSchema(f.parameters as Record<string, unknown>)
+      : f.parameters
     return {
       type: "function",
       function: {
         name: f.name,
         description: f.description ?? "",
         parameters:
-          typeof f.parameters === "string" ?
-            f.parameters
-          : JSON.stringify(f.parameters ?? {}),
+          typeof parameters === "string" ? parameters : (
+            JSON.stringify(parameters ?? {})
+          ),
       },
     }
   })
@@ -297,10 +421,13 @@ export function traeCnChatBody(
   fn: string,
   upstreamModel: string,
   modelName?: string,
+  options: TraeCnModelCapabilities = {},
 ): Record<string, unknown> {
+  // The legacy endpoint groups billing by session_id. Each actual send needs
+  // its own ID, even inside one logical chat, or cache lookup mixes turns.
   const session = randomUUID()
   const body: Record<string, unknown> = {
-    messages: traeCnMessages(payload),
+    messages: traeCnMessages(payload, options.multimodal !== false),
     function: fn,
     config_name: upstreamModel,
     model: upstreamModel,
@@ -309,6 +436,11 @@ export function traeCnChatBody(
     request_id: session,
     session_id: session,
   }
+  const effort = traeEffort(
+    options.reasoningLevels,
+    payload.reasoning_effort ?? payload.reasoning?.effort,
+  )
+  if (effort) body.reasoning_effort = effort
   const max =
     (payload as { max_completion_tokens?: number }).max_completion_tokens
     ?? payload.max_tokens
@@ -325,6 +457,7 @@ export function traeCnChatBody(
   ) {
     body.tools = traeCnNativeTools(
       payload.tools as unknown as Array<Record<string, unknown>>,
+      /kimi|moonshot/i.test(`${upstreamModel} ${modelName ?? ""}`),
     )
     const c = payload.tool_choice
     if (c && typeof c === "object") {
@@ -449,6 +582,15 @@ function optionalTokenCount(value: unknown): number | undefined {
   return Number.isFinite(count) && count >= 0 ? count : undefined
 }
 
+/** 第一个说出来的计数：0 是上游说 0，全缺省才是没提。 */
+function firstTokenCount(...values: Array<unknown>): number | undefined {
+  for (const value of values) {
+    const count = optionalTokenCount(value)
+    if (count !== undefined) return count
+  }
+  return undefined
+}
+
 function tokensOf(u: unknown): TraeChatUsage | undefined {
   if (!u || typeof u !== "object") return undefined
   const o = u as Record<string, unknown>
@@ -466,12 +608,23 @@ function tokensOf(u: unknown): TraeChatUsage | undefined {
     ) || 0
   if (!p && !c) return undefined
   const promptDetails = usageDetails(o.prompt_tokens_details)
+  const inputDetails = usageDetails(o.input_tokens_details)
   const completionDetails = usageDetails(o.completion_tokens_details)
-  const read = optionalTokenCount(
-    promptDetails.cached_tokens ?? o.cache_read_input_tokens,
+  // Trae 把缓存读写在 Anthropic 的名字下，DeepSeek 风格的代理又用
+  // prompt_cache_hit_tokens / 裸 cached_tokens：谁先说出来用谁。
+  const read = firstTokenCount(
+    promptDetails.cached_tokens,
+    inputDetails.cached_tokens,
+    o.prompt_cache_hit_tokens,
+    o.cached_tokens,
+    o.cache_read_input_tokens,
+    o.cacheReadInputTokens,
   )
-  const write = optionalTokenCount(
-    promptDetails.cache_creation_input_tokens ?? o.cache_creation_input_tokens,
+  const write = firstTokenCount(
+    promptDetails.cache_write_tokens,
+    promptDetails.cache_creation_input_tokens,
+    o.cache_creation_input_tokens,
+    o.cacheCreationInputTokens,
   )
   const reasoning = optionalTokenCount(
     completionDetails.reasoning_tokens ?? o.reasoning_tokens,
@@ -480,13 +633,13 @@ function tokensOf(u: unknown): TraeChatUsage | undefined {
     prompt_tokens: p,
     completion_tokens: c,
     total_tokens: Number(o.total_tokens ?? o.totalTokens) || p + c,
-    ...(read !== undefined || write !== undefined ?
+    // Trae 按缓存价计费也可能回 0/0（甚至不提缓存）：0 是“没说”，不是
+    // 没命中，所以只公布非零的计数，否则客户端把它读成 0% 命中率。
+    ...(read || write ?
       {
         prompt_tokens_details: {
-          ...(read !== undefined ? { cached_tokens: read } : {}),
-          ...(write !== undefined ?
-            { cache_creation_input_tokens: write }
-          : {}),
+          ...(read ? { cached_tokens: read } : {}),
+          ...(write ? { cache_creation_input_tokens: write } : {}),
         },
       }
     : {}),
@@ -524,6 +677,65 @@ function normalizeCallArguments(value: unknown): string | undefined {
   return undefined
 }
 
+interface TraeAnswer {
+  reasoning: string
+  text: string
+  toolCalls: Array<unknown>
+}
+
+/** 一个 output 事件里可能同时带思考、正文和原生 tool call。 */
+function answerOf(
+  d: Record<string, unknown>,
+  delta: Record<string, unknown>,
+): TraeAnswer {
+  const reasoning =
+    d.reasoning_content
+    || d.reasoning_text
+    || d.reasoning
+    || delta.reasoning_content
+    || delta.reasoning_text
+    || delta.reasoning
+    || ""
+  const text =
+    typeof d.response === "string" ? d.response
+    : typeof d.content === "string" ? d.content
+    : typeof delta.content === "string" ? delta.content
+    : typeof d.delta === "string" ? d.delta
+    : ""
+  const toolCalls = d.tool_calls ?? delta.tool_calls
+  return {
+    reasoning: typeof reasoning === "string" ? reasoning : "",
+    // IDE 自己的进度行，不是模型的输出。
+    text:
+      /^(Building prompt:|Completed building prompt)/.test(text) ? "" : text,
+    toolCalls: Array.isArray(toolCalls) ? toolCalls : [],
+  }
+}
+
+/** 停止原因可能挂在根事件或 delta 上；只保留两种需要改变回复的语义。 */
+function finishOf(
+  d: Record<string, unknown>,
+  delta: Record<string, unknown>,
+): "length" | "content_filter" | undefined {
+  const reason = String(
+    d.finish_reason
+      ?? d.stop_reason
+      ?? d.finishReason
+      ?? delta.finish_reason
+      ?? delta.stop_reason
+      ?? delta.finishReason
+      ?? "",
+  ).toLowerCase()
+  if (
+    ["length", "max_tokens", "max_output_tokens", "max_length"].includes(reason)
+  ) {
+    return "length"
+  }
+  if (reason === "content_filter" || reason === "sensitive")
+    return "content_filter"
+  return undefined
+}
+
 /**
  * Trae 的 SSE 事件 → 应答部件：文本、reasoning、tool call、usage、完成、
  * 或业务错误。queue/metadata/timing 等非 output 事件跳过。
@@ -535,6 +747,35 @@ export async function* traeCnParts(
   const tt = new TraeCnTextTools(tools)
   const nativeTools = new TraeCnNativeTools()
   let finish: "length" | "content_filter" | undefined
+  let completed = false
+  let answered = false
+  let thought = ""
+  let lastThought = ""
+  function* emit(part: TraeChatPart): Generator<TraeChatPart> {
+    if ("reasoning" in part) {
+      const original = part.reasoning
+      // 上游 Thoughts.add 的三条规则：同一段连发、已发内容的后缀重放、
+      // 以及“目前为止”的累积快照——只放行新增的那一截。
+      if (original === lastThought && original.length >= 8) return
+      lastThought = original
+      if (
+        thought.length >= 16
+        && original.length >= 16
+        && thought.endsWith(original)
+      )
+        return
+      const reasoning =
+        thought.length >= 16 && original.startsWith(thought) ?
+          original.slice(thought.length)
+        : original
+      thought += reasoning
+      if (!reasoning) return
+      part = { reasoning }
+      answered ||= Boolean(reasoning.trim())
+    } else if ("text" in part) answered ||= Boolean(part.text.trim())
+    else if ("call" in part) answered = true
+    yield part
+  }
   for await (const { event, data } of events) {
     const name = eventName(event)
     const d =
@@ -543,24 +784,12 @@ export async function* traeCnParts(
       d.delta && typeof d.delta === "object" ?
         (d.delta as Record<string, unknown>)
       : {}
-    const reason = String(
-      d.finish_reason
-        ?? d.stop_reason
-        ?? d.finishReason
-        ?? delta.finish_reason
-        ?? delta.stop_reason
-        ?? delta.finishReason
-        ?? "",
-    ).toLowerCase()
-    if (
-      ["length", "max_tokens", "max_output_tokens", "max_length"].includes(
-        reason,
-      )
-    )
-      finish = "length"
-    if (reason === "content_filter" || reason === "sensitive")
-      finish = "content_filter"
-    if (data === "[DONE]") break
+    const finishNow = finishOf(d, delta)
+    if (finishNow) finish = finishNow
+    if (data === "[DONE]") {
+      completed = true
+      break
+    }
     if (
       name === "error"
       || (name !== "output" && d.code && d.message && !d.response && !d.content)
@@ -575,6 +804,7 @@ export async function* traeCnParts(
       continue
     }
     if (name === "done" || name === "response_done" || name === "stream_done") {
+      completed = true
       const u = tokensOf(d.usage)
       if (u) yield { usage: u }
       break
@@ -594,34 +824,17 @@ export async function* traeCnParts(
       ].includes(name)
     )
       continue
-    const reasoning =
-      d.reasoning_content
-      || d.reasoning_text
-      || d.reasoning
-      || delta.reasoning_content
-      || delta.reasoning_text
-      || delta.reasoning
-      || ""
-    if (typeof reasoning === "string" && reasoning) yield { reasoning }
-    let text =
-      typeof d.response === "string" ? d.response
-      : typeof d.content === "string" ? d.content
-      : typeof delta.content === "string" ? delta.content
-      : typeof d.delta === "string" ? d.delta
-      : ""
-    // IDE 自己的进度行，不是模型的输出。
-    if (/^(Building prompt:|Completed building prompt)/.test(text)) text = ""
-    if (text) {
-      const r = tt.push(text)
+    const answer = answerOf(d, delta)
+    if (answer.reasoning) yield* emit({ reasoning: answer.reasoning })
+    if (answer.text) {
+      const r = tt.push(answer.text)
       if (r.error) {
         yield { error: r.error, code: "invalid_tool_call" }
         return
       }
-      if (r.text) yield { text: r.text }
-      for (const c of r.calls) yield { call: c }
+      for (const part of r.parts ?? []) yield* emit(part)
     }
-    const toolCalls = d.tool_calls ?? delta.tool_calls
-    for (const tc of Array.isArray(toolCalls) ? toolCalls : []) {
+    for (const tc of answer.toolCalls) {
       nativeTools.push(tc)
     }
     const u = tokensOf(d.usage)
@@ -632,8 +845,14 @@ export async function* traeCnParts(
     yield { error: r.error, code: "invalid_tool_call" }
     return
   }
-  if (r.text) yield { text: r.text }
-  for (const c of r.calls) yield { call: c }
+  for (const part of r.parts ?? []) yield* emit(part)
+  if (!completed) {
+    yield {
+      error: "Trae CN stream ended before completion",
+      code: "incomplete_stream",
+    }
+    return
+  }
   for (const call of nativeTools.finish()) {
     const argumentsJson = normalizeCallArguments(call.arguments)
     if (argumentsJson === undefined) {
@@ -643,13 +862,17 @@ export async function* traeCnParts(
       }
       return
     }
-    yield {
+    yield* emit({
       call: {
         ...call,
         id: call.upstreamId || nextCallId(),
         arguments: argumentsJson,
       },
-    }
+    })
+  }
+  if (!answered && finish !== "content_filter") {
+    yield { error: "Trae CN ended without an answer", code: "empty_response" }
+    return
   }
   if (finish) yield { finish }
 }
@@ -702,6 +925,8 @@ interface TraeCnModelEntry {
   context_window_tokens?: { dev?: number; max?: number | Array<number> }
   context_window_size?: { max?: number | Array<number> }
   prompt_max_tokens?: number
+  multimodal?: boolean
+  reasoning_effort_config?: { options?: Array<string> }
   model_detail_list?: Array<{
     model_name?: string
     max_tokens?: number
@@ -822,13 +1047,14 @@ async function listOf(
   return (list ?? []).filter((m) => m?.config_name)
 }
 
-interface TraeCnListedModel {
+interface TraeCnListedModel extends TraeCnModelCapabilities {
   id: string
   name: string
   context?: number
   maxContext?: number
   input?: number
   output?: number
+  efforts?: Array<string>
 }
 
 /**
@@ -872,6 +1098,10 @@ export async function traeCnListModels(
   const out: Array<TraeCnListedModel> = []
   for (const [id, { m, fn }] of picked) {
     const key = JSON.stringify([connectionId, id])
+    const levels =
+      m.reasoning_effort_config?.options?.filter(
+        (level) => typeof level === "string",
+      ) ?? []
     cappedSet(listedByModel, key, fn)
     const dev = devModel(m)
     if (dev?.model_name) {
@@ -885,6 +1115,12 @@ export async function traeCnListModels(
     )
     out.push({
       id,
+      ...(typeof m.multimodal === "boolean" ?
+        { multimodal: m.multimodal }
+      : {}),
+      ...(m.reasoning_effort_config ?
+        { reasoningLevels: levels, efforts: traeEfforts(levels) }
+      : {}),
       name: String(
         m.display_config?.display_name
           ?? m.display_name
@@ -990,6 +1226,8 @@ export async function traeCnCollect(
 ): Promise<Record<string, unknown>> {
   let text = ""
   let reasoning = ""
+  const ordered: Array<{ type: "text" | "reasoning"; text: string }> = []
+  let interleaved = false
   const calls: Array<TraeChatCall> = []
   let usage: TraeChatUsage | undefined
   let finish: "length" | "content_filter" | undefined
@@ -1003,15 +1241,25 @@ export async function traeCnCollect(
         },
       }
     }
-    if ("text" in p) text += p.text
-    if ("reasoning" in p) reasoning += p.reasoning
+    if ("text" in p || "reasoning" in p) {
+      const type = "text" in p ? "text" : "reasoning"
+      const value = "text" in p ? p.text : p.reasoning
+      const last = ordered.at(-1)
+      if (last?.type === type) last.text += value
+      else ordered.push({ type, text: value })
+      if (type === "text") text += value
+      else {
+        interleaved ||= Boolean(text)
+        reasoning += value
+      }
+    }
     if ("call" in p) calls.push(p.call)
     if ("usage" in p) usage = p.usage
     if ("finish" in p) finish = p.finish
   }
   const message: Record<string, unknown> = {
     role: "assistant",
-    content: text || (calls.length > 0 ? null : ""),
+    content: interleaved ? ordered : text || (calls.length > 0 ? null : ""),
   }
   if (reasoning) message.reasoning_content = reasoning
   if (calls.length > 0) {

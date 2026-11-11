@@ -1,6 +1,7 @@
 # Agent Note: Preserve Trae cache and reasoning usage
 
 Status: implemented
+Partly-superseded-by: 2026-11-11-trae-cn-cache-zero-unknown.md
 
 ## Problem
 
@@ -25,6 +26,18 @@ Future requests can record reported cache counts after deployment. This does not
 - `tests/trae-cn-usage.test.ts::Trae cache read/write and reasoning counts survive non-streaming collection`
 - `tests/trae-cn-usage.test.ts::Trae cache read/write and reasoning counts survive streaming usage output`
 - `tests/trae-cn-usage.test.ts::absent Trae cache metrics remain absent rather than being reported as measured zero`
-- `tests/trae-cn-usage.test.ts::live Doubao token_usage preserves explicit zero cache counters and reasoning`
+- `tests/trae-cn-usage.test.ts::live Doubao token_usage 0/0 cache counters are unknown, not a measured miss`
 
-Proved: before the mapping fix both collection and correctly decoded streaming usage assertions failed because prompt/completion details were missing; captured output is `.agents/notes-evidence/trae-cache-usage-red.log`. After the fix all 24 affected tests passed; the final focused run also passed all four usage regressions including the live zero-counter shape.
+Proved: before the mapping fix both collection and correctly decoded streaming
+usage assertions failed because prompt/completion details were missing;
+captured output is `.agents/notes-evidence/trae-cache-usage-red.log`. After the
+fix all 24 affected tests passed; the final focused run also passed all four
+usage regressions.
+
+## Superseded
+
+The successor `2026-11-11-trae-cn-cache-zero-unknown.md` replaces "preserve
+explicit zero": Trae answers 0/0 for turns it bills at its cache price, so a 0
+is unknown, not a measured miss, and the adapter publishes only nonzero cache
+counts. Reading the Anthropic cache field names and keeping `reasoning_tokens`
+in `completion_tokens_details` still hold.

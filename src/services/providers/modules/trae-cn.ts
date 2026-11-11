@@ -164,6 +164,8 @@ async function discoverTraeCnModels(
     endpoints: ["chat"],
     enabled: true,
     pickerEnabled: true,
+    // 上游按账号声明档位；对外公布后，route-target 会按它钳制请求。
+    ...(m.efforts?.length ? { efforts: m.efforts } : {}),
     metadata: {
       ...(m.context ? { contextWindow: m.context } : {}),
       ...(m.maxContext && (!m.context || m.maxContext > m.context) ?
@@ -171,6 +173,11 @@ async function discoverTraeCnModels(
       : {}),
       ...(m.input ? { inputLimit: m.input } : {}),
       ...(m.output ? { outputLimit: m.output } : {}),
+      // adapter 请求时要按账号还原：能不能收图、请求的档位在 Trae 叫什么。
+      ...(m.multimodal === undefined ? {} : { multimodal: m.multimodal }),
+      ...(m.reasoningLevels?.length ?
+        { reasoningLevels: m.reasoningLevels }
+      : {}),
     },
   }))
 }

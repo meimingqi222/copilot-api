@@ -1,12 +1,119 @@
 import { afterEach, expect, test } from "bun:test"
 
+import type { ModelMapping } from "~/lib/provider-connections"
 import {
   __resetTraeCnFunctionStateForTest,
   traeCnFunctionOrder,
   traeCnListModels,
+  traeCnChatBody,
+  traeCnModelCapabilities,
 } from "~/services/trae-cn/client"
 
 afterEach(__resetTraeCnFunctionStateForTest)
+
+test("Trae discovers solo_coder and uses account-specific vision and reasoning levels", async () => {
+  const listed = await traeCnListModels(
+    async (_url, body) => {
+      expect(body.functions).toContain("solo_coder")
+      return {
+        status: 200,
+        text: "",
+        v: {
+          function_configs: [
+            {
+              function: "solo_coder",
+              config_info_list: [
+                {
+                  ...model("kimi-k3", "Kimi K3"),
+                  multimodal: true,
+                  reasoning_effort_config: {
+                    options: ["light", "high", "extra_high"],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      }
+    },
+    "https://models.example",
+    "vision-account",
+  )
+  expect(listed[0]).toMatchObject({
+    multimodal: true,
+    reasoningLevels: ["light", "high", "extra_high"],
+    efforts: ["low", "high", "xhigh", "max"],
+  })
+  const mapping: ModelMapping = {
+    publicId: "kimi-k3",
+    upstreamId: "kimi-k3",
+    endpoints: ["chat"],
+    enabled: true,
+    metadata: {
+      multimodal: listed[0]!.multimodal,
+      reasoningLevels: listed[0]!.reasoningLevels,
+    },
+  }
+  const payload = {
+    model: "kimi-k3",
+    reasoning_effort: "max" as const,
+    messages: [{ role: "user" as const, content: "hello" }],
+  }
+  const options = traeCnModelCapabilities([mapping], "kimi-k3")
+  expect(options).toEqual({
+    multimodal: true,
+    reasoningLevels: ["light", "high", "extra_high"],
+  })
+  expect(
+    traeCnChatBody(payload, "solo_coder", "kimi-k3", undefined, options)
+      .reasoning_effort,
+  ).toBe("extra_high")
+  expect(traeCnFunctionOrder("vision-account", "kimi-k3")[0]?.fn).toBe(
+    "solo_coder",
+  )
+  expect(traeCnModelCapabilities(undefined, "kimi-k3")).toEqual({})
+  expect(traeCnModelCapabilities([mapping], "another-model")).toEqual({})
+  expect(
+    traeCnChatBody(payload, "solo_coder", "kimi-k3", undefined, {
+      reasoningLevels: ["light", "max"],
+    }).reasoning_effort,
+  ).toBe("max")
+  expect(
+    traeCnChatBody(payload, "solo_coder", "kimi-k3", undefined, {
+      reasoningLevels: [],
+    }).reasoning_effort,
+  ).toBeUndefined()
+  const imagePayload = {
+    ...payload,
+    messages: [
+      {
+        role: "user" as const,
+        content: [
+          {
+            type: "image_url" as const,
+            image_url: { url: "https://example.com/red.png" },
+          },
+        ],
+      },
+    ],
+  }
+  expect(
+    traeCnChatBody(imagePayload, "solo_coder", "kimi-k3", undefined, {
+      multimodal: false,
+    }).messages,
+  ).toEqual([
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "[an image, which this model can't see]" },
+      ],
+    },
+  ])
+  const a = traeCnChatBody(payload, "solo_coder", "kimi-k3")
+  const b = traeCnChatBody(payload, "solo_coder", "kimi-k3")
+  expect(a.session_id).toBe(a.request_id)
+  expect(a.session_id).not.toBe(b.session_id)
+})
 
 function model(id: string, name: string, output = 16000) {
   return {

@@ -1,0 +1,36 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/trae-cn-conversion-regression.test.ts:
+155 |         yield { event: "done", data: {} }
+156 |       })(),
+157 |     ),
+158 |     "test",
+159 |   )
+160 |   expect(replayed.choices).toMatchObject([
+                                 ^
+error: expect(received).toMatchObject(expected)
+
+  [
+    {
++     "finish_reason": "stop",
++     "index": 0,
+      "message": {
+        "content": "done",
+-       "reasoning_content": "0123456789abcdefghijklmnopqrst",
++       "reasoning_content": "0123456789abcdefghijklmnopqrstefghijklmnopqrst",
++       "role": "assistant",
+      },
+    },
+  ]
+
+- Expected  - 1
++ Received  + 4
+
+      at <anonymous> (/Users/meimingqi222/Developer/amp-workspace/copilot-api/tests/trae-cn-conversion-regression.test.ts:160:28)
+(fail) Trae removes cumulative reasoning replays and preserves non-streaming interleaving [0.99ms]
+
+ 0 pass
+ 20 filtered out
+ 1 fail
+ 2 expect() calls
+Ran 1 test across 1 file. [106.00ms]

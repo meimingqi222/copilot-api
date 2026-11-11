@@ -1,0 +1,10 @@
+1 | import {expect} from "bun:test"; import {traeCnChatBody} from "./src/services/trae-cn/client.ts"; const body=traeCnChatBody({model:"kimi-k3",messages:[{role:"user",content:"hi"}],reasoning_effort:"max"},"solo_coder","kimi-k3",undefined,{reasoningLevels:["light","high","extra_high"]});expect(body.reasoning_effort).toBe("extra_high")
+                                                                                                                                                                                                                                                                                                                               ^
+error: expect(received).toBe(expected)
+
+Expected: "extra_high"
+Received: undefined
+
+      at /Users/meimingqi222/Developer/amp-workspace/copilot-api/[eval]:1:316
+
+Bun v1.4.4 (macOS arm64)
