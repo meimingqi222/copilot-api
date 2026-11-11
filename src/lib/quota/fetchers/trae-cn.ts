@@ -211,6 +211,11 @@ export async function fetchTraeCnQuota(
         plan,
         user: account.name || account.uid,
         balance: unlimited ? "unlimited" : undefined,
+        // Reporting may retain known totals even when routing usage is unknown.
+        credits:
+          !unlimited && packWindows.some((pack) => pack.total !== undefined) ?
+            { total: limit }
+          : undefined,
         windows,
       },
     },

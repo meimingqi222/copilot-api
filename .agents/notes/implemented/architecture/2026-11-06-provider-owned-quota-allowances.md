@@ -17,6 +17,15 @@ reset and expiry times, exact native model scopes and reporting-only windows.
 Missing duration/reset never discards measured usage; missing usage never becomes
 zero. Providers resolve complementary pools and paid overflow themselves.
 
+Trae CN keeps the sum of reported credit limits in
+`src/lib/quota/fetchers/trae-cn.ts` under `details["trae-cn"].credits.total`
+even when an incomplete pack makes routing capacity unknown. This is a known
+subtotal, not a remaining balance. `pages/js/quota-display.js` shows it as a
+known allowance with unknown usage, without a progress bar; old snapshots
+without totals show an explicit no-data row. Complete readings keep their
+credit counts and percentage bar. Do not restore the display by treating missing
+usage as zero, or hide known totals merely because admission is unknown.
+
 `src/lib/quota/refresh.ts` guards connection/credential and snapshot object
 identity and cancellation before the common apply path. Events replace snapshots
 without changing the poll clock, so timestamp comparison alone cannot detect a
@@ -100,3 +109,12 @@ Copilot admission is bound by
 Pre-fix assertion failures are retained in
 `.agents/notes-evidence/quota-observation-order-red.log` and
 `.agents/notes-evidence/copilot-zcode-provider-boundaries-red.log`.
+
+Trae credit display regressions:
+`tests/oauth-trae.test.ts::partial credit packs retain their known total for display without inventing routing capacity`
+and
+`tests/quota-display-mode.test.ts::Trae CN shows credit amounts or an explicit unknown reading instead of an empty card`.
+Before the fix, both failed because the total was omitted and the UI returned
+no rows. The focused red run also failed the existing missing-usage case's new
+total assertion; all three pass after the fix. Browser checks cover complete,
+partial, absent and unlimited readings using synthetic account data.

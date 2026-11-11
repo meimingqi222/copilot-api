@@ -439,13 +439,40 @@ const QuotaDisplay = {
 
         break
       }
+      case "trae-cn": {
+        rows = this.buildOAuthWindowsRows(info.details, provider, t).map(
+          (row) => ({ ...row, label: t("quota.oauth.trae-cn.credits") }),
+        )
+        if (rows.length === 0 && !info.unlimited) {
+          const total = this.normalizeNumber(
+            info.details?.[provider]?.credits?.total,
+          )
+          rows.push({
+            id: "trae-cn-credits",
+            label: t("quota.oauth.trae-cn.credits"),
+            valueText:
+              total !== undefined ?
+                t("quota.oauth.trae-cn.usageUnknown")
+              : t("quota.noData"),
+            ...(total !== undefined ?
+              {
+                amountText: t("quota.oauth.trae-cn.knownTotal", {
+                  count: this.formatCredits(total),
+                }),
+              }
+            : {}),
+            hideBar: true,
+          })
+        }
+
+        break
+      }
       case "commandcode-plan":
       case "factory":
       case "zcode":
       case "dimagent":
       case "zed":
-      case "gemini":
-      case "trae-cn": {
+      case "gemini": {
         const key = provider === "commandcode-plan" ? "commandcode" : provider
         rows = this.buildOAuthWindowsRows(info.details, key, t)
 
@@ -1228,6 +1255,12 @@ const QuotaDisplay = {
     if (info.unlimited) return t("quota.unlimited")
 
     const provider = account.provider || "copilot"
+    if (provider === "trae-cn") {
+      const row = this.buildRows(account, t)[0]
+      return row?.hideBar ?
+          [row.amountText, row.valueText].filter(Boolean).join(" · ")
+        : row?.amountText || row?.valueText || t("quota.noData")
+    }
     if (provider === "kimi") {
       if (info.chatRemaining !== undefined && info.chatTotal !== undefined) {
         return `${info.chatRemaining} / ${info.chatTotal}`

@@ -59,6 +59,72 @@ const trace = runInNewContext(
 ) as TraceView
 const translate = (key: string) => (key.endsWith(".used") ? "已用" : "剩余")
 
+test("Trae CN shows credit amounts or an explicit unknown reading instead of an empty card", () => {
+  const t = (key: string, params?: Record<string, unknown>) => {
+    if (key === "quota.oauth.trae-cn.credits") return "积分"
+    if (key === "quota.oauth.trae-cn.knownTotal")
+      return `已知额度 ${params?.count} 积分`
+    if (key === "quota.oauth.trae-cn.usageUnknown") return "用量未知"
+    if (key === "quota.noData") return "暂无数据"
+    return key
+  }
+  const account = {
+    provider: "trae-cn",
+    quotaInfo: {
+      details: {
+        "trae-cn": {
+          credits: { total: 120 },
+          windows: [] as Array<Record<string, unknown>>,
+        },
+      },
+    },
+  }
+  expect(display.buildRows(account, t)).toEqual([
+    {
+      id: "trae-cn-credits",
+      label: "积分",
+      valueText: "用量未知",
+      amountText: "已知额度 120 积分",
+      hideBar: true,
+    },
+  ])
+  expect(display.formatSummary(account, t)).toContain("120")
+  expect(display.formatSummary(account, t)).toContain("用量未知")
+
+  account.quotaInfo.details["trae-cn"].windows = [
+    { name: "Credits", usedPercent: 25, display: "90 / 120" },
+  ]
+  const rows = display.buildRows(account, t)
+  expect(rows).toHaveLength(1)
+  expect(rows[0]).toMatchObject({
+    label: "积分",
+    remainingPercent: 75,
+    amountText: "90 / 120",
+  })
+  expect(display.formatSummary(account, t)).toBe("90 / 120")
+
+  // A previously stored snapshot may have neither windows nor credit totals.
+  expect(
+    display.buildRows(
+      { provider: "trae-cn", quotaInfo: { details: { "trae-cn": {} } } },
+      t,
+    ),
+  ).toEqual([
+    {
+      id: "trae-cn-credits",
+      label: "积分",
+      valueText: "暂无数据",
+      hideBar: true,
+    },
+  ])
+  expect(
+    display.buildRows(
+      { provider: "trae-cn", quotaInfo: { unlimited: true } },
+      t,
+    ),
+  ).toEqual([])
+})
+
 test("ZCode without an active plan shows a status instead of stale credit or unlimited quota", () => {
   const account = {
     provider: "zcode",
