@@ -1,0 +1,131 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/qoder-provider.test.ts:
+(pass) detectQoderStreamError > maps a non-200 statusCodeValue to a legal HTTP status [0.08ms]
+(pass) detectQoderStreamError > maps a quota failure to 429 [0.01ms]
+(pass) detectQoderStreamError > keeps a legal upstream status and ignores healthy frames [0.02ms]
+(pass) detectQoderStreamError > unwraps a nested details.error.message into the error text [0.01ms]
+(pass) qoderNativeAdapter.discoverModels > uses app models and their configuration instead of the chat scene [0.46ms]
+(pass) qoderNativeAdapter.discoverModels > an empty app scene does not resurrect chat models
+(pass) qoderNativeAdapter.discoverModels > maps model/list into chat mappings with config metadata [0.08ms]
+(pass) qoderNativeAdapter.discoverModels > honors a CN connection's gateway baseUrl [0.04ms]
+417 |         )
+418 |         const assistants = envelope.messages.filter(
+419 |           (message: { role: string }) => message.role === "assistant",
+420 |         )
+421 |         expect(assistants).toHaveLength(1)
+422 |         expect(assistants[0].reasoning_content).toBe(expected)
+                                                      ^
+error: expect(received).toBe(expected)
+
+Expected: "first thought"
+Received: undefined
+
+      at <anonymous> (<repo>/tests/qoder-provider.test.ts:422:49)
+(fail) qoderNativeAdapter.createChatCompletions > replays readable assistant thinking once in the outgoing envelope [1.58ms]
+(pass) qoderNativeAdapter.createChatCompletions > sends the encoded envelope with COSY and model headers [0.33ms]
+(pass) qoderNativeAdapter.createChatCompletions > lifts embedded <tool_call> XML into native tool_calls [0.21ms]
+(pass) qoderNativeAdapter.createChatCompletions > preserves upstream tool_call ids and reasoning deltas [0.17ms]
+(pass) qoderNativeAdapter.createChatCompletions > aggregates for a non-stream request [0.15ms]
+(pass) qoderNativeAdapter.createChatCompletions > rejects when the first frame carries an upstream failure [0.10ms]
+(pass) qoderNativeAdapter.createChatCompletions > surfaces a mid-stream failure instead of a silent cutoff [0.10ms]
+(pass) qoderNativeAdapter.createChatCompletions > refuses a model without its upstream configuration [0.03ms]
+(pass) qoderNativeAdapter.createChatCompletions > forwards the usage-only chunk that arrives after finish_reason [0.16ms]
+(pass) qoderNativeAdapter.createChatCompletions > lifts tool-result images into the following user turn [0.20ms]
+(pass) Qoder decode speed samples > single output with a slow usage tail keeps usage and end-to-end TPS but gates decode TPS [0.81ms]
+(pass) Qoder decode speed samples > multi-frame burst keeps usage and end-to-end TPS but gates decode TPS [0.15ms]
+(pass) Qoder decode speed samples > short measurement window keeps usage and end-to-end TPS but gates decode TPS [0.11ms]
+(pass) Qoder decode speed samples > sustained stream at the window boundary keeps usage and end-to-end TPS but gates decode TPS [0.11ms]
+(pass) Qoder decode speed samples > XML tools after sustained text and before more text keeps usage and end-to-end TPS but gates decode TPS [0.15ms]
+<-- POST /v1/messages
+--> POST /v1/messages 200 6ms
+1246 |       )
+1247 |       expect(response.status).toBe(200)
+1248 |       expect(response.headers.get("content-type")).toContain("application/json")
+1249 |       const body = await response.json()
+1250 |       if (wire === "messages") {
+1251 |         expect(body.content).toEqual([
+                                    ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+-     "thinking": "first thought",
++     "thinking": "first thoughtsecond, longer thought",
+      "type": "thinking",
+    },
+    {
+-     "text": "intro.",
++     "text": "intro.after tool.",
+      "type": "text",
+    },
+    {
+      "id": "call_read",
+      "input": {
+        "path": "a.ts",
+      },
+      "name": "read_file",
+      "type": "tool_use",
+-   },
+-   {
+-     "thinking": "second, longer thought",
+-     "type": "thinking",
+-   },
+-   {
+-     "text": "after tool.",
+-     "type": "text",
+    },
+  ]
+
+- Expected  - 10
++ Received  + 2
+
+      at <anonymous> (<repo>/tests/qoder-provider.test.ts:1251:30)
+[warn] Failed to persist request log: ENOENT: no such file or directory, open '<temporary-data-directory>'
+  at async appendRequestLogSerialized (src/lib/request-log-persist.ts:49:11)
+  at async appendRequestLog (src/lib/request-log-persist.ts:32:9)
+(fail) Qoder end-to-end routing > messages non-streaming keeps thinking, text and tools in upstream order [13.10ms]
+<-- POST /v1/responses
+--> POST /v1/responses 200 1ms
+1265 |           input_tokens: 22,
+1266 |           output_tokens: 17,
+1267 |           cache_read_input_tokens: 9,
+1268 |         })
+1269 |       } else {
+1270 |         expect(body.output.map((item: { type: string }) => item.type)).toEqual([
+                                                                              ^
+error: expect(received).toEqual(expected)
+
+  [
+    "reasoning",
+    "message",
+    "function_call",
+-   "reasoning",
+-   "message",
+  ]
+
+- Expected  - 2
++ Received  + 0
+
+      at <anonymous> (<repo>/tests/qoder-provider.test.ts:1270:72)
+[warn] Failed to persist request log: ENOENT: no such file or directory, open '<temporary-data-directory>'
+  at async appendRequestLogSerialized (src/lib/request-log-persist.ts:49:11)
+  at async appendRequestLog (src/lib/request-log-persist.ts:32:9)
+(fail) Qoder end-to-end routing > responses non-streaming keeps thinking, text and tools in upstream order [2.23ms]
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 8ms
+[warn] Failed to persist request log: ENOENT: no such file or directory, open '<temporary-data-directory>'
+  at async appendRequestLogSerialized (src/lib/request-log-persist.ts:49:11)
+  at async appendRequestLog (src/lib/request-log-persist.ts:32:9)
+(pass) Qoder end-to-end routing > routes /v1/chat/completions to the Qoder SSE endpoint [9.06ms]
+
+3 tests failed:
+(fail) qoderNativeAdapter.createChatCompletions > replays readable assistant thinking once in the outgoing envelope [1.58ms]
+(fail) Qoder end-to-end routing > messages non-streaming keeps thinking, text and tools in upstream order [13.10ms]
+(fail) Qoder end-to-end routing > responses non-streaming keeps thinking, text and tools in upstream order [2.23ms]
+
+ 23 pass
+ 3 fail
+ 121 expect() calls
+Ran 26 tests across 1 file. [115.00ms]

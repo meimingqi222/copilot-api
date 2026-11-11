@@ -29,6 +29,9 @@ import type {
   ApiCredential,
   ProviderConnection,
 } from "~/lib/provider-connections/types"
+import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
+import type { AnthropicResponse } from "~/services/protocols/anthropic"
+import type { ResponsesResponse } from "~/services/protocols/responses/types"
 
 import {
   __resetProviderConnectionsForTest,
@@ -307,6 +310,142 @@ describe("qoderNativeAdapter.discoverModels", () => {
 // ── chat：出站编码 + COSY 头 ────────────────────────────────────────
 
 describe("qoderNativeAdapter.createChatCompletions", () => {
+  test("replays readable assistant thinking once in the outgoing envelope", async () => {
+    const histories: Array<{
+      reasoning: Partial<ChatCompletionsPayload["messages"][number]>
+      expected?: string
+    }> = [
+      {
+        reasoning: { reasoning_content: "first thought" },
+        expected: "first thought",
+      },
+      {
+        reasoning: { reasoning_text: "alias thought", reasoning_content: "" },
+        expected: "alias thought",
+      },
+      {
+        reasoning: { reasoning: "fallback thought" },
+        expected: "fallback thought",
+      },
+      {
+        reasoning: {
+          reasoning_details: [
+            { type: "reasoning.text", text: "part one" },
+            { type: "reasoning.text", text: "; part two" },
+          ],
+        },
+        expected: "part one; part two",
+      },
+      {
+        reasoning: {
+          reasoning_content: "same thought",
+          reasoning_details: [{ type: "reasoning.text", text: "same thought" }],
+        },
+        expected: "same thought",
+      },
+      {
+        reasoning: {
+          content: [
+            { type: "reasoning", text: "part thought" },
+            { type: "text", text: "answer" },
+          ],
+        },
+        expected: "part thought",
+      },
+      {
+        reasoning: { content: null, reasoning_content: "tool-only thought" },
+        expected: "tool-only thought",
+      },
+      { reasoning: { reasoning_content: " \n " } },
+    ]
+    for (const { reasoning, expected } of histories) {
+      for (const withTool of [false, true]) {
+        if (reasoning.content === null && !withTool) continue
+        let sentBody = ""
+        globalThis.fetch = mock(
+          async (_url: unknown, init: { body: string }) => {
+            sentBody = init.body
+            return sseResponse([
+              outerFrame({
+                choices: [{ delta: { content: "ok" }, finish_reason: "stop" }],
+              }),
+            ])
+          },
+        ) as unknown as typeof fetch
+        await qoderNativeAdapter.createChatCompletions?.({
+          target: chatTarget("claude-sonnet-4-6"),
+          connection: makeConnection(),
+          credential: makeCredential(),
+          payload: {
+            model: "claude-sonnet-4-6",
+            messages: [
+              { role: "user", content: "earlier question" },
+              {
+                role: "assistant",
+                content: "answer",
+                ...reasoning,
+                ...(withTool && {
+                  tool_calls: [
+                    {
+                      id: "call_history",
+                      type: "function" as const,
+                      function: {
+                        name: "read_file",
+                        arguments: '{"path":"old.ts"}',
+                      },
+                    },
+                  ],
+                }),
+              },
+              ...(withTool ?
+                [
+                  {
+                    role: "tool" as const,
+                    tool_call_id: "call_history",
+                    content: "old contents",
+                  },
+                ]
+              : []),
+              {
+                role: "assistant",
+                content: null,
+                reasoning_content: "thought-only turn",
+              },
+              {
+                role: "user",
+                content: "continue",
+                reasoning_content: "not assistant thinking",
+              },
+            ],
+          },
+        })
+        const envelope = JSON.parse(
+          Buffer.from(decodeRequestBody(sentBody)).toString("utf8"),
+        )
+        const assistants = envelope.messages.filter(
+          (message: { role: string }) => message.role === "assistant",
+        )
+        expect(assistants).toHaveLength(1)
+        expect(assistants[0].reasoning_content).toBe(expected)
+        expect(JSON.stringify(assistants[0].content)).not.toContain(
+          expected ?? "not assistant thinking",
+        )
+        expect(envelope.messages.at(-1).reasoning_content).toBeUndefined()
+        if (withTool) {
+          expect(assistants[0].tool_calls[0].id).toBe("call_history")
+          expect(
+            envelope.messages.find(
+              (message: { role: string }) => message.role === "tool",
+            ),
+          ).toMatchObject({
+            tool_call_id: "call_history",
+            content: "old contents",
+          })
+        }
+      }
+    }
+  })
+
   test("sends the encoded envelope with COSY and model headers", async () => {
     const seen: Array<{
       url: string
@@ -1023,6 +1162,195 @@ describe("Qoder end-to-end routing", () => {
     }
   })
 
+  test.each([
+    { wire: "messages", stream: false },
+    { wire: "responses", stream: false },
+    { wire: "messages", stream: true },
+    { wire: "responses", stream: true },
+  ] as const)(
+    "$wire stream=$stream keeps thinking, text and tools in upstream order",
+    async ({ wire, stream }) => {
+      let sentBody = ""
+      globalThis.fetch = mock(async (_url: unknown, init: { body: string }) => {
+        sentBody = init.body
+        const deltas = [
+          { reasoning_content: "first thought" },
+          { content: "intro." },
+          {
+            tool_calls: [
+              {
+                index: 0,
+                id: "call_read",
+                type: "function",
+                function: { name: "read_file", arguments: '{"path":' },
+              },
+            ],
+          },
+          { reasoning_content: "second, longer thought" },
+          { tool_calls: [{ index: 0, function: { arguments: '"a.ts"}' } }] },
+          { content: "after tool." },
+        ]
+        return sseResponse([
+          ...deltas.map((delta) =>
+            outerFrame({
+              id: "ordered",
+              created: 1700000000,
+              choices: [{ index: 0, delta, finish_reason: null }],
+            }),
+          ),
+          outerFrame({
+            id: "ordered",
+            choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+          }),
+          outerFrame({
+            id: "ordered",
+            choices: [],
+            usage: {
+              prompt_tokens: 31,
+              completion_tokens: 17,
+              total_tokens: 48,
+              prompt_tokens_details: { cached_tokens: 9 },
+            },
+          }),
+        ])
+      }) as unknown as typeof fetch
+      const history =
+        wire === "messages" ?
+          {
+            max_tokens: 1024,
+            messages: [
+              { role: "user", content: "old question" },
+              {
+                role: "assistant",
+                content: [
+                  { type: "thinking", thinking: "historical plan" },
+                  { type: "text", text: "old answer" },
+                ],
+              },
+              { role: "user", content: "read a.ts" },
+            ],
+          }
+        : {
+            input: [
+              { role: "user", content: "old question" },
+              {
+                type: "reasoning",
+                id: "rs_history",
+                summary: [{ type: "summary_text", text: "historical plan" }],
+              },
+              {
+                role: "assistant",
+                content: [{ type: "output_text", text: "old answer" }],
+              },
+              { role: "user", content: "read a.ts" },
+            ],
+          }
+      const response = await server.fetch(
+        new Request(`http://localhost/v1/${wire}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-6",
+            stream,
+            ...history,
+          }),
+        }),
+      )
+      expect(response.status).toBe(200)
+      expect(response.headers.get("content-type")).toContain(
+        stream ? "text/event-stream" : "application/json",
+      )
+      if (stream) {
+        const frames = (await response.text())
+          .split("\n")
+          .filter(
+            (line) => line.startsWith("data: ") && !line.includes("[DONE]"),
+          )
+          .map(
+            (line) =>
+              JSON.parse(line.slice(6)) as {
+                type: string
+                content_block?: { type: string }
+                item?: { type: string }
+              },
+          )
+        const types = frames.flatMap((frame) => {
+          if (frame.type === "content_block_start")
+            return frame.content_block?.type ?? []
+          if (frame.type === "response.output_item.added")
+            return frame.item?.type ?? []
+          return []
+        })
+        expect(types).toEqual(
+          wire === "messages" ?
+            ["thinking", "text", "tool_use", "thinking", "text"]
+          : ["reasoning", "message", "function_call", "reasoning", "message"],
+        )
+        expect(frames.at(-1)?.type).toBe(
+          wire === "messages" ? "message_stop" : "response.completed",
+        )
+      } else if (wire === "messages") {
+        const body = (await response.json()) as AnthropicResponse
+        expect(body.content).toEqual([
+          { type: "thinking", thinking: "first thought" },
+          { type: "text", text: "intro." },
+          {
+            type: "tool_use",
+            id: "call_read",
+            name: "read_file",
+            input: { path: "a.ts" },
+          },
+          { type: "thinking", thinking: "second, longer thought" },
+          { type: "text", text: "after tool." },
+        ])
+        expect(body.stop_reason).toBe("tool_use")
+        expect(body.usage).toMatchObject({
+          input_tokens: 22,
+          output_tokens: 17,
+          cache_read_input_tokens: 9,
+        })
+      } else {
+        const body = (await response.json()) as ResponsesResponse
+        const output = body.output ?? []
+        expect(output.map((item) => item.type)).toEqual([
+          "reasoning",
+          "message",
+          "function_call",
+          "reasoning",
+          "message",
+        ])
+        expect(output[0]).toMatchObject({
+          summary: [{ type: "summary_text", text: "first thought" }],
+        })
+        expect(output[1]).toMatchObject({ content: [{ text: "intro." }] })
+        expect(output[2]).toMatchObject({
+          call_id: "call_read",
+          name: "read_file",
+          arguments: '{"path":"a.ts"}',
+        })
+        expect(output[3]).toMatchObject({
+          summary: [{ type: "summary_text", text: "second, longer thought" }],
+        })
+        expect(output[4]).toMatchObject({ content: [{ text: "after tool." }] })
+        expect(body.status).toBe("completed")
+        expect(body.usage).toMatchObject({
+          input_tokens: 31,
+          output_tokens: 17,
+          total_tokens: 48,
+          input_tokens_details: { cached_tokens: 9 },
+        })
+      }
+      const envelope = JSON.parse(
+        Buffer.from(decodeRequestBody(sentBody)).toString("utf8"),
+      )
+      expect(
+        envelope.messages.find(
+          (message: { role: string }) => message.role === "assistant",
+        ),
+      ).toMatchObject({ reasoning_content: "historical plan" })
+    },
+  )
+
   test("routes /v1/chat/completions to the Qoder SSE endpoint", async () => {
     let sentUrl = ""
     let sentHeaders: Record<string, string> = {}
@@ -1105,4 +1433,99 @@ describe("Qoder end-to-end routing", () => {
     expect(summary?.decodeSamples).toBe(0)
     expect(summary?.avgDecodeTps).toBeNull()
   })
+
+  test.each(["messages", "responses"] as const)(
+    "%s non-streaming preserves truncation and upstream failure semantics",
+    async (wire) => {
+      for (const failure of [false, true]) {
+        globalThis.fetch = mock(async () =>
+          sseResponse([
+            outerFrame({
+              id: "boundary",
+              choices: [
+                {
+                  index: 0,
+                  delta: { reasoning_content: "partial thought" },
+                  finish_reason: null,
+                },
+              ],
+            }),
+            outerFrame({
+              id: "boundary",
+              choices: [
+                {
+                  index: 0,
+                  delta: { content: "partial answer" },
+                  finish_reason: null,
+                },
+              ],
+            }),
+            outerFrame({
+              id: "boundary",
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: "call_partial",
+                        type: "function",
+                        function: { name: "read_file", arguments: '{"path":' },
+                      },
+                    ],
+                  },
+                  finish_reason: null,
+                },
+              ],
+            }),
+            failure ?
+              outerFrame({ message: "upstream overloaded" }, 503)
+            : outerFrame({
+                id: "boundary",
+                choices: [{ index: 0, delta: {}, finish_reason: "length" }],
+              }),
+          ]),
+        ) as unknown as typeof fetch
+        const response = await server.fetch(
+          new Request(`http://localhost/v1/${wire}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-6",
+              stream: false,
+              ...(wire === "messages" ?
+                {
+                  max_tokens: 1024,
+                  messages: [{ role: "user", content: "read" }],
+                }
+              : { input: "read" }),
+            }),
+          }),
+        )
+        if (failure) {
+          expect(response.status).toBe(503)
+          expect(await response.text()).toContain("upstream overloaded")
+        } else if (wire === "messages") {
+          expect(response.status).toBe(200)
+          const body = (await response.json()) as AnthropicResponse
+          expect(body.stop_reason).toBe("max_tokens")
+          expect(body.content).toEqual([
+            { type: "thinking", thinking: "partial thought" },
+            { type: "text", text: "partial answer" },
+          ])
+        } else {
+          expect(response.status).toBe(200)
+          const body = (await response.json()) as ResponsesResponse
+          expect(body.status).toBe("incomplete")
+          expect(body.incomplete_details?.reason).toBe("max_output_tokens")
+          expect(body.output?.map((item) => item.type)).toEqual([
+            "reasoning",
+            "message",
+          ])
+          expect(body.output_text).toBe("partial answer")
+        }
+      }
+    },
+  )
 })

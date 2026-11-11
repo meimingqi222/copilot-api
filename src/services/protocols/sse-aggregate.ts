@@ -14,8 +14,11 @@ import type {
   ChatCompletionResponse,
   CopilotStreamEvent,
 } from "~/services/protocols/chat/types"
+import type { IRPart, ResultIR, StreamEvent } from "~/services/ir/types"
 
+import { HTTPError } from "~/lib/error"
 import { extractReasoningTextAlias } from "~/lib/thinking"
+import { mergeUsage } from "~/services/ir/usage"
 
 interface AggregatedToolCall {
   index: number
@@ -250,4 +253,71 @@ export function aggregateSseToResponse(
       })
     })().catch(reject)
   })
+}
+
+/** Aggregate a translated non-streaming reply without flattening its block order. */
+export async function aggregateTranslatedStream(
+  stream: AsyncIterable<StreamEvent>,
+): Promise<ResultIR> {
+  let result: ResultIR | undefined
+  const parts = new Map<string, IRPart>()
+  let usage: ResultIR["usage"]
+  for await (const event of stream) {
+    if (event.type === "message_start") {
+      result = {
+        id: event.id,
+        model: event.model,
+        source: event.source,
+        createdAt: event.createdAt,
+        parts: [],
+      }
+    } else if (event.type === "part_start") {
+      const part = { ...event.part }
+      parts.set(event.partId, part)
+      result?.parts.push(part)
+    } else if (event.type === "part_delta") {
+      const part = parts.get(event.partId)
+      const delta = event.delta
+      if (
+        (delta.type === "text" && part?.type === "text")
+        || (delta.type === "thinking" && part?.type === "thinking")
+      ) {
+        part.text += delta.text
+      } else if (delta.type === "signature" && part?.type === "thinking") {
+        part.signature = (part.signature ?? "") + delta.text
+      } else if (delta.type === "tool_arguments") {
+        if (part?.type === "tool_call") part.arguments += delta.text
+        else if (part?.type === "server_tool_use") part.input += delta.text
+      }
+    } else if (event.type === "part_end") {
+      const part = parts.get(event.partId)
+      if (part?.type === "thinking" && part.signature)
+        part.signedText = part.text
+    } else if (event.type === "usage") {
+      usage = mergeUsage(usage, event.usage)
+    } else if (event.type === "message_end" && result) {
+      result.stop = event.stop
+      result.status = event.status
+    } else if (event.type === "error") {
+      const error = new HTTPError(
+        event.error.message,
+        new Response(null, { status: event.error.status ?? 502 }),
+        JSON.stringify({ error: event.error }),
+      )
+      error.reportedUsage = usage
+      throw error
+    }
+  }
+  if (!result) throw new Error("Upstream stream ended without a message")
+  // Match flat Chat aggregation: never invent {} for a truncated tool call.
+  if (
+    result.source.wire === "chat"
+    && (result.stop?.reason === "max_tokens" || result.status === "incomplete")
+  )
+    result.parts = result.parts.filter(
+      (part) =>
+        part.type !== "tool_call" || !isTruncatedArguments(part.arguments),
+    )
+  result.usage = usage
+  return result
 }

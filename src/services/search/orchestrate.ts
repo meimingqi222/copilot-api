@@ -25,6 +25,7 @@ import type { WireSpec } from "~/services/protocols/wire-pairs"
 import type { SearchAnswer, Searcher, SearchHit } from "./types"
 
 import { WIRE_CAPABILITIES } from "~/services/ir/capabilities"
+import { aggregateTranslatedStream } from "~/services/protocols/sse-aggregate"
 
 import { executeWebSearch } from "./execute"
 
@@ -287,10 +288,19 @@ export async function runSearchAwareResult(
     const payload = params.spec.encodeRequest(working, { stream: false })
     const result = await params.execute(payload)
     credentialId = result.credentialId
-    const current = params.spec.decodeResult(result.response, {
+    const context = {
       model: params.request.model,
       request: params.request,
-    })
+    }
+    const current =
+      params.spec.isResult(result.response) ?
+        params.spec.decodeResult(result.response, context)
+      : await aggregateTranslatedStream(
+          params.spec.decodeStream(
+            result.response as Parameters<WireSpec["decodeStream"]>[0],
+            context,
+          ),
+        )
     last = current
     params.onUsage?.(current.usage)
     usage = addUsage(usage, current.usage)

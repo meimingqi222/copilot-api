@@ -92,6 +92,7 @@ import type {
 } from "~/services/protocols/responses/types"
 import type { AnthropicMessagesPayload } from "./anthropic"
 import { isPlainResult } from "./result-shape"
+import { aggregateTranslatedStream } from "./sse-aggregate"
 import { replaysReasoningText } from "~/services/protocols/reasoning-replay"
 import { resolveTranscriptScopeId } from "~/lib/request-scope"
 import { hashKeyPart } from "~/lib/cache/persistent-map"
@@ -492,10 +493,12 @@ export async function createTranslatedCall(
       credential: params.credential,
       payload,
       signal: params.signal,
-      ctx:
-        decorateExecutorContext ?
+      ctx: {
+        ...(decorateExecutorContext ?
           decorateExecutorContext(params.ctx)
-        : params.ctx,
+        : params.ctx),
+        preferStreamingResponse: true,
+      },
     })
 
   // A chat target cannot carry web search, so the proxy runs the search itself
@@ -573,17 +576,28 @@ export async function createTranslatedCall(
     performance.now() - translationStarted,
   )
   const result = await executor(targetRequest)
-  if (targetSpec.isResult(result.response)) {
+  const isResult = targetSpec.isResult(result.response)
+  if (isResult || !stream) {
     const upstreamResponse =
-      replay ?
-        await replay.response(result.response as ResponsesResponse)
-      : result.response
-    const decoded = measureLocalWork("responseTranslationMs", () =>
-      targetSpec.decodeResult(upstreamResponse, {
-        model: routeTarget.upstreamModelId,
-        request: requestIR,
-      }),
-    )
+      !replay ? result.response
+      : isResult ? await replay.response(result.response as ResponsesResponse)
+      : replay.stream(result.response as AsyncIterable<SseLike>)
+    const context = {
+      model: routeTarget.upstreamModelId,
+      request: requestIR,
+    }
+    const decoded =
+      isResult ?
+        measureLocalWork("responseTranslationMs", () =>
+          targetSpec.decodeResult(upstreamResponse, context),
+        )
+      : await aggregateTranslatedStream(
+          measureTranslatedStream(
+            upstreamResponse as AsyncIterable<SseLike>,
+            (upstream) => targetSpec.decodeStream(upstream, context),
+            params.ctx?.c,
+          ),
+        )
     onPhase?.("result_decoded", { request: requestIR })
     const response = measureLocalWork("responseTranslationMs", () =>
       sourceSpec.encodeResult(decoded, {

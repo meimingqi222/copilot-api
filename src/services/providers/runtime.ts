@@ -31,6 +31,11 @@ export interface RequestExecutionContext {
   /** Isolation scope for reconnectable in-memory Responses transcripts. */
   transcriptScopeId?: string
   /**
+   * Cross-wire consumers can aggregate ordered events themselves. Stream-only
+   * producers may skip their flat Chat aggregation even for non-streaming requests.
+   */
+  preferStreamingResponse?: boolean
+  /**
    * Ask a chat streaming producer to attach its structured delta twin (e.g.
    * Windsurf's `collected`) to each stream event. Cross-protocol consumers
    * (`messages-via-chat`) translate SSE JSON back into events; with the twin

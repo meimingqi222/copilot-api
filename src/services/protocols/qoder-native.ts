@@ -484,7 +484,7 @@ export const qoderNativeAdapter: ProtocolAdapter = {
       )
     }
 
-    // 上游只有流式：客户端要非流式时本地聚合。
+    // 上游只有流式；跨协议消费者自己聚合有序事件，不能先压平为 Chat。
     const upstream = await safeSseStream(response, detectQoderStreamError)
     const stream = decodeQoderStream(
       upstream as unknown as AsyncIterable<SimpleSseEventLike>,
@@ -492,7 +492,7 @@ export const qoderNativeAdapter: ProtocolAdapter = {
       ctx?.c,
     )
 
-    if (!payload.stream) {
+    if (!payload.stream && !ctx?.preferStreamingResponse) {
       const aggregated = await aggregateSseToResponse(
         stream,
         target.upstreamModelId,

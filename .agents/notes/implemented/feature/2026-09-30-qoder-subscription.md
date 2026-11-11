@@ -44,7 +44,23 @@ adapter (mirroring how MiniMax Code got `minimax-native`):
   calls into native `tool_calls` deltas (keeping upstream ids verbatim), maps
   `finish_reason: "stop"` to `"tool_calls"` when any tool was seen, normalizes an
   out-of-range `statusCodeValue` to a legal 200–599 status, and appends `[DONE]`. Qoder
-  is stream-only, so a non-streaming client gets a locally aggregated response.
+  is stream-only. Direct Chat non-streaming requests keep the flat compatible
+  response. Cross-wire consumers set `RequestExecutionContext.preferStreamingResponse`
+  so the adapter returns ordered events instead of prematurely flattening them.
+  `src/services/protocols/wire-pairs.ts` and the non-streaming search loop use
+  `aggregateTranslatedStream` in `src/services/protocols/sse-aggregate.ts` to build
+  the result in block-start order, including tool arguments arriving across later
+  blocks. The collector stays in the protocol adaptation layer, not the IR module;
+  streaming requests still translate incrementally. Preserve usage tails, upstream
+  failures and truncated-tool filtering. `src/services/ir/codecs/messages-chat/chat-stream.ts`
+  marks a token-limited stop incomplete; `src/services/ir/codecs/responses/result.ts`
+  must not hoist Chat-origin thinking ahead of its actual position.
+- **History is sent back as thinking, not prose.** `envelope.ts` emits
+  `reasoning_content` on both ordinary assistant turns and assistant tool calls.
+  Read the shared reasoning aliases, then detail blocks or ordered content parts
+  as fallbacks; these are alternate representations, not strings to concatenate
+  together. Do not replay signatures/ciphertext as readable thinking, add thoughts
+  to user/tool messages, or retain thought-only assistant turns without text/tools.
 - **Model discovery is real, not a catalog.** `CATALOGS.qoder` is empty on purpose;
   `qoderProviderRuntime` overrides `refreshModels` to call the adapter's
   `discoverModels` (`GET /algo/api/v2/model/list?Encode=1`), and each mapping keeps
@@ -103,3 +119,26 @@ has to be tracked there first.
 Qoder's job token lifetime comes from the response's `expires_in` (milliseconds, not a
 JWT `exp`), with a 24h fallback; `OAUTH_REFRESH_LEAD_MS.qoder` is five minutes.
 If the real lifetime turns out to be shorter, that lead is the knob to turn down.
+
+## Verification
+
+- `tests/qoder-provider.test.ts::replays readable assistant thinking once in the outgoing envelope`
+  checks the actual encoded request, ordinary/tool-only assistant turns, aliases,
+  detail/content fallbacks, duplicate representations, whitespace-only omissions
+  and unchanged tool-result pairing.
+- `tests/qoder-provider.test.ts::keeps thinking, text and tools in upstream order`
+  exercises HTTP Messages/Responses in JSON and SSE modes with asymmetric thoughts,
+  a tool between them, split arguments, historical thinking and a usage-only tail.
+- `tests/qoder-provider.test.ts::non-streaming preserves truncation and upstream failure semantics`
+  verifies token-limited partial output drops incomplete tool arguments and a
+  later upstream failure does not become a successful partial JSON response.
+- `tests/search-usage-snapshots.test.ts::search orchestration sums distinct rounds without summing duplicate snapshots`
+  covers stream-only non-streaming search rounds without flattening the final
+  thoughts/text or adding duplicate usage snapshots.
+
+Proved: Before the thinking/order fix, the outgoing-envelope assertion received
+undefined instead of historical reasoning, Messages merged the two thoughts and
+two text blocks, and Responses returned only reasoning/message/function_call.
+The natural red run is in `.agents/notes-evidence/qoder-thinking-order-red.log`.
+These are offline protocol/HTTP regressions with mock upstream transport, not
+proof of live Qoder acceptance of any particular model's historical thinking.

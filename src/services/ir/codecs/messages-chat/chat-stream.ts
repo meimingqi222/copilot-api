@@ -292,7 +292,7 @@ export async function* decodeChatStream(
   yield {
     type: "message_end",
     stop: stop ?? { reason: "incomplete" },
-    status: stop ? "completed" : "incomplete",
+    status: stop && stop.reason !== "max_tokens" ? "completed" : "incomplete",
   }
 }
 

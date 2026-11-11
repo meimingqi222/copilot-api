@@ -35,8 +35,10 @@ Chat 的翻译候选按 Responses、Messages 顺序尝试。候选的语义拒�
 
 流式 codec 逐事件消费和产出，保留消息、内容块和工具调用的身份及顺序。
 不能为了翻译把整个上游流缓存到首个下游事件前。非流式响应使用同一语义映射；
-需要由流汇总时，在 adapter 侧聚合 SSE（如 `protocols/sse-aggregate.ts`、
-`responses/sse-collector.ts`），IR 不设通用 collector。usage、stop reason 和 error 保留来源信息，
+需要由流汇总时，在协议适配层聚合（如 `protocols/sse-aggregate.ts`、
+`responses/sse-collector.ts`），IR 模块不设通用 collector。跨 wire 的非流式结果应从
+有序语义事件汇总，不能先压平为 Chat 字符串再解码，否则会丢失思考、正文和工具的位置。
+usage、stop reason 和 error 保留来源信息，
 缺失计数不能假装成精确的 0。
 
 Windsurf 的结构化输出是 adapter 内的特例：它把 `response_format` 映射为

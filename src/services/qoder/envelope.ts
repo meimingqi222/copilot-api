@@ -21,6 +21,11 @@
 import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
 
 import { isEffortLevel, nearestEffort } from "~/lib/effort-levels"
+import {
+  extractReasoningBlockText,
+  extractReasoningPartsText,
+  extractReasoningTextAlias,
+} from "~/lib/thinking"
 
 import { QODER_COSY_VERSION } from "./endpoints"
 import { newQoderId } from "./ids"
@@ -195,6 +200,14 @@ function qoderMessages(
       out.push({ role: "tool", tool_call_id: callId, content: text })
       continue
     }
+    // Aliases/details/parts are alternate representations, not extra thoughts.
+    const reasoning =
+      m.role === "assistant" ?
+        extractReasoningTextAlias(m)
+        || m.reasoning_details?.map(extractReasoningBlockText).join("")
+        || extractReasoningPartsText(m.content)
+      : undefined
+    const thinking = reasoning?.trim() ? { reasoning_content: reasoning } : {}
     if (m.role === "assistant" && (m.tool_calls?.length ?? 0) > 0) {
       const calls = (m.tool_calls ?? []).map((c) => {
         const id = c.id || `call_${newQoderId()}`
@@ -214,6 +227,7 @@ function qoderMessages(
         role: "assistant",
         content: textOf(m.content),
         tool_calls: calls,
+        ...thinking,
       })
       continue
     }
@@ -227,7 +241,7 @@ function qoderMessages(
       blocks = [...seen, ...blocks]
       seen = []
     }
-    out.push({ role: m.role, content: blocks })
+    out.push({ role: m.role, content: blocks, ...thinking })
   }
   showSeen()
   return out

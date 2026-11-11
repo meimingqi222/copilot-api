@@ -356,14 +356,7 @@ export function encodeResponsesResult(
     })
     messageText = []
   }
-  const orderedParts =
-    result.source.wire === "chat" ?
-      [
-        ...result.parts.filter((part) => part.type === "thinking"),
-        ...result.parts.filter((part) => part.type !== "thinking"),
-      ]
-    : result.parts
-  const mergedParts = mergeSearchResults(orderedParts)
+  const mergedParts = mergeSearchResults(result.parts)
   for (const [index, rawPart] of mergedParts.entries()) {
     const part = restoreResponsesToolNamespace(rawPart, request)
     if (part.type === "text") {
