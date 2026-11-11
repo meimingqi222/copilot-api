@@ -57,6 +57,13 @@ forced termination retains the existing transcript TTL cleanup as a backstop.
 Synthetic refusal rows are held until Claude Code finishes retrying. A final
 refusal retains its stop reason; a subsequent HTTP error remains an error.
 
+Completed message IDs remain in a bounded 1024-entry recent history after a
+turn settles. The tap and transcript are read independently, so a transcript
+can finish a turn before the next tap read observes that reply. Clearing every
+ID at result delivery lets that late copy contaminate the next response.
+Both late tapped messages and late transcript copies are suppressed; per-turn
+stream state is still cleared and the recent history is bounded for long runs.
+
 ## Alternatives considered
 
 Changing `CLAUDE_CODE_ENTRYPOINT` would only label a print run. Scraping rendered
@@ -99,3 +106,17 @@ in a fresh temporary data directory, then resets persistence and restores the
 data path during cleanup. The reset hook otherwise defaults to disabling disk
 writes; without the explicit opt-in, earlier reset-calling suites leave PUT and
 GET correct but prevent the disk assertion from exercising persistence.
+
+Verification:
+
+- `tests/claude-cli-tui.test.ts::transcript fallback preserves separate signed thinking rows and suppresses late tapped duplicates`
+  also delivers an old tap after the first result has settled, then completes a
+  second turn through the production stream translator and collector. Only the
+  second answer may appear in that result.
+
+Proved: Before retaining completed IDs, the deterministic late-tap extension
+received `{"turn":1}{"turn":2}` instead of `{"turn":2}`, reproducing invalid JSON
+without PTY timing or sleeps. Natural-red output is retained in
+`.agents/notes-evidence/claude-late-tap-red.log`. The CI image test did not retain
+its malformed response, so this proves the implementation defect and matching
+failure mechanism, not that this was the only possible cause of that CI run.

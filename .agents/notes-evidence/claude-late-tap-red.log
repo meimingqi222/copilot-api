@@ -1,0 +1,23 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/claude-cli-tui.test.ts:
+386 |       })(), { structured: false }),
+387 |       { model: "fake" },
+388 |     ),
+389 |     "fake",
+390 |   )
+391 |   expect(text(second)).toBe('{"turn":2}')
+                             ^
+error: expect(received).toBe(expected)
+
+Expected: "{"turn":2}"
+Received: "{"turn":1}{"turn":2}"
+
+      at <anonymous> (tests/claude-cli-tui.test.ts:391:24)
+(fail) transcript fallback preserves separate signed thinking rows and suppresses late tapped duplicates [184.91ms]
+
+ 0 pass
+ 12 filtered out
+ 1 fail
+ 3 expect() calls
+Ran 1 test across 1 file. [323.00ms]

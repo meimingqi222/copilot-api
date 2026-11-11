@@ -324,7 +324,7 @@ test("transcript fallback preserves separate signed thinking rows and suppresses
   })
   events.transcript({
     type: "assistant",
-    message: { ...message, content: [{ type: "text", text: "answer" }] },
+    message: { ...message, content: [{ type: "text", text: '{"turn":1}' }] },
   })
   events.tap({ s: 1, open: true })
   events.tap({ s: 1, e: { type: "message_start", message } })
@@ -354,9 +354,57 @@ test("transcript fallback preserves separate signed thinking rows and suppresses
   expect(result.content).toEqual([
     thinking,
     thinking,
-    { type: "text", text: "answer" },
+    { type: "text", text: '{"turn":1}' },
   ])
   expect(result.usage).toMatchObject({ input_tokens: 12, output_tokens: 5 })
+
+  // The transcript can settle before a poll sees the same reply in the tap.
+  const secondStart = lines.length
+  events.tap({ s: 2, open: true })
+  events.tap({ s: 2, e: { type: "message_start", message } })
+  events.tap({
+    s: 2,
+    e: {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "text", text: "" },
+    },
+  })
+  events.tap({
+    s: 2,
+    e: {
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "text_delta", text: '{"turn":1}' },
+    },
+  })
+  events.tap({ s: 2, e: { type: "content_block_stop", index: 0 } })
+  events.tap({ s: 2, e: { type: "message_stop" } })
+  events.tap({ s: 2, end: "done" })
+  events.transcript({ type: "user", message: { content: "second turn" } })
+  events.transcript({
+    type: "assistant",
+    message: {
+      ...message,
+      id: "msg-second",
+      content: [{ type: "text", text: '{"turn":2}' }],
+    },
+  })
+  events.transcript({ type: "system", subtype: "turn_duration" })
+  events.tick()
+  const second = await collectAnthropicResponse(
+    translateClaudeStreamJson(
+      normalizeClaudeTurns(
+        (async function* () {
+          yield* lines.slice(secondStart)
+        })(),
+        { structured: false },
+      ),
+      { model: "fake" },
+    ),
+    "fake",
+  )
+  expect(text(second)).toBe('{"turn":2}')
 })
 
 test("tap tees only main SSE and leaves the actual request and response bytes intact", async () => {

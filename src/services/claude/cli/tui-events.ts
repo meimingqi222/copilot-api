@@ -22,6 +22,7 @@ export class ClaudeTuiEvents {
   private readonly streams = new Map<number, StreamState>()
   private readonly streamed = new Set<string>()
   private readonly whole = new Set<string>()
+  private readonly completed = new Set<string>()
   private pending: WholeMessage | undefined
   private fallback:
     | { id: string; message: JsonObject; index: number }
@@ -50,7 +51,8 @@ export class ClaudeTuiEvents {
         const message = jsonObject(event.message)
         if (typeof message?.id === "string") {
           stream.id = message.id
-          stream.dropped = this.whole.has(message.id)
+          stream.dropped =
+            this.whole.has(message.id) || this.completed.has(message.id)
           if (!stream.dropped) this.streamed.add(message.id)
         }
       }
@@ -92,6 +94,7 @@ export class ClaudeTuiEvents {
         return
       }
       if (typeof message.id !== "string") return
+      if (this.completed.has(message.id)) return
       this.stopReason = message.stop_reason
       if (this.pending && this.pending.message.id !== message.id)
         this.flushWhole(true)
@@ -140,7 +143,13 @@ export class ClaudeTuiEvents {
     this.endingAt = undefined
     this.busy = false
     this.stopReason = undefined
-    // IDs are needed only until the turn settles; long-lived sessions stay bounded.
+    // The tap and transcript are tailed independently; duplicates can arrive
+    // after result delivery. Keep a bounded recent history across turns.
+    for (const id of [...this.streamed, ...this.whole]) this.completed.add(id)
+    while (this.completed.size > 1024) {
+      const oldest = this.completed.values().next().value
+      if (oldest !== undefined) this.completed.delete(oldest)
+    }
     this.streams.clear()
     this.streamed.clear()
     this.whole.clear()
