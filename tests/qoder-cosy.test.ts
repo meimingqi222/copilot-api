@@ -76,7 +76,7 @@ describe("qoder cosy", () => {
     const decoded = Buffer.from(parts[0], "base64").toString("utf8")
     const payload = JSON.parse(decoded) as Record<string, unknown>
     expect(payload.version).toBe("v1")
-    expect(payload.cosyVersion).toBe("1.1.49")
+    expect(payload.cosyVersion).toBe("1.1.85")
     expect(payload.ideVersion).toBe("")
     expect(typeof payload.requestId).toBe("string")
     expect((payload.requestId as string).includes("-")).toBe(false)

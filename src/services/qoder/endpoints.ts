@@ -110,8 +110,8 @@ const QODER_LIST_MODELS_PATH = "/algo/api/v2/model/list?Encode=1"
 /** 桌面客户端的账号用量端点。 */
 export const QODER_ACCOUNT_USAGE_PATH = "/sash/api/v2/me/usage"
 
-/** COSY 协议的客户端版本号。 */
-export const QODER_COSY_VERSION = "1.1.49"
+/** COSY 协议的客户端版本号（跟随 Qoder CLI / app 内置 worker runtime 的版本）。 */
+export const QODER_COSY_VERSION = "1.1.85"
 
 /**
  * body 自定义 base64 字母表（64 字符，从 Qoder 客户端内存 dump）。
