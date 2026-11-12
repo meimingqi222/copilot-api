@@ -1,0 +1,74 @@
+bun test v1.4.4 (38afee6c8)
+
+tests\openai-responses-strip-previous.test.ts:
+(pass) openai-responses stripPreviousResponseId > leads each DeepSeek assistant step with its first readable reasoning (stream=false replay=true) [1.32ms]
+(pass) openai-responses stripPreviousResponseId > leads each DeepSeek assistant step with its first readable reasoning (stream=true replay=true) [0.80ms]
+(pass) openai-responses stripPreviousResponseId > leads each DeepSeek assistant step with its first readable reasoning (stream=false replay=false) [0.09ms]
+(pass) openai-responses stripPreviousResponseId > leads each DeepSeek assistant step with its first readable reasoning (stream=true replay=false) [0.11ms]
+(pass) openai-responses stripPreviousResponseId > never moves DeepSeek reasoning across boundary {"role":"user","content":"new turn"} [0.17ms]
+(pass) openai-responses stripPreviousResponseId > never moves DeepSeek reasoning across boundary {"type":"message","role":"system","content":"system"} [0.05ms]
+(pass) openai-responses stripPreviousResponseId > never moves DeepSeek reasoning across boundary {"role":"developer","content":"developer"} [0.06ms]
+(pass) openai-responses stripPreviousResponseId > never moves DeepSeek reasoning across boundary {"type":"function_call_output","call_id":"c1","output":"data"} [0.04ms]
+(pass) openai-responses stripPreviousResponseId > never moves DeepSeek reasoning across boundary {"type":"custom_tool_call_output","call_id":"c1","output":"data"} [0.04ms]
+(pass) openai-responses stripPreviousResponseId > never moves DeepSeek reasoning across boundary {"type":"unknown","role":"assistant","content":"opaque boundary"} [0.03ms]
+(pass) openai-responses stripPreviousResponseId > never moves DeepSeek reasoning across boundary {"type":"unknown"} [0.04ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://api.deepseek.com/v1 model-alias) [0.21ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://third-party.test/v1 vendor/DeepSeek-flash) [0.06ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://third-party.test/deepseek gpt-test) [0.06ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://api.openai.com/v1 deepseek-flash) [0.05ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://api.x.ai/v1 deepseek-flash) [0.04ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://api.githubcopilot.com/v1 deepseek-flash) [0.04ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://chatgpt.com/v1 deepseek-flash) [0.04ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://api.anthropic.com/v1 deepseek-flash) [0.02ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://test.openai.azure.com/v1 deepseek-flash) [0.03ms]
+(pass) openai-responses stripPreviousResponseId > accepts a first turn when stripping is enabled [0.25ms]
+(pass) openai-responses stripPreviousResponseId > passes previous_response_id through by default [0.08ms]
+(pass) openai-responses stripPreviousResponseId > flag persists through create/update [0.27ms]
+(pass) openai-responses stripPreviousResponseId > rewrites output_text history to input_text when enabled [0.16ms]
+(pass) openai-responses stripPreviousResponseId > leaves input_text and string input untouched [0.02ms]
+(pass) openai-responses transcript replay > second turn replays history as self-contained input [0.42ms]
+(pass) openai-responses transcript replay > string input is normalized for replay [0.11ms]
+602 |     await expect(runTurn2({
+603 |       model: "Atria-Dawn-Preview",
+604 |       input: "standalone?",
+605 |       previous_response_id: "resp_unknown",
+606 |       stream: false,
+607 |     })).rejects.toMatchObject({ response: { status: 400 }, responseBody: expect.stringContaining("previous_response_not_found") })
+                      ^
+error: expect(received).rejects.toMatchObject(expected)
+
+Expected promise that rejects
+Received promise that resolved: Promise { <resolved> }
+
+      at <anonymous> (D:\code\copilot-refs\copilot-api\tests\openai-responses-strip-previous.test.ts:607:17)
+(fail) openai-responses transcript replay > cache miss rejects instead of silently losing history [1.96ms]
+615 |         input: "standalone?",
+616 |         previous_response_id: "resp_1",
+617 |         stream: false,
+618 |       },
+619 |       "other-conn",
+620 |     )).rejects.toMatchObject({ response: { status: 400 } })
+                     ^
+error: expect(received).rejects.toMatchObject(expected)
+
+Expected promise that rejects
+Received promise that resolved: Promise { <resolved> }
+
+      at <anonymous> (D:\code\copilot-refs\copilot-api\tests\openai-responses-strip-previous.test.ts:620:16)
+(fail) openai-responses transcript replay > transcripts are isolated per connection [0.39ms]
+(pass) openai-responses transcript replay > instructions carry forward unless the turn sets its own [0.20ms]
+(pass) openai-responses transcript replay > streaming turn records transcript on completed [0.81ms]
+(pass) openai-responses translated targets > translated chat targets are stripped but never replayed or recorded [0.28ms]
+(pass) openai-responses translated targets > translated streaming targets are not recorded [0.18ms]
+(pass) snoopResponsesStreamForTranscript > passes events through and records on completed [0.18ms]
+(pass) snoopResponsesStreamForTranscript > failed streams are not recorded [0.09ms]
+(pass) snoopResponsesStreamForTranscript > overflowing streams pass through but are not recorded [4.98ms]
+
+2 tests failed:
+(fail) openai-responses transcript replay > cache miss rejects instead of silently losing history [1.96ms]
+(fail) openai-responses transcript replay > transcripts are isolated per connection [0.39ms]
+
+ 34 pass
+ 2 fail
+ 74 expect() calls
+Ran 36 tests across 1 file. [307.00ms]

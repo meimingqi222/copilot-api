@@ -4,7 +4,7 @@
  * 部分第三方 responses 中转不支持有状态链式调用,带
  * `previous_response_id` 直接 400(如 atria 的 `upstream_error`)。
  * 开启后:命中本地转录本就合并成自包含 input 再转发(记忆保留,客户端无
- * 感知);未命中则退化为无状态请求。默认透传(OpenAI / xAI 不受影响)。
+ * 感知);未命中则明确拒绝并要求重发完整历史。默认透传(OpenAI / xAI 不受影响)。
  */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
@@ -368,7 +368,7 @@ describe("openai-responses stripPreviousResponseId", () => {
     },
   )
 
-  test("strips previous_response_id when enabled", async () => {
+  test("accepts a first turn when stripping is enabled", async () => {
     const captured: Array<{ url: string; body: string }> = []
     mockFetchSequence(
       [{ id: "resp_new", model: "Atria-Dawn-Preview" }],
@@ -382,7 +382,6 @@ describe("openai-responses stripPreviousResponseId", () => {
       payload: {
         model: "Atria-Dawn-Preview",
         input: "what did I just say?",
-        previous_response_id: "resp_prev123",
         stream: false,
       },
     })
@@ -599,32 +598,37 @@ describe("openai-responses transcript replay", () => {
     ])
   })
 
-  test("cache miss falls back to stripping only", async () => {
-    const sent = await runTurn2({
-      model: "Atria-Dawn-Preview",
-      input: "standalone?",
-      previous_response_id: "resp_unknown",
-      stream: false,
-    })
-
-    expect("previous_response_id" in sent).toBe(false)
-    // 未命中不重塑 wire 格式:string 保持 string。
-    expect(sent["input"]).toBe("standalone?")
-  })
+  test.each([false, true])(
+    "cache miss rejects instead of silently losing history (stream=%s)",
+    async (stream) => {
+      await expect(
+        runTurn2({
+          model: "Atria-Dawn-Preview",
+          input: "standalone?",
+          previous_response_id: "resp_unknown",
+          stream,
+        }),
+      ).rejects.toMatchObject({
+        response: { status: 400 },
+        responseBody: expect.stringContaining("previous_response_not_found"),
+      })
+      expect(globalThis.fetch).toHaveBeenCalledTimes(0)
+    },
+  )
 
   test("transcripts are isolated per connection", async () => {
     await runTurn1()
-    const sent = await runTurn2(
-      {
-        model: "Atria-Dawn-Preview",
-        input: "standalone?",
-        previous_response_id: "resp_1",
-        stream: false,
-      },
-      "other-conn",
-    )
-
-    expect(sent["input"]).toBe("standalone?")
+    await expect(
+      runTurn2(
+        {
+          model: "Atria-Dawn-Preview",
+          input: "standalone?",
+          previous_response_id: "resp_1",
+          stream: false,
+        },
+        "other-conn",
+      ),
+    ).rejects.toMatchObject({ response: { status: 400 } })
   })
 
   test("instructions carry forward unless the turn sets its own", async () => {

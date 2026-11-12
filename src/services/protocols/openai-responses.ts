@@ -27,6 +27,7 @@ import type {
 } from "~/services/protocols/responses/types"
 
 import { logger } from "~/lib/logger"
+import { HTTPError } from "~/lib/error"
 import { currentLogContext } from "~/lib/log-context"
 import { dumpUpstreamResponsesWire } from "~/lib/request-dump"
 import {
@@ -144,7 +145,7 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
     // `previous_response_id` 直接 400(如 atria 的 `upstream_error`)。
     // 连接开启 `stripPreviousResponseId` 时:命中本地转录本就合并成自包含
     // input 再转发(记忆保留,见 openai-responses-transcript.ts),未命中则
-    // 退化为无状态请求(只含本轮 input)。`previous_response_id` 是可选
+    // 返回 previous_response_not_found，要求客户端重发完整历史。`previous_response_id` 是可选
     // 特性,官方 OpenAI / xAI 链路默认透传,不受影响。
     let recordedInput: Array<unknown> | undefined
     let recordedInstructions: string | undefined
@@ -177,9 +178,19 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
             `[openai-responses-compatible] replayed transcript for previous_response_id on connection "${connection.id}"`,
           )
         } else {
-          stripMode = "stateless-miss"
-          logger.debug(
-            `[openai-responses-compatible] no transcript for previous_response_id on connection "${connection.id}", sending stateless`,
+          const body = JSON.stringify({
+            error: {
+              type: "invalid_request_error",
+              code: "previous_response_not_found",
+              param: "previous_response_id",
+              message:
+                "Previous response history is unavailable. Retry with complete input history and without previous_response_id.",
+            },
+          })
+          throw new HTTPError(
+            "previous_response_not_found: full input replay required",
+            new Response(body, { status: 400 }),
+            body,
           )
         }
       } else if (!previousId && replayable) {
