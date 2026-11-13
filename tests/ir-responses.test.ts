@@ -611,12 +611,19 @@ describe("Responses IR result and stream codec", () => {
     ["output_item.done", "completed", "empty_done_completed"].flatMap(
       (completion) =>
         ["reasoning_text", "summary_text"].flatMap((format) =>
-          [false, true].map((legacy) => ({ completion, format, legacy })),
+          [false, true].flatMap((deltaIndexed) =>
+            [false, true].map((doneIndexed) => ({
+              completion,
+              format,
+              deltaIndexed,
+              doneIndexed,
+            })),
+          ),
         ),
     ),
   )(
-    "reasoning snapshots recover per-item suffixes and terminal-only blocks ($completion $format legacy=$legacy)",
-    async ({ completion, format, legacy }) => {
+    "reasoning snapshots recover per-item suffixes and terminal-only blocks ($completion $format deltaIndexed=$deltaIndexed doneIndexed=$doneIndexed)",
+    async ({ completion, format, deltaIndexed, doneIndexed }) => {
       for (const prefix of ["", "first ", "first thought"]) {
         const reasoning = (id: string, text: string) => ({
           type: "reasoning",
@@ -628,7 +635,7 @@ describe("Responses IR result and stream codec", () => {
           }),
         })
         const frames = [
-          ...(!legacy ?
+          ...(deltaIndexed ?
             [
               {
                 type: "response.output_item.added",
@@ -642,20 +649,18 @@ describe("Responses IR result and stream codec", () => {
               format === "reasoning_text" ?
                 "response.reasoning_text.delta"
               : "response.reasoning_summary_text.delta",
-            ...(!legacy && { output_index: 0 }),
+            ...(deltaIndexed && { output_index: 0 }),
             delta: prefix,
           },
           ...(completion !== "completed" ?
-            [
-              {
-                type: "response.output_item.done",
-                ...(!legacy && { output_index: 0 }),
-                item: reasoning(
-                  "rs_first",
-                  completion === "empty_done_completed" ? "" : "first thought",
-                ),
-              },
-            ]
+            Array.from({ length: 2 }, () => ({
+              type: "response.output_item.done",
+              ...(doneIndexed && { output_index: 0 }),
+              item: reasoning(
+                "rs_first",
+                completion === "empty_done_completed" ? "" : "first thought",
+              ),
+            }))
           : []),
           {
             type: "response.completed",
@@ -666,11 +671,17 @@ describe("Responses IR result and stream codec", () => {
               output: [
                 reasoning("rs_first", "first thought"),
                 reasoning("rs_second", "second distinct thought"),
+                {
+                  type: "message",
+                  role: "assistant",
+                  content: [{ type: "output_text", text: "visible answer" }],
+                },
               ],
             },
           },
         ]
         const parts = new Map<string, string>()
+        let text = ""
         const ended = new Set<string>()
         const indices = new Set<number>()
         for await (const event of decodeResponsesStream(
@@ -691,6 +702,8 @@ describe("Responses IR result and stream codec", () => {
               (parts.get(event.partId) ?? "") + event.delta.text,
             )
           }
+          if (event.type === "part_delta" && event.delta.type === "text")
+            text += event.delta.text
           if (event.type === "part_end") {
             expect(ended.has(event.partId)).toBe(false)
             ended.add(event.partId)
@@ -700,8 +713,161 @@ describe("Responses IR result and stream codec", () => {
           "first thought",
           "second distinct thought",
         ])
-        expect(ended.size).toBe(2)
+        expect(text).toBe("visible answer")
+        expect(ended.size).toBe(3)
       }
+    },
+  )
+
+  test("interleaved unindexed reasoning retains each identity through repeated completion", async () => {
+    const items = Array.from({ length: 64 }, (_, index) => ({
+      type: "reasoning",
+      id: `rs_${index}`,
+      summary: [{ type: "summary_text", text: `start-${index}:end-${index}` }],
+    }))
+    const frames: Array<Record<string, unknown>> = items.map(
+      (item, output_index) => ({
+        type: "response.output_item.added",
+        output_index,
+        item: { ...item, summary: [] },
+      }),
+    )
+    for (const prefix of [true, false]) {
+      for (const [index, item] of [...items.entries()].reverse()) {
+        frames.push({
+          type: "response.reasoning_summary_text.delta",
+          item_id: item.id,
+          delta: prefix ? `start-${index}` : `:end-${index}`,
+        })
+      }
+    }
+    for (const item of items.toReversed()) {
+      frames.push({ type: "response.output_item.done", item })
+      frames.push({ type: "response.output_item.done", item })
+    }
+    frames.push({
+      type: "response.completed",
+      response: {
+        id: "r",
+        model: "m",
+        output: [
+          ...items,
+          {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "visible answer" }],
+          },
+        ],
+      },
+    })
+    const parts = new Map<string, string>()
+    const ended = new Set<string>()
+    let text = ""
+    for await (const event of decodeResponsesStream(
+      (async function* () {
+        for (const frame of frames) yield { data: JSON.stringify(frame) }
+      })(),
+      "m",
+    )) {
+      if (event.type === "part_delta" && event.delta.type === "thinking") {
+        expect(ended.has(event.partId)).toBe(false)
+        parts.set(
+          event.partId,
+          (parts.get(event.partId) ?? "") + event.delta.text,
+        )
+      }
+      if (event.type === "part_delta" && event.delta.type === "text")
+        text += event.delta.text
+      if (event.type === "part_end") {
+        expect(ended.has(event.partId)).toBe(false)
+        ended.add(event.partId)
+      }
+    }
+    expect(parts.size).toBe(64)
+    for (let index = 0; index < 64; index++)
+      expect(parts.get(`rs_${index}`)).toBe(`start-${index}:end-${index}`)
+    expect(text).toBe("visible answer")
+    expect(ended.size).toBe(65)
+  })
+
+  test.each(["added", "delta", "done"])(
+    "reasoning IDs match unindexed events without merging equal thoughts or hiding text (mode=%s)",
+    async (mode) => {
+      const thought = (id: string, text: string) => ({
+        type: "reasoning",
+        id,
+        summary: [{ type: "summary_text", text }],
+      })
+      const first = thought("rs_first", "shared thought")
+      const second = thought("rs_second", "shared thought")
+      const frames = [
+        ...(mode === "added" ?
+          [
+            {
+              type: "response.output_item.added",
+              output_index: 0,
+              item: thought("rs_first", ""),
+            },
+            {
+              type: "response.output_item.added",
+              output_index: 2,
+              item: thought("rs_second", ""),
+            },
+          ]
+        : []),
+        ...(mode !== "done" ?
+          [
+            {
+              type: "response.reasoning_summary_text.delta",
+              item_id: "rs_second",
+              delta: "shared thought",
+            },
+          ]
+        : []),
+        {
+          type: "response.reasoning_summary_text.delta",
+          item_id: "rs_first",
+          delta: "shared thought",
+        },
+        { type: "response.output_item.done", item: second },
+        { type: "response.output_item.done", item: first },
+        { type: "response.output_item.done", item: first },
+        {
+          type: "response.completed",
+          response: {
+            id: "r",
+            model: "deepseek-flash",
+            output: [
+              first,
+              {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: "visible answer" }],
+              },
+              second,
+            ],
+          },
+        },
+      ]
+      let reasoning = ""
+      let text = ""
+      for await (const event of encodeChatStream(
+        decodeResponsesStream(
+          (async function* () {
+            for (const frame of frames) yield { data: JSON.stringify(frame) }
+          })(),
+          "deepseek-flash",
+        ),
+      )) {
+        if (!event.data || event.data === "[DONE]") continue
+        const chunk = JSON.parse(event.data) as ChatCompletionChunk
+        for (const { delta } of chunk.choices) {
+          reasoning += delta.reasoning_content ?? ""
+          text += typeof delta.content === "string" ? delta.content : ""
+        }
+      }
+      expect(reasoning).toBe("shared thoughtshared thought")
+      expect(text).toBe("visible answer")
     },
   )
 

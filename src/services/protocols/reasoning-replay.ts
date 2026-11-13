@@ -39,6 +39,7 @@ export function replaysReasoningText(
 /** Same-wire replay can contain summaries produced by a previous Chat target. */
 export function replayResponsesReasoningText(
   input: ResponsesPayload["input"],
+  preserveIds = false,
 ): ResponsesPayload["input"] {
   if (!Array.isArray(input)) return input
   const replay: Array<ResponsesInputItem> = []
@@ -64,6 +65,8 @@ export function replayResponsesReasoningText(
     if (!text) continue
     const reasoning: ResponsesInputItem = {
       type: "reasoning",
+      // Internal transcripts need identity for overlap dedupe; the wire does not.
+      ...(preserveIds && typeof raw.id === "string" ? { id: raw.id } : {}),
       summary: [],
       content: [{ type: "reasoning_text", text }],
     }

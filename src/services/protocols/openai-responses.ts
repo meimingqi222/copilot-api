@@ -210,12 +210,15 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
       }
     }
 
-    if (replaysReasoningText(connection, target.upstreamModelId)) {
+    const readableReasoning = replaysReasoningText(
+      connection,
+      target.upstreamModelId,
+    )
+    if (readableReasoning) {
+      // Transcript compaction preserves IDs; this wire-only normalization removes them.
       upstreamPayload.input = replayResponsesReasoningText(
         upstreamPayload.input,
       )
-      if (recordedInput)
-        recordedInput = normalizeResponsesInputToItems(upstreamPayload.input)
     }
 
     const response = await fetch(
@@ -267,6 +270,7 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
               connectionId: connection.id,
               input: recordedInput,
               instructions: recordedInstructions,
+              readableReasoning,
             },
           ),
         } satisfies AdapterResponsesResult
@@ -287,6 +291,7 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
           input: recordedInput,
           output: Array.isArray(body.output) ? body.output : [],
           instructions: recordedInstructions,
+          readableReasoning,
         })
       }
     }

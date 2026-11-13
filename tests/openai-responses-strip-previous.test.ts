@@ -336,7 +336,7 @@ describe("openai-responses stripPreviousResponseId", () => {
       const original = structuredClone(payload)
       await openAIResponsesCompatibleAdapter.createResponses?.({
         target: buildTarget({ upstreamModelId: model }),
-        connection: buildConnection({ baseUrl }),
+        connection: buildConnection({ baseUrl, stripPreviousResponseId: true }),
         credential: buildCredential(),
         payload,
       })
@@ -365,6 +365,28 @@ describe("openai-responses stripPreviousResponseId", () => {
         : input,
       )
       expect(payload).toEqual(original)
+      const cached = getStatelessTranscript("atria-asi", "resp_done")
+      expect(cached?.input).toEqual(
+        replay ?
+          [
+            {
+              type: "reasoning",
+              id: "r1",
+              summary: [],
+              content: [{ type: "reasoning_text", text: "summary A" }],
+            },
+            input[1],
+            input[2],
+            {
+              type: "reasoning",
+              summary: [],
+              content: [{ type: "reasoning_text", text: "full thought B" }],
+            },
+            input[4],
+            input[5],
+          ]
+        : input,
+      )
     },
   )
 
@@ -597,6 +619,131 @@ describe("openai-responses transcript replay", () => {
       { role: "user", content: "and more" },
     ])
   })
+
+  test.each([
+    { stream: false, terminalOutput: true },
+    { stream: true, terminalOutput: true },
+    { stream: true, terminalOutput: false },
+  ])(
+    "DeepSeek overlapping replay keeps distinct reasoning once across three turns (stream=$stream terminalOutput=$terminalOutput)",
+    async ({ stream, terminalOutput }) => {
+      const captured: Array<Record<string, unknown>> = []
+      const user = { id: "u1", type: "message", role: "user", content: "hi" }
+      // Equal text in different items is legitimate; dedupe must use identity.
+      const thoughts = [1, 2].map((round) => ({
+        id: `r${round}`,
+        type: "reasoning",
+        summary: [{ type: "summary_text", text: "short summary" }],
+        content: [{ type: "reasoning_text", text: "same readable thought" }],
+        encrypted_content: "unused ciphertext".repeat(1024),
+      }))
+      const calls = [1, 2].map((round) => ({
+        type: "function_call",
+        call_id: `c${round}`,
+        name: "read",
+        arguments: JSON.stringify({ path: `file-${round}` }),
+      }))
+      const results = [1, 2].map((round) => ({
+        type: "function_call_output",
+        call_id: `c${round}`,
+        output: `data-${round}`,
+      }))
+      const outputs = [[thoughts[0], calls[0]], [thoughts[1], calls[1]], []]
+      globalThis.fetch = mock((_url: unknown, init?: RequestInit) => {
+        const round = captured.length
+        captured.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+        const response = {
+          id: `resp_${round}`,
+          model: "deepseek-flash",
+          status: "completed",
+          output: outputs[round],
+        }
+        const events = [
+          ...(!terminalOutput ?
+            (outputs[round] ?? []).map((item, output_index) => ({
+              type: "response.output_item.done",
+              output_index,
+              item,
+            }))
+          : []),
+          {
+            type: "response.completed",
+            response: {
+              ...response,
+              output: terminalOutput ? response.output : [],
+            },
+          },
+        ]
+        return Promise.resolve(
+          stream ?
+            new Response(
+              events
+                .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+                .join(""),
+              { headers: { "content-type": "text/event-stream" } },
+            )
+          : Response.json(response),
+        )
+      }) as unknown as typeof fetch
+      const inputs = [
+        [user],
+        [results[0]],
+        [thoughts[0], calls[0], results[0], thoughts[1], calls[1], results[1]],
+      ]
+      for (const [round, input] of inputs.entries()) {
+        const payload = {
+          model: "deepseek-flash",
+          input,
+          stream,
+          ...(round > 0 ? { previous_response_id: `resp_${round - 1}` } : {}),
+        } as ResponsesPayload
+        const original = structuredClone(payload)
+        const result = await openAIResponsesCompatibleAdapter.createResponses?.(
+          {
+            target: buildTarget({ upstreamModelId: "deepseek-flash" }),
+            connection: buildConnection({ stripPreviousResponseId: true }),
+            credential: buildCredential(),
+            payload,
+          },
+        )
+        if (stream)
+          await drain(
+            (result as { response: AsyncIterable<CopilotStreamEventLike> })
+              .response,
+          )
+        expect(payload).toEqual(original)
+        const cached = getStatelessTranscript("atria-asi", `resp_${round}`)
+        const cachedThoughts = cached?.input.filter(
+          (item) => (item as { type?: string }).type === "reasoning",
+        )
+        expect(cachedThoughts).toEqual(
+          thoughts.slice(0, Math.min(round + 1, 2)).map(({ id }) => ({
+            type: "reasoning",
+            id,
+            summary: [],
+            content: [
+              { type: "reasoning_text", text: "same readable thought" },
+            ],
+          })),
+        )
+      }
+      const reasoning = {
+        type: "reasoning",
+        summary: [],
+        content: [{ type: "reasoning_text", text: "same readable thought" }],
+      }
+      expect(captured[2]?.input).toEqual([
+        user,
+        reasoning,
+        calls[0],
+        results[0],
+        reasoning,
+        calls[1],
+        results[1],
+      ])
+      expect(captured[2]).not.toHaveProperty("previous_response_id")
+    },
+  )
 
   test.each([false, true])(
     "cache miss rejects instead of silently losing history (stream=%s)",

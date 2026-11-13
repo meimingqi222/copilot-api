@@ -166,7 +166,8 @@ export class ResponsesToolReplay {
   }
 
   private carry(item: Item, index: number): Item {
-    if (item.type !== "function_call" || !this.hasReasoning) return item
+    if (item.type !== "function_call") return item
+    // Reasoning may arrive only at completion, after this ID is client-visible.
     this.carried.add(index)
     return { ...item, call_id: `call_rp_${this.token}_${index}` }
   }
@@ -174,11 +175,15 @@ export class ResponsesToolReplay {
   async response(response: ResponsesResponse): Promise<ResponsesResponse> {
     for (const [index, value] of (response.output ?? []).entries())
       this.observe(value as unknown as Item, index)
-    if (!this.hasReasoning) return response
+    if (!this.hasReasoning && this.carried.size === 0) return response
     const output = response.output?.map((value, index) =>
       this.carry(value as unknown as Item, index),
     )
-    if (this.carried.size > 0 && response.status === "completed") {
+    if (
+      this.hasReasoning
+      && this.carried.size > 0
+      && response.status === "completed"
+    ) {
       const batch: ReplayBatch = {
         items: [...this.items]
           .sort(([a], [b]) => a - b)

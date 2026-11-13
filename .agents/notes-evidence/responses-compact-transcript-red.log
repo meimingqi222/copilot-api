@@ -1,0 +1,232 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/openai-responses-strip-previous.test.ts:
+364 |           ]
+365 |         : input,
+366 |       )
+367 |       expect(payload).toEqual(original)
+368 |       const cached = getStatelessTranscript("atria-asi", "resp_done")
+369 |       expect(cached?.input).toEqual(
+                                  ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+-     "content": [
++     "encrypted_content": "opaque",
++     "id": "r1",
++     "summary": [
+        {
+          "text": "summary A",
+-         "type": "reasoning_text",
++         "type": "summary_text",
+        },
+      ],
+-     "id": "r1",
+-     "summary": [],
+      "type": "reasoning",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "c1",
+      "output": "data A",
+      "type": "function_call_output",
+    },
+    {
+      "content": [
+        {
+          "text": "full thought B",
+          "type": "reasoning_text",
+        },
+      ],
+-     "summary": [],
++     "summary": [
++       {
++         "text": "short summary",
++         "type": "summary_text",
++       },
++     ],
+      "type": "reasoning",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c2",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "c2",
+      "output": "data B",
+      "type": "function_call_output",
++   },
++   {
++     "encrypted_content": "unreadable",
++     "summary": [],
++     "type": "reasoning",
+    },
+  ]
+
+- Expected  - 5
++ Received  + 15
+
+      at <anonymous> (tests/openai-responses-strip-previous.test.ts:369:29)
+(fail) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://api.deepseek.com/v1 model-alias) [0.81ms]
+364 |           ]
+365 |         : input,
+366 |       )
+367 |       expect(payload).toEqual(original)
+368 |       const cached = getStatelessTranscript("atria-asi", "resp_done")
+369 |       expect(cached?.input).toEqual(
+                                  ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+-     "content": [
++     "encrypted_content": "opaque",
++     "id": "r1",
++     "summary": [
+        {
+          "text": "summary A",
+-         "type": "reasoning_text",
++         "type": "summary_text",
+        },
+      ],
+-     "id": "r1",
+-     "summary": [],
+      "type": "reasoning",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "c1",
+      "output": "data A",
+      "type": "function_call_output",
+    },
+    {
+      "content": [
+        {
+          "text": "full thought B",
+          "type": "reasoning_text",
+        },
+      ],
+-     "summary": [],
++     "summary": [
++       {
++         "text": "short summary",
++         "type": "summary_text",
++       },
++     ],
+      "type": "reasoning",
+    },
+    {
+      "arguments": "{}",
+      "call_id": "c2",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "c2",
+      "output": "data B",
+      "type": "function_call_output",
++   },
++   {
++     "encrypted_content": "unreadable",
++     "summary": [],
++     "type": "reasoning",
+    },
+  ]
+
+- Expected  - 5
++ Received  + 15
+
+      at <anonymous> (tests/openai-responses-strip-previous.test.ts:369:29)
+(fail) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://third-party.test/v1 vendor/DeepSeek-flash) [0.10ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://third-party.test/deepseek gpt-test) [0.04ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://api.openai.com/v1 deepseek-flash) [0.02ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://api.x.ai/v1 deepseek-flash) [0.02ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://api.githubcopilot.com/v1 deepseek-flash) [0.02ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://chatgpt.com/v1 deepseek-flash) [0.02ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://api.anthropic.com/v1 deepseek-flash) [0.01ms]
+(pass) openai-responses stripPreviousResponseId > replays Responses reasoning text only for eligible upstreams (https://test.openai.azure.com/v1 deepseek-flash) [0.01ms]
+692 |         expect(payload).toEqual(original)
+693 |         const cached = getStatelessTranscript("atria-asi", `resp_${round}`)
+694 |         const cachedThoughts = cached?.input.filter(
+695 |           (item) => (item as { type?: string }).type === "reasoning",
+696 |         )
+697 |         expect(cachedThoughts).toEqual(
+                                     ^
+error: expect(received).toEqual(expected)
+
+@@ -4,10 +4,16 @@
+        {
+          "text": "same readable thought",
+          "type": "reasoning_text",
+        },
+      ],
++     "encrypted_content": "unused ciphertextunused ciphertextunused ciphertextunused ciphertextunused... (17236 bytes truncated) ...ed ciphertextunused ciphertextunused ciphertextunused ciphertextunused ciphertextunused ciphertext",
+      "id": "r1",
+-     "summary": [],
++     "summary": [
++       {
++         "text": "short summary",
++         "type": "summary_text",
++       },
++     ],
+      "type": "reasoning",
+    },
+  ]
+
+- Expected  - 1
++ Received  + 7
+
+      at <anonymous> (tests/openai-responses-strip-previous.test.ts:697:32)
+(fail) openai-responses transcript replay > DeepSeek overlapping replay keeps distinct reasoning once across three turns (stream=%s) [0.21ms]
+692 |         expect(payload).toEqual(original)
+693 |         const cached = getStatelessTranscript("atria-asi", `resp_${round}`)
+694 |         const cachedThoughts = cached?.input.filter(
+695 |           (item) => (item as { type?: string }).type === "reasoning",
+696 |         )
+697 |         expect(cachedThoughts).toEqual(
+                                     ^
+error: expect(received).toEqual(expected)
+
+@@ -4,10 +4,16 @@
+        {
+          "text": "same readable thought",
+          "type": "reasoning_text",
+        },
+      ],
++     "encrypted_content": "unused ciphertextunused ciphertextunused ciphertextunused ciphertextunused... (17236 bytes truncated) ...ed ciphertextunused ciphertextunused ciphertextunused ciphertextunused ciphertextunused ciphertext",
+      "id": "r1",
+-     "summary": [],
++     "summary": [
++       {
++         "text": "short summary",
++         "type": "summary_text",
++       },
++     ],
+      "type": "reasoning",
+    },
+  ]
+
+- Expected  - 1
++ Received  + 7
+
+      at <anonymous> (tests/openai-responses-strip-previous.test.ts:697:32)
+(fail) openai-responses transcript replay > DeepSeek overlapping replay keeps distinct reasoning once across three turns (stream=%s) [0.46ms]
+
+ 7 pass
+ 28 filtered out
+ 4 fail
+ 31 expect() calls
+Ran 11 tests across 1 file. [100.00ms]

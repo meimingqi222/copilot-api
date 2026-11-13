@@ -44,8 +44,12 @@ tools. Client JSON whitespace/key ordering may change, but editing a referenced
 call's name, namespace or argument value invalidates its entire batch. Ordinary
 unreferenced Chat thoughts still follow the foreign-reasoning loss policy.
 
-Streaming references are assigned before tool deltas reach the client; final
-native items are saved before completion is forwarded. A complete item carrying
+Streaming references are assigned before tool deltas reach the client, even
+when reasoning appears only in the terminal snapshot. Added/done/terminal tool
+IDs remain stable when no reasoning appears; those references preserve call/result
+pairing without publishing a cache batch. Non-streaming no-reasoning replies keep
+their original IDs. Final native items are saved before completion is forwarded.
+A complete item carrying
 ciphertext is retained when a terminal summary-only snapshot omits that field.
 Raw ciphertext never goes into a custom Chat field or into assistant prose.
 Failed/incomplete responses do not publish replay state. Missing, expired,
@@ -71,7 +75,14 @@ than relabelled, and ciphertext remains a reported loss.
 DeepSeek Responses receives `content.reasoning_text`, not `summary_text` or
 encrypted_content. `src/services/protocols/openai-responses.ts` also normalizes
 same-wire and stateless cached replay, preferring existing full reasoning over a
-summary without modifying the caller's payload. Opaque-only history is not
+summary without modifying the caller's payload. The stateless transcript store
+compacts both input and newly received output using that same readable projection,
+but preserves original reasoning IDs for cache-only identity. Do not retain unused
+ciphertext or redundant summaries merely to retain the ID; do not copy the ID-less
+wire input back into the cache. Later previous_response_id requests must deduplicate
+overlapping history by identity. Equal text in different reasoning IDs is not a
+duplicate. This compaction is enabled only for eligible readable-replay upstreams;
+generic native reasoning/ciphertext remains unchanged. Opaque-only history is not
 recoverable; omit it instead of filling tool steps with invented thoughts.
 `src/services/ir/codecs/responses/result.ts` and `stream.ts` read DeepSeek JSON
 content and reasoning_text deltas so clients can replay the next turn, without
@@ -90,8 +101,17 @@ snapshots, and recover additional terminal-only thoughts independently. Empty
 done snapshots leave the part open until completion; nonempty done snapshots
 close it, and later snapshots may neither rewrite nor extend a closed part.
 Contradictions fail explicitly, like contradictory tool-argument snapshots.
-Legacy unindexed reasoning is matched to one terminal item only. Allocate new
-terminal parts after all observed indices, including delta-only streams.
+Match reasoning item_id/id across deltas and snapshots before inferring a
+missing output_index, including repeated unindexed done events. A stream-local
+ID-to-index map covers both open and completed thoughts so interleaved unindexed
+deltas and repeated done events do not scan every other known item. Populate it
+when identity first arrives on added, delta or done, and retain ended identities
+until that stream ends. Without identity, only a single unambiguous open thought
+can be matched. Keep inferred local indices
+separate from terminal wire coverage: a synthetic reasoning index must never hide
+an unrelated terminal text item. Legacy unindexed reasoning is matched to one
+terminal item only. Allocate new terminal parts after all observed indices,
+including delta-only streams.
 
 DeepSeek Messages accepts unsigned readable thinking, so
 `src/services/ir/codecs/messages-chat/request.ts` preserves separate blocks for
@@ -135,8 +155,11 @@ is deliberately not adopted.
 - `tests/messages-via-responses.test.ts::Chat tool rounds recover native Responses reasoning without session headers`
   verifies three HTTP requests with two tool rounds, parallel calls, visible and
   opaque-only reasoning, original IDs/argument snapshots, and JSON reserialization.
-  It covers non-streaming, incremental SSE, terminal-only SSE and terminal
-  snapshots that omit previously delivered ciphertext.
+  It covers non-streaming, incremental SSE, terminal-only SSE, early tools with
+  terminal-only reasoning and snapshots that omit previously delivered ciphertext.
+- `tests/messages-via-responses.test.ts::early streamed tool references stay stable`
+  checks stable added/done/terminal IDs, completed-only publication, no-reasoning
+  cache misses and failed/incomplete controls.
 - `tests/messages-via-responses.test.ts::Chat native replay does not reuse state after`
   covers caller, upstream URL, credential id/value and model isolation, amended
   parallel calls, expiry, missing references, incomplete responses and size limits.
@@ -172,9 +195,21 @@ rounds. This is an offline protocol regression, not a paid live model experiment
   checks ordered multi-block replay through Messages and Responses and prevents
   empty reasoning or user/instruction/tool-result boundaries from corrupting it.
 - `tests/ir-responses.test.ts::reasoning snapshots recover per-item suffixes`
-  covers empty/partial/full prefixes, both reasoning dialects, indexed and legacy
-  deltas, empty done recovery and terminal-only second blocks without duplicate
-  ends or deltas after an end.
+  covers empty/partial/full prefixes, both reasoning dialects, all delta/done
+  index-presence combinations, repeated done, empty done recovery, terminal-only
+  second thoughts and visible text without duplicate ends or deltas after an end.
+- `tests/ir-responses.test.ts::reasoning IDs match unindexed events`
+  covers interleaved item IDs with/without added events and preserves distinct
+  equal-text thoughts and terminal-only text.
+- `tests/ir-responses.test.ts::interleaved unindexed reasoning retains each identity`
+  checks 64 open items with distinct text, reversed interleaved deltas, repeated
+  unindexed done, no reopening and terminal-only visible text.
+- `tests/openai-responses-strip-previous.test.ts::DeepSeek overlapping replay keeps distinct reasoning once`
+  checks three tool turns with overlapping input, JSON and terminal/done-only SSE,
+  equal text in distinct reasoning items, actual upstream wire order and caller
+  immutability. Cached input and new output retain ID/readable text but no unused
+  ciphertext/summary. Eligible-upstream controls above also verify generic
+  transcripts remain unchanged.
 - `tests/ir-responses.test.ts::recovers reasoning with only`
   covers missing added events, repeated done events and distinct part indices.
 - `tests/ir-responses.test.ts::rejects a reasoning snapshot that contradicts`
@@ -197,3 +232,19 @@ ordering cases in `.agents/notes-evidence/deepseek-replay-order-red.log`, and
 eight accumulation/snapshot cases in
 `.agents/notes-evidence/deepseek-reasoning-snapshots-red.log`. The same targeted
 cases pass after the fixes. These do not establish live upstream acceptance.
+
+Proved: the mixed-index/repeated-done snapshot matrix and three-turn overlapping
+DeepSeek replay assertions failed on the unchanged implementation (eight failing
+cases). Early-tool/terminal-reasoning HTTP replay also failed because native
+reasoning was absent from the next upstream input. Their natural red runs are
+retained in `.agents/notes-evidence/responses-identity-replay-red.log`; the same
+focused cases pass after identity matching, transcript preservation and early
+reference assignment. These use isolated synthetic upstreams, not live models.
+
+Proved: before transcript compaction, four new cache-content assertions failed
+because cached reasoning still retained redundant summaries and ciphertext.
+`.agents/notes-evidence/responses-compact-transcript-red.log` retains that natural
+red run. The same eligible-upstream and three-turn JSON/SSE cases pass after
+compaction; identity/overlap and generic-native controls remain green. The stream
+ID index is a behavior-preserving optimization validated by existing identity
+cases and the interleaved-output regression, not a wall-clock timing assertion.

@@ -31,6 +31,7 @@ import { globalTimers } from "~/lib/timer-registry"
 import { asRecord } from "~/lib/json-shape"
 import { buildResponsesTranscriptInput } from "~/services/codex/ws-transcript-cache"
 import { outputItemKey } from "~/services/responses/output-item"
+import { replayResponsesReasoningText } from "~/services/protocols/reasoning-replay"
 
 interface StatelessTranscript {
   input: Array<unknown>
@@ -87,18 +88,26 @@ export function recordStatelessTranscript(args: {
   input: Array<unknown>
   output: Array<unknown>
   instructions?: string
+  readableReasoning?: boolean
 }): void {
-  // 注意:这里只拷贝数组,不深拷贝 item。调用方在 record 之后不得原地
-  // 修改 input/output 里的 item 对象,否则缓存的转录本会被污染(与
+  // 除可读 reasoning 的紧凑投影外,这里只拷贝数组,不深拷贝 item。
+  // 调用方在 record 之后不得原地修改 input/output 对象,否则污染缓存(与
   // ws-transcript-cache.ts 的 appendCodexTranscript 同一约束)。
   const { connectionId, responseId, instructions } = args
   if (!connectionId || !responseId) return
   pruneIdleTranscripts()
   const key = statelessTranscriptKey(connectionId, responseId)
-  const input = [...args.input, ...args.output]
+  let input = [...args.input, ...args.output]
   if (input.length > MAX_TRANSCRIPT_ITEMS) {
     deleteTranscript(key)
     return
+  }
+  if (args.readableReasoning) {
+    // Compact both old input and new output, without retaining unused ciphertext.
+    input = replayResponsesReasoningText(
+      input as ResponsesPayload["input"],
+      true,
+    ) as Array<unknown>
   }
   const bytes = estimateBytes(input, instructions)
   if (bytes > MAX_TRANSCRIPT_BYTES) {
@@ -180,6 +189,7 @@ export async function* snoopResponsesStreamForTranscript(
     connectionId: string
     input: Array<unknown>
     instructions?: string
+    readableReasoning?: boolean
   },
 ): AsyncGenerator<CopilotStreamEventLike> {
   const byIndex = new Map<number, Record<string, unknown>>()
@@ -238,6 +248,7 @@ function recordTerminalTranscript(
     connectionId: string
     input: Array<unknown>
     instructions?: string
+    readableReasoning?: boolean
   },
 ): void {
   const response = asRecord(parsed.response)
@@ -256,6 +267,7 @@ function recordTerminalTranscript(
         terminalOutput
       : mergeCollectedItems(byIndex, fallbackItems),
     instructions: record.instructions,
+    readableReasoning: record.readableReasoning,
   })
 }
 

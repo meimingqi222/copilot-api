@@ -1,0 +1,369 @@
+=== Mixed reasoning indices / overlapping DeepSeek history: natural red ===
+bun test v1.4.4 (38afee6c8)
+
+tests/ir-responses.test.ts:
+171 |   if (current?.part.type !== "thinking" || !item) return
+172 |   const text = getResponsesReasoningText(item)
+173 |   if (!text) return
+174 |   const prefix = current.part.text
+175 |   if (!text.startsWith(prefix) || (closed && text !== prefix)) {
+176 |     throw new Error("Responses reasoning changed after being streamed")
+                    ^
+error: Responses reasoning changed after being streamed
+      at completeReasoningText (src/services/ir/codecs/responses/stream.ts:176:15)
+      at completeTerminalParts (src/services/ir/codecs/responses/stream.ts:236:14)
+      at decodeResponsesStream (src/services/ir/codecs/responses/stream.ts:495:16)
+(fail) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (output_item.done reasoning_text deltaIndexed=false doneIndexed=false) [1.20ms]
+707 |           if (event.type === "part_end") {
+708 |             expect(ended.has(event.partId)).toBe(false)
+709 |             ended.add(event.partId)
+710 |           }
+711 |         }
+712 |         expect([...parts.values()]).toEqual([
+                                          ^
+error: expect(received).toEqual(expected)
+
+  [
+-   "first thought",
+    "second distinct thought",
++   "first thought",
+  ]
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (tests/ir-responses.test.ts:712:37)
+(fail) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (output_item.done reasoning_text deltaIndexed=false doneIndexed=true) [0.63ms]
+694 |             expect(indices.has(event.index)).toBe(false)
+695 |             indices.add(event.index)
+696 |             parts.set(event.partId, event.part.text)
+697 |           }
+698 |           if (event.type === "part_delta" && event.delta.type === "thinking") {
+699 |             expect(ended.has(event.partId)).toBe(false)
+                                                  ^
+error: expect(received).toBe(expected)
+
+Expected: false
+Received: true
+
+      at <anonymous> (tests/ir-responses.test.ts:699:45)
+(fail) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (output_item.done reasoning_text deltaIndexed=true doneIndexed=false) [0.25ms]
+(pass) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (output_item.done reasoning_text deltaIndexed=true doneIndexed=true) [0.14ms]
+171 |   if (current?.part.type !== "thinking" || !item) return
+172 |   const text = getResponsesReasoningText(item)
+173 |   if (!text) return
+174 |   const prefix = current.part.text
+175 |   if (!text.startsWith(prefix) || (closed && text !== prefix)) {
+176 |     throw new Error("Responses reasoning changed after being streamed")
+                    ^
+error: Responses reasoning changed after being streamed
+      at completeReasoningText (src/services/ir/codecs/responses/stream.ts:176:15)
+      at completeTerminalParts (src/services/ir/codecs/responses/stream.ts:236:14)
+      at decodeResponsesStream (src/services/ir/codecs/responses/stream.ts:495:16)
+(fail) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (output_item.done summary_text deltaIndexed=false doneIndexed=false) [0.08ms]
+707 |           if (event.type === "part_end") {
+708 |             expect(ended.has(event.partId)).toBe(false)
+709 |             ended.add(event.partId)
+710 |           }
+711 |         }
+712 |         expect([...parts.values()]).toEqual([
+                                          ^
+error: expect(received).toEqual(expected)
+
+  [
+-   "first thought",
+    "second distinct thought",
++   "first thought",
+  ]
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (tests/ir-responses.test.ts:712:37)
+(fail) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (output_item.done summary_text deltaIndexed=false doneIndexed=true) [0.09ms]
+694 |             expect(indices.has(event.index)).toBe(false)
+695 |             indices.add(event.index)
+696 |             parts.set(event.partId, event.part.text)
+697 |           }
+698 |           if (event.type === "part_delta" && event.delta.type === "thinking") {
+699 |             expect(ended.has(event.partId)).toBe(false)
+                                                  ^
+error: expect(received).toBe(expected)
+
+Expected: false
+Received: true
+
+      at <anonymous> (tests/ir-responses.test.ts:699:45)
+(fail) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (output_item.done summary_text deltaIndexed=true doneIndexed=false) [0.06ms]
+(pass) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (output_item.done summary_text deltaIndexed=true doneIndexed=true) [0.08ms]
+(pass) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (completed reasoning_text deltaIndexed=false doneIndexed=false) [0.05ms]
+(pass) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (completed reasoning_text deltaIndexed=false doneIndexed=true) [0.05ms]
+(pass) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (completed reasoning_text deltaIndexed=true doneIndexed=false) [0.06ms]
+(pass) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (completed reasoning_text deltaIndexed=true doneIndexed=true) [0.45ms]
+(pass) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (completed summary_text deltaIndexed=false doneIndexed=false) [0.04ms]
+(pass) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (completed summary_text deltaIndexed=false doneIndexed=true) [0.03ms]
+(pass) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (completed summary_text deltaIndexed=true doneIndexed=false) [0.04ms]
+(pass) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (completed summary_text deltaIndexed=true doneIndexed=true) [0.03ms]
+(pass) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (empty_done_completed reasoning_text deltaIndexed=false doneIndexed=false) [0.14ms]
+(pass) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (empty_done_completed reasoning_text deltaIndexed=false doneIndexed=true) [0.09ms]
+(pass) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (empty_done_completed reasoning_text deltaIndexed=true doneIndexed=false) [0.07ms]
+(pass) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (empty_done_completed reasoning_text deltaIndexed=true doneIndexed=true) [0.06ms]
+(pass) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (empty_done_completed summary_text deltaIndexed=false doneIndexed=false) [0.07ms]
+(pass) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (empty_done_completed summary_text deltaIndexed=false doneIndexed=true) [0.06ms]
+(pass) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (empty_done_completed summary_text deltaIndexed=true doneIndexed=false) [0.04ms]
+(pass) Responses IR result and stream codec > reasoning snapshots recover per-item suffixes and terminal-only blocks (empty_done_completed summary_text deltaIndexed=true doneIndexed=true) [0.04ms]
+
+tests/openai-responses-strip-previous.test.ts:
+670 |       const reasoning = {
+671 |         type: "reasoning",
+672 |         summary: [],
+673 |         content: [{ type: "reasoning_text", text: "same readable thought" }],
+674 |       }
+675 |       expect(captured[2]?.input).toEqual([
+                                       ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "content": "hi",
+      "id": "u1",
+      "role": "user",
+      "type": "message",
+    },
+    {
+      "content": [
+        {
+          "text": "same readable thought",
+          "type": "reasoning_text",
+        },
+      ],
+      "summary": [],
+      "type": "reasoning",
+    },
+    {
++     "content": [
++       {
++         "text": "same readable thought",
++         "type": "reasoning_text",
++       },
++     ],
++     "summary": [],
++     "type": "reasoning",
++   },
++   {
+      "arguments": "{"path":"file-1"}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "c1",
+      "output": "data-1",
+      "type": "function_call_output",
+    },
+    {
+      "content": [
+        {
+          "text": "same readable thought",
+          "type": "reasoning_text",
+        },
+      ],
+      "summary": [],
+      "type": "reasoning",
+    },
+    {
+      "arguments": "{"path":"file-2"}",
+      "call_id": "c2",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "c2",
+      "output": "data-2",
+      "type": "function_call_output",
+    },
+  ]
+
+- Expected  - 0
++ Received  + 10
+
+      at <anonymous> (tests/openai-responses-strip-previous.test.ts:675:34)
+(fail) openai-responses transcript replay > DeepSeek overlapping replay keeps distinct reasoning once across three turns (stream=%s) [0.82ms]
+670 |       const reasoning = {
+671 |         type: "reasoning",
+672 |         summary: [],
+673 |         content: [{ type: "reasoning_text", text: "same readable thought" }],
+674 |       }
+675 |       expect(captured[2]?.input).toEqual([
+                                       ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "content": "hi",
+      "id": "u1",
+      "role": "user",
+      "type": "message",
+    },
+    {
+      "content": [
+        {
+          "text": "same readable thought",
+          "type": "reasoning_text",
+        },
+      ],
+      "summary": [],
+      "type": "reasoning",
+    },
+    {
++     "content": [
++       {
++         "text": "same readable thought",
++         "type": "reasoning_text",
++       },
++     ],
++     "summary": [],
++     "type": "reasoning",
++   },
++   {
+      "arguments": "{"path":"file-1"}",
+      "call_id": "c1",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "c1",
+      "output": "data-1",
+      "type": "function_call_output",
+    },
+    {
+      "content": [
+        {
+          "text": "same readable thought",
+          "type": "reasoning_text",
+        },
+      ],
+      "summary": [],
+      "type": "reasoning",
+    },
+    {
+      "arguments": "{"path":"file-2"}",
+      "call_id": "c2",
+      "name": "read",
+      "type": "function_call",
+    },
+    {
+      "call_id": "c2",
+      "output": "data-2",
+      "type": "function_call_output",
+    },
+  ]
+
+- Expected  - 0
++ Received  + 10
+
+      at <anonymous> (tests/openai-responses-strip-previous.test.ts:675:34)
+(fail) openai-responses transcript replay > DeepSeek overlapping replay keeps distinct reasoning once across three turns (stream=%s) [0.57ms]
+
+ 18 pass
+ 87 filtered out
+ 8 fail
+ 606 expect() calls
+Ran 26 tests across 2 files. [75.00ms]
+
+=== Early tools / terminal-only reasoning: natural red ===
+bun test v1.4.4 (38afee6c8)
+
+tests/messages-via-responses.test.ts:
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 8ms
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 1ms
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 0ms
+(pass) Chat tool rounds recover native Responses reasoning without session headers (stream=false terminalOnly=false terminalReasoningOnly=$terminalReasoningOnly [14.02ms]
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 2ms
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 1ms
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 1ms
+(pass) Chat tool rounds recover native Responses reasoning without session headers (stream=true terminalOnly=false terminalReasoningOnly=$terminalReasoningOnly [6.28ms]
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 0ms
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 0ms
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 1ms
+(pass) Chat tool rounds recover native Responses reasoning without session headers (stream=true terminalOnly=true terminalReasoningOnly=$terminalReasoningOnly [2.78ms]
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 0ms
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 1ms
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 1ms
+(pass) Chat tool rounds recover native Responses reasoning without session headers (stream=true terminalOnly=false terminalReasoningOnly=$terminalReasoningOnly [4.87ms]
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 0ms
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 1ms
+<-- POST /v1/chat/completions
+[warn] No model selected, skipping token count calculation
+--> POST /v1/chat/completions 200 0ms
+219 |         })
+220 |     }
+221 |     expect(sent[0]?.include).toContain("reasoning.encrypted_content")
+222 |     for (const round of [1, 2]) {
+223 |       const input = sent[round]?.input as Array<Record<string, unknown>>
+224 |       expect(input.filter((item) => item.type === "reasoning")).toEqual(
+                                                                      ^
+error: expect(received).toEqual(expected)
+
+- [
+-   {
+-     "encrypted_content": "opaque-native-state-0",
+-     "id": "rs_native_0",
+-     "status": "completed",
+-     "summary": [
+-       {
+-         "text": "native thought 0",
+-         "type": "summary_text",
+-       },
+-     ],
+-     "type": "reasoning",
+-   },
+-   {
+-     "encrypted_content": "opaque-native-hidden-0",
+-     "id": "rs_sealed_0",
+-     "status": "completed",
+-     "summary": [],
+-     "type": "reasoning",
+-   },
+- ]
++ []
+
+- Expected  - 21
++ Received  + 1
+
+      at <anonymous> (tests/messages-via-responses.test.ts:224:65)
+(fail) Chat tool rounds recover native Responses reasoning without session headers (stream=true terminalOnly=false terminalReasoningOnly=true) [3.78ms]
+
+ 4 pass
+ 23 filtered out
+ 1 fail
+ 148 expect() calls
+Ran 5 tests across 1 file. [130.00ms]

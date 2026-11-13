@@ -21,6 +21,7 @@ import {
   getTranslationLossMetricsSnapshot,
   resetTranslationLossMetricsForTest,
 } from "~/services/ir"
+import { ResponsesToolReplay } from "~/services/protocols/responses-tool-replay"
 
 const originalFetch = globalThis.fetch
 
@@ -68,9 +69,15 @@ test.each([
   { stream: true, terminalOnly: false },
   { stream: true, terminalOnly: true },
   { stream: true, terminalOnly: false, terminalOmitsCiphertext: true },
+  { stream: true, terminalOnly: false, terminalReasoningOnly: true },
 ])(
-  "Chat tool rounds recover native Responses reasoning without session headers (stream=$stream terminalOnly=$terminalOnly)",
-  async ({ stream, terminalOnly, terminalOmitsCiphertext }) => {
+  "Chat tool rounds recover native Responses reasoning without session headers (stream=$stream terminalOnly=$terminalOnly terminalReasoningOnly=$terminalReasoningOnly)",
+  async ({
+    stream,
+    terminalOnly,
+    terminalOmitsCiphertext,
+    terminalReasoningOnly,
+  }) => {
     const sent: Array<Record<string, unknown>> = []
     const thoughts = [0, 1].map((round) => ({
       id: `rs_native_${round}`,
@@ -126,17 +133,21 @@ test.each([
       const events =
         terminalOnly ?
           []
-        : output.flatMap((item, output_index) => [
-            {
-              type: "response.output_item.added",
-              output_index,
-              item:
-                item.type === "function_call" ?
-                  { ...item, arguments: "" }
-                : item,
-            },
-            { type: "response.output_item.done", output_index, item },
-          ])
+        : output.flatMap((item, output_index) =>
+            terminalReasoningOnly && item.type === "reasoning" ?
+              []
+            : [
+                {
+                  type: "response.output_item.added",
+                  output_index,
+                  item:
+                    item.type === "function_call" ?
+                      { ...item, arguments: "" }
+                    : item,
+                },
+                { type: "response.output_item.done", output_index, item },
+              ],
+          )
       return Promise.resolve(
         new Response(
           [
@@ -243,6 +254,80 @@ test.each([
       }
       expect(JSON.stringify(input)).not.toContain("[historical reasoning]")
     }
+  },
+)
+
+test.each([
+  { status: "completed", reasoning: true },
+  { status: "completed", reasoning: false },
+  { status: "incomplete", reasoning: true },
+  { status: "failed", reasoning: true },
+])(
+  "early streamed tool references stay stable and publish only completed reasoning (status=$status reasoning=$reasoning)",
+  async ({ status, reasoning }) => {
+    const replay = new ResponsesToolReplay(`early-tool-${status}-${reasoning}`)
+    const thought = {
+      id: "rs_terminal",
+      type: "reasoning" as const,
+      summary: [],
+      encrypted_content: "terminal-native-state",
+    }
+    const call = {
+      id: "fc_early",
+      type: "function_call" as const,
+      call_id: "call_early",
+      name: "read",
+      arguments: "{}",
+    }
+    const index = reasoning ? 1 : 0
+    const packets = [
+      {
+        type: "response.output_item.added",
+        output_index: index,
+        item: { ...call, arguments: "" },
+      },
+      { type: "response.output_item.done", output_index: index, item: call },
+      {
+        type: `response.${status}`,
+        response: {
+          id: "resp_early",
+          model: "gpt-responses",
+          status,
+          output: [...(reasoning ? [thought] : []), call],
+        },
+      },
+    ]
+    async function* upstream() {
+      for (const packet of packets) yield { data: JSON.stringify(packet) }
+    }
+    const ids: Array<string> = []
+    for await (const event of replay.stream(upstream())) {
+      const packet = JSON.parse(event.data!) as {
+        item?: { call_id: string }
+        response?: { output: Array<{ call_id?: string }> }
+      }
+      // Failed packets pass through unchanged and cannot publish replay state.
+      if (packet.item) ids.push(packet.item.call_id)
+      else if (status !== "failed")
+        ids.push(packet.response!.output[index]!.call_id!)
+    }
+    expect(ids[0]).toMatch(/^call_rp_[a-f0-9]{32}_\d+$/)
+    expect(new Set(ids).size).toBe(1)
+    const clientId = ids[0]!
+    const result = {
+      type: "function_call_output" as const,
+      call_id: clientId,
+      output: "ok",
+    }
+    const restored = await replay.restore({
+      model: "gpt-responses",
+      input: [{ ...call, type: "function_call", call_id: clientId }, result],
+    })
+    expect(restored.input).toEqual(
+      status === "completed" && reasoning ?
+        [thought, call, { ...result, call_id: call.call_id }]
+      : [{ ...call, call_id: clientId }, result],
+    )
   },
 )
 
