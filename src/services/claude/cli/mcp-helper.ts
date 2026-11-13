@@ -118,6 +118,7 @@ async function handleToolsCall(
 interface BridgeFile {
   callbackUrl?: string
   tools?: unknown
+  listedPath?: string
 }
 
 /**
@@ -193,6 +194,8 @@ export async function runClaudeMcpHelper(
       }
       case "tools/list": {
         respond(id, { tools })
+        if (bridge.listedPath)
+          fs.writeFileSync(bridge.listedPath, "", { mode: 0o600 })
         break
       }
       case "tools/call": {

@@ -32,17 +32,30 @@ function hiddenBlock(
   )
 }
 
-function standingRefusal(
+function resultFailure(
   result: NonNullable<ReturnType<typeof parseStreamJsonLine>>,
   stopReason: string | undefined,
   structured: boolean,
-): boolean {
-  return (
+  answered: boolean,
+): string | undefined {
+  const refusal =
     !structured
     && !result.api_error_status
     && stopReason === "refusal"
     && (result.api_error_status === 0 || result.stop_reason === "refusal")
+  if (
+    (result.is_error && !refusal)
+    || (structured && result.structured_output == null)
+    || (!structured && !answered && stopReason !== "refusal")
   )
+    return (
+      result.result?.trim()
+      || result.errors?.join("; ")
+      || (structured ?
+        "Claude Code ended the turn without an answer fitting the schema"
+      : "Claude Code ended the turn without an answer")
+    )
+  return undefined
 }
 
 /** Fold CLI-owned tool rounds into one response and wait for final validation. */
@@ -51,6 +64,8 @@ export async function* normalizeClaudeTurns(
   options: TurnOptions,
 ): AsyncIterable<string> {
   let started = false
+  let answered = false
+  let settled = false
   let nextIndex = 0
   let clientTool = false
   let stopReason: string | undefined
@@ -76,6 +91,8 @@ export async function* normalizeClaudeTurns(
   }
   const start = (message?: unknown): string => {
     started = true
+    answered = false
+    settled = false
     return wire({
       type: "message_start",
       message: message ?? { id: "", usage: {} },
@@ -92,6 +109,7 @@ export async function* normalizeClaudeTurns(
     })
     yield wire({ type: "message_stop" })
     started = false
+    settled = true
     nextIndex = 0
     before = {}
     usage = {}
@@ -111,6 +129,7 @@ export async function* normalizeClaudeTurns(
       if (!searchId) continue
       const search = readClaudeSearchResults(parsed.tool_use_result)
       if (search) {
+        answered = true
         const callIndex = nextIndex++
         yield wire({
           type: "content_block_start",
@@ -139,21 +158,22 @@ export async function* normalizeClaudeTurns(
       continue
     }
     if (parsed.type === "result") {
+      // A client-tool segment was already delivered at message_stop.
+      if (!started && settled && !parsed.is_error) continue
       if (!started) yield start()
       if (parsed.stop_reason) stopReason = parsed.stop_reason
-      if (
-        (parsed.is_error
-          && !standingRefusal(parsed, stopReason, options.structured))
-        || (options.structured && parsed.structured_output == null)
-      ) {
+      const failure = resultFailure(
+        parsed,
+        stopReason,
+        options.structured,
+        answered,
+      )
+      if (failure) {
         yield JSON.stringify({
           type: "result",
           subtype: parsed.subtype,
           is_error: true,
-          result:
-            parsed.result?.trim()
-            || parsed.errors?.join("; ")
-            || "Claude Code ended the turn without an answer fitting the schema",
+          result: failure,
         })
       } else if (options.structured) {
         stopReason = "end_turn"
@@ -226,18 +246,28 @@ export async function* normalizeClaudeTurns(
       if (hidden.has(original)) continue
       const index = indices.get(original)
       if (index === undefined) continue
+      if (
+        event.type === "content_block_start"
+        && (event.content_block?.type === "tool_use"
+          || event.content_block?.text)
+      )
+        answered = true
+      if (
+        event.type === "content_block_delta"
+        && (event.delta?.text || event.delta?.thinking)
+      )
+        answered = true
       yield wire({ ...event, index })
       continue
     }
     yield line
   }
   if (started) {
-    if (!stopReason || options.structured)
-      yield JSON.stringify({
-        type: "result",
-        is_error: true,
-        result: "Claude Code stream ended before the turn completed",
-      })
+    yield JSON.stringify({
+      type: "result",
+      is_error: true,
+      result: "Claude Code stream ended before the turn completed",
+    })
     yield* finish()
   }
 }

@@ -13,20 +13,76 @@ const row = (value: unknown) =>
   fs.appendFileSync(transcript, JSON.stringify(value) + "\n")
 const tap = (value: unknown) =>
   fs.appendFileSync(tapFile, JSON.stringify(value) + "\n")
+let toolsListed = false
+const listTools = async () => {
+  if (process.env.FAKE_TUI_SCENARIO === "slow-mcp") await Bun.sleep(900)
+  const config = JSON.parse(fs.readFileSync(mcp, "utf8")) as {
+    mcpServers: Record<string, { command: string; args: Array<string> }>
+  }
+  const helper = Object.values(config.mcpServers)[0]
+  const child = Bun.spawn([helper.command, ...helper.args], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "ignore",
+  })
+  child.stdin.write(
+    JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) + "\n",
+  )
+  const reader = child.stdout.getReader()
+  let answer = ""
+  while (!answer.includes("\n")) {
+    const chunk = await reader.read()
+    if (chunk.done) break
+    answer += new TextDecoder().decode(chunk.value)
+  }
+  toolsListed = Array.isArray(JSON.parse(answer).result.tools)
+  child.stdin.end()
+  await child.exited
+}
 
-if (process.env.FAKE_TUI_SCENARIO === "startup-fail") {
+if (process.env.FAKE_TUI_SCENARIO === "undrawn") {
+  const child = Bun.spawn(
+    [
+      process.env.FAKE_TUI_WAIT_COMMAND!,
+      "find-generic-password",
+      "-s",
+      "Claude Code",
+      "--secret",
+      "private-diagnostic-argument",
+    ],
+    { stdout: "ignore", stderr: "ignore" },
+  )
+  const stop = () => {
+    child.kill()
+    process.exit()
+  }
+  process.on("SIGTERM", stop)
+  process.on("SIGHUP", stop)
+  await child.exited
+} else if (process.env.FAKE_TUI_SCENARIO === "bypass") {
+  process.stdin.setRawMode(true)
+  process.stdout.write("Bypass Permissions mode\r\n❯ No, exit\r\nYes, I accept")
+  process.stdin.on("data", () => {
+    process.stdout.write("UNSAFE_ACCEPTED")
+  })
+} else if (process.env.FAKE_TUI_SCENARIO === "startup-fail") {
+  process.stdout.write("startup explanation from Claude Code\r\n")
   if (!args.includes("-p")) process.exit(1)
   await import("./run")
 } else {
   if (!process.stdin.isTTY || !process.stdout.isTTY || args.includes("-p"))
     process.exit(2)
+  void listTools()
   process.stdin.setRawMode(true)
   let trusted = process.env.FAKE_TUI_SCENARIO !== "trust"
+  let chrome = process.env.FAKE_TUI_SCENARIO === "chrome"
+  const chromeReady = Date.now() + 700
   let selected = false
   process.stdout.write(
-    trusted ? "❯ " : (
-      "\x1b[2J\x1b[Htrust this folder\r\n❯ No, exit\r\n  Yes, I trust this folder"
-    ),
+    chrome ?
+      "Claude in Chrome\r\n❯ Keep browser tools on\r\nkeep browser tools off"
+    : trusted ? "❯ "
+    : "\x1b[2J\x1b[Htrust this folder\r\n❯ No, exit\r\n  Yes, I trust this folder",
   )
   let buffer = ""
   let pasted = ""
@@ -55,7 +111,14 @@ if (process.env.FAKE_TUI_SCENARIO === "startup-fail") {
       usage: { input_tokens: 10, output_tokens: 4, cache_read_input_tokens: 7 },
     }
     if (process.env.FAKE_TUI_SCENARIO !== "transcript") {
-      tap({ s, open: true })
+      tap({
+        s,
+        open: true,
+        h: {
+          "anthropic-ratelimit-unified-5h-utilization": "0.42",
+          "anthropic-ratelimit-unified-5h-reset": "1800000000",
+        },
+      })
       tap({
         s,
         e: { type: "message_start", message: { ...message, content: [] } },
@@ -125,6 +188,17 @@ if (process.env.FAKE_TUI_SCENARIO === "startup-fail") {
       fs.writeFileSync(process.env.FAKE_TUI_PID_FILE!, String(process.pid))
       return
     }
+    if (process.env.FAKE_TUI_SCENARIO === "silent") {
+      row({ type: "system", subtype: "turn_duration" })
+      return
+    }
+    const effortFile = path.join(path.dirname(mcp), "effort.json")
+    if (process.env.FAKE_TUI_SCENARIO === "effort")
+      fs.writeFileSync(effortFile + ".live", "")
+    const effort =
+      fs.existsSync(effortFile) ?
+        JSON.parse(fs.readFileSync(effortFile, "utf8")).effort
+      : undefined
     await reply(
       JSON.stringify({
         pid: process.pid,
@@ -136,6 +210,8 @@ if (process.env.FAKE_TUI_SCENARIO === "startup-fail") {
         entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT ?? null,
         tap: process.env.COPILOT_API_CLAUDE_TAP ?? null,
         images,
+        toolsListed,
+        effort: effort ?? (args.includes("--effort") ? arg("--effort") : ""),
         extraBody:
           process.env.CLAUDE_CODE_EXTRA_BODY ?
             JSON.parse(process.env.CLAUDE_CODE_EXTRA_BODY)
@@ -147,6 +223,14 @@ if (process.env.FAKE_TUI_SCENARIO === "startup-fail") {
     image = 0
   }
   process.stdin.on("data", (chunk: Buffer) => {
+    if (chrome) {
+      // Claude ignores early input and does not redraw the offer after it.
+      if (chunk.includes(27) && Date.now() >= chromeReady) {
+        chrome = false
+        process.stdout.write("\x1b[2J\x1b[H❯ ")
+      }
+      return
+    }
     if (!trusted) {
       const keys = chunk.toString()
       if (keys.includes("\x1b[B")) {
@@ -179,7 +263,15 @@ if (process.env.FAKE_TUI_SCENARIO === "startup-fail") {
               bytes: fs.readFileSync(file).toString("base64"),
             })
             pasted += `[Image #${++image}]`
-            if (process.env.FAKE_TUI_SCENARIO === "images") {
+            if (process.env.FAKE_TUI_SCENARIO === "images-partial") {
+              // A reflow can reuse cells from the preceding paste and paint
+              // only the new number, as Claude Code 2.1.319 does.
+              process.stdout.write(
+                image === 1 ?
+                  "\x1b[29;1H────────────────────\x1b[30;1H❯ [Image #1]\x1b[K\x1b[31;1H────────────────────"
+                : `\x1b[30;11H${image}]`,
+              )
+            } else if (process.env.FAKE_TUI_SCENARIO === "images") {
               // Native TUI updates can paint the label and its number separately.
               const digits = String(image)
               process.stdout.write(
@@ -187,12 +279,16 @@ if (process.env.FAKE_TUI_SCENARIO === "startup-fail") {
               )
             } else process.stdout.write(`[Image #${image}]`)
           }
-          if (process.env.FAKE_TUI_SCENARIO === "images")
+          if (process.env.FAKE_TUI_SCENARIO?.startsWith("images"))
             setTimeout(acceptImage, 250)
           else acceptImage()
         } else pasted += part
         buffer = buffer.slice(end + 6)
-        process.stdout.write("[Pasted text]")
+        process.stdout.write(
+          process.env.FAKE_TUI_SCENARIO === "images-partial" ?
+            "\x1b[35;1H[Pasted text]"
+          : "[Pasted text]",
+        )
       } else if (buffer.includes("\r")) {
         buffer = buffer.slice(buffer.indexOf("\r") + 1)
         if (pasted) void send()

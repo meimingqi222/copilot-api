@@ -505,8 +505,8 @@ export class ClaudeCliRun implements BridgeRun {
   /**
    * 开始把 stdout 翻成 Anthropic 事件推进队列。
    *
-   * 进程结束时：如果**什么都没产出**且退出码非零，就把 stderr 当失败原因
-   * 推成一条 error 事件 —— 否则下游只会看到一个空流，误以为模型没话说。
+   * 进程结束却没有任何事件也是失败，即使退出码为零。
+   * 非零退出保留退出码诊断，但 stderr 只进脱敏日志。
    */
   startPump(model: string): void {
     void (async () => {
@@ -529,8 +529,14 @@ export class ClaudeCliRun implements BridgeRun {
           this.queue.push(event)
         }
         const code = await this.proc.exited
-        if (code !== 0 && !produced) {
-          this.queue.push(errorEvent(await this.failureReason(code)))
+        if (!produced) {
+          this.queue.push(
+            errorEvent(
+              code !== 0 ?
+                await this.failureReason(code)
+              : "Claude Code ended without an answer",
+            ),
+          )
         }
       } catch (error) {
         this.queue.push(
@@ -985,6 +991,7 @@ async function spawnRun(
       JSON.stringify({
         callbackUrl: `${claudeCallbackBaseUrl()}/_internal/claude-mcp/${token}`,
         tools: bridgeTools(payload),
+        listedPath: path.join(tmpDir, "tools-listed"),
       }),
       "utf8",
     )

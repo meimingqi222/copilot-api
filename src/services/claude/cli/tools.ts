@@ -34,6 +34,76 @@ const EMPTY_SCHEMA: Record<string, unknown> = {
   properties: {},
 }
 
+function schemaObject(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ?
+      (value as Record<string, unknown>)
+    : {}
+}
+
+function schemaRequired(schema: Record<string, unknown>): Array<string> {
+  return Array.isArray(schema.required) ?
+      schema.required.filter((name): name is string => typeof name === "string")
+    : []
+}
+
+/**
+ * Claude Code silently omits tools with root combinators. Fold only that
+ * boundary, not nested schemas: branch correlations/exclusivity are lost,
+ * but every property variant survives and conjunctions keep their constraints.
+ * Gemini's recursive flatteners choose a branch and are too lossy here.
+ */
+function objectToolSchema(
+  schema: Record<string, unknown>,
+): Record<string, unknown> {
+  const combinators = ["allOf", "anyOf", "oneOf"] as const
+  if (!combinators.some((key) => Array.isArray(schema[key]))) return schema
+  const out: Record<string, unknown> = { ...schema, type: "object" }
+  const properties = { ...schemaObject(schema.properties) }
+  const required = new Set(schemaRequired(schema))
+  for (const key of combinators) {
+    const branches = schema[key]
+    if (!Array.isArray(branches)) continue
+    delete out[key]
+    const objects = branches.map((branch: unknown) =>
+      objectToolSchema(schemaObject(branch)),
+    )
+    const variants = new Map<string, Array<unknown>>()
+    for (const branch of objects) {
+      for (const [name, value] of Object.entries(
+        schemaObject(branch.properties),
+      )) {
+        const values = variants.get(name) ?? []
+        values.push(value)
+        variants.set(name, values)
+      }
+    }
+    for (const [name, values] of variants) {
+      const value =
+        values.length === 1 ?
+          values[0]
+        : {
+            [key === "allOf" ? "allOf" : "anyOf"]: values,
+          }
+      properties[name] =
+        Object.hasOwn(properties, name) ?
+          { allOf: [properties[name], value] }
+        : value
+    }
+    const names = objects.map(schemaRequired)
+    for (const name of names.flat()) {
+      if (key === "allOf" || names.every((list) => list.includes(name)))
+        required.add(name)
+    }
+  }
+  return {
+    ...out,
+    properties,
+    ...(required.size || "required" in schema ?
+      { required: [...required] }
+    : {}),
+  }
+}
+
 /**
  * 迟到结果的收集入口，只给 CLI 看(见 `CLAUDE_WAIT_TOOL_NAME`)。
  *
@@ -109,7 +179,7 @@ export function bridgeTools(
     out.push({
       name: names.get(tool.name) ?? tool.name,
       ...(tool.description ? { description: tool.description } : {}),
-      inputSchema: tool.input_schema ?? EMPTY_SCHEMA,
+      inputSchema: objectToolSchema(tool.input_schema ?? EMPTY_SCHEMA),
     })
   }
   // 只有存在调用方工具时才加:没有工具就没有"等调用方执行"这回事,而多一个

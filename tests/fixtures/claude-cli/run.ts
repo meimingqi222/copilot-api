@@ -267,6 +267,7 @@ async function main(): Promise<number> {
     process.stderr.write("fake claude: not signed in\n")
     return 1
   }
+  if (scenario === "empty-exit") return 0
   // "too-long" is Claude Code's own length check: Anthropic was never asked.
   const failure = ERROR_RESULTS[scenario]
   if (failure) {

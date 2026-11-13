@@ -1,0 +1,633 @@
+
+=== claude-images-partial-red.log ===
+bun test v1.4.4 (38afee6c8)
+
+tests/claude-cli-tui.test.ts:
+163 |   const status =
+164 |     quota ? 429
+165 |     : tooLong ? 400
+166 |     : 502
+167 |   const text = tooLong ? message + TOO_LONG_HINT : message
+168 |   return new HTTPError(
+               ^
+error: Claude Code interactive bridge failed; select -p mode or check the server installation
+   response: Response (144 bytes) {
+  ok: false,
+  url: "",
+  status: 502,
+  statusText: "",
+  headers: Headers {
+    "content-type": "application/json",
+  },
+  redirected: false,
+  bodyUsed: false,
+  Blob (144 bytes)
+},
+ responseBody: "Claude Code interactive bridge failed; select -p mode or check the server installation",
+ reportedUsage: undefined,
+ serviceTier: undefined,
+
+      at toHttpError (<repo>/src/services/claude/cli/errors.ts:168:10)
+      at withHeadPeek (<repo>/src/services/claude/cli/bridge.ts:339:11)
+(fail) interactive images-partial are pasted as files in order and removed after acceptance [11533.14ms]
+
+ 0 pass
+ 13 filtered out
+ 1 fail
+Ran 1 test across 1 file. [11.63s]
+
+=== claude-turn-session-red.log ===
+bun test v1.4.4 (38afee6c8)
+
+tests/claude-cli-session.test.ts:
+113 |         { type: "text", text: answer.text.slice(0, split) },
+114 |         { type: "text", text: answer.text.slice(split) },
+115 |       ],
+116 |     }
+117 |     const second = await collectClaudeCliMessages(context, follow)
+118 |     expect(detail(second)).toMatchObject({ pid: detail(reply).pid, turn: 2 })
+                                 ^
+error: expect(received).toMatchObject(expected)
+
+  {
+-   "pid": 48664,
+-   "turn": 2,
++   "args": [
++     "-p",
++     "--output-format",
++     "stream-json",
++     "--input-format",
++     "stream-json",
++     "--include-partial-messages",
++     "--verbose",
++     "--model",
++     "claude-sonnet-4-6",
++     "--tools",
++     "",
++     "--strict-mcp-config",
++     "--mcp-config",
++     "<tmp>/copilot-api-claude-run-1/mcp.json",
++     "--setting-sources",
++     "",
++     "--no-session-persistence",
++     "--dangerously-skip-permissions",
++   ],
++   "effort": "",
++   "input": [
++     {
++       "text":
++ "<external_system_instructions>
++ system instruction
++ </external_system_instructions>
++
++ Human: first question
++
++ Assistant: {"pid":48664,"turn":1,"effort":"","input":[{"type":"text","text":"<external_system_instructions>\nsystem instruction\n</external_system_instructions>\n\nHuman: first question\n\n"}],"args":["-p","--output-format","stream-json","--input-format","stream-json","--include-partial-messages","--verbose","--model","claude-sonnet-4-6","--tools","","--strict-mcp-config","--mcp-config","<tmp>/copilot-api-claude-run-2/mcp.json","--setting-sources","","--no-session-persistence","--dangerously-skip-permissions"]}
++
++ Human: second question
++
++ "
++ ,
++       "type": "text",
++     },
++   ],
++   "pid": 48667,
++   "turn": 1,
+  }
+
+- Expected  - 2
++ Received  + 41
+
+      at <anonymous> (<repo>/tests/claude-cli-session.test.ts:118:28)
+(fail) Claude CLI persistent sessions > adjacent assistant text blocks reuse the run without ignoring changed whitespace [959.62ms]
+
+tests/claude-cli-turns.test.ts:
+59 |       event({ type: "message_delta", delta: { stop_reason: "end_turn" } }),
+60 |       event({ type: "message_stop" }), { type: "result", is_error: false }],
+61 |     [],
+62 |   ])("a silent CLI turn is an error, not a successful empty answer: %j", async (...values) => {
+63 |     const events = await translate(values)
+64 |     expect(events.some((item) => item.type === "error")).toBe(true)
+                                                              ^
+error: expect(received).toBe(expected)
+
+Expected: true
+Received: false
+
+      at <anonymous> (<repo>/tests/claude-cli-turns.test.ts:64:58)
+(fail) CLI internal turn normalization > a silent CLI turn is an error, not a successful empty answer: {"type":"result","is_error":false} [0.21ms]
+59 |       event({ type: "message_delta", delta: { stop_reason: "end_turn" } }),
+60 |       event({ type: "message_stop" }), { type: "result", is_error: false }],
+61 |     [],
+62 |   ])("a silent CLI turn is an error, not a successful empty answer: %j", async (...values) => {
+63 |     const events = await translate(values)
+64 |     expect(events.some((item) => item.type === "error")).toBe(true)
+                                                              ^
+error: expect(received).toBe(expected)
+
+Expected: true
+Received: false
+
+      at <anonymous> (<repo>/tests/claude-cli-turns.test.ts:64:58)
+(fail) CLI internal turn normalization > a silent CLI turn is an error, not a successful empty answer: {"type":"stream_event","event":{"type":"message_start","message":{"id":"empty"}}} [0.06ms]
+59 |       event({ type: "message_delta", delta: { stop_reason: "end_turn" } }),
+60 |       event({ type: "message_stop" }), { type: "result", is_error: false }],
+61 |     [],
+62 |   ])("a silent CLI turn is an error, not a successful empty answer: %j", async (...values) => {
+63 |     const events = await translate(values)
+64 |     expect(events.some((item) => item.type === "error")).toBe(true)
+                                                              ^
+error: expect(received).toBe(expected)
+
+Expected: true
+Received: false
+
+      at <anonymous> (<repo>/tests/claude-cli-turns.test.ts:64:58)
+(fail) CLI internal turn normalization > a silent CLI turn is an error, not a successful empty answer: %j [0.04ms]
+
+ 0 pass
+ 45 filtered out
+ 4 fail
+ 4 expect() calls
+Ran 4 tests across 2 files. [1087.00ms]
+
+=== claude-mcp-ready-red.log ===
+bun test v1.4.4 (38afee6c8)
+
+tests/claude-cli-tui.test.ts:
+178 |
+179 | test("the first interactive prompt waits for the MCP tool list", async () => {
+180 |   process.env.FAKE_TUI_SCENARIO = "slow-mcp"
+181 |   const request = { ...payload(), tools: [{ name: "echo", input_schema: { type: "object" } }] }
+182 |   const reply = await collectClaudeCliMessages(context, request)
+183 |   expect(JSON.parse(text(reply))).toMatchObject({ toolsListed: true })
+                                        ^
+error: expect(received).toMatchObject(expected)
+
+  {
+-   "toolsListed": true,
++   "args": [
++     "--model",
++     "claude-sonnet-4-6",
++     "--tools",
++     "",
++     "--strict-mcp-config",
++     "--mcp-config",
++     "<tmp>/copilot-api-claude-run-3/mcp.json",
++     "--setting-sources",
++     "",
++     "--permission-mode",
++     "default",
++     "--allowedTools",
++     "mcp__copilotapi",
++     "--no-chrome",
++     "--session-id",
++     "2078410e-45af-4db7-9ec5-ea353fcf129f",
++   ],
++   "entrypoint": null,
++   "extraBody": null,
++   "images": [],
++   "input":
++ "Human: hi 中文
++
++ "
++ ,
++   "oauth": "test-token",
++   "pid": 49015,
++   "tap": null,
++   "toolsListed": false,
++   "turn": 1,
+  }
+
+- Expected  - 1
++ Received  + 31
+
+      at <anonymous> (<repo>/tests/claude-cli-tui.test.ts:183:35)
+(fail) the first interactive prompt waits for the MCP tool list [897.17ms]
+
+ 0 pass
+ 14 filtered out
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [997.00ms]
+
+=== claude-effort-wire-red.log ===
+bun test v1.4.4 (38afee6c8)
+
+tests/claude-cli-tui.test.ts:
+485 |   const body = JSON.stringify({ output_config: { effort: "medium", format: { type: "json_schema" } }, safeguards: ["keep"] })
+486 |   const original = { ...init, body }
+487 |   const changed = await session.fetch("https://example.com/v1/messages", original)
+488 |   await new Response(changed.body).text()
+489 |   const sent = calls.at(-1) as { init: RequestInit }
+490 |   expect(JSON.parse(sent.init.body as string)).toEqual({ output_config: { effort: "xhigh", format: { type: "json_schema" } }, safeguards: ["keep"] })
+                                                     ^
+error: expect(received).toEqual(expected)
+
+  {
+    "output_config": {
+-     "effort": "xhigh",
++     "effort": "medium",
+      "format": {
+        "type": "json_schema",
+      },
+    },
+    "safeguards": [
+      "keep",
+    ],
+  }
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (<repo>/tests/claude-cli-tui.test.ts:490:48)
+(fail) tap tees only main SSE and leaves the actual request and response bytes intact [2.69ms]
+
+ 0 pass
+ 14 filtered out
+ 1 fail
+ 10 expect() calls
+Ran 1 test across 1 file. [101.00ms]
+
+=== claude-effort-session-red.log ===
+bun test v1.4.4 (38afee6c8)
+
+tests/claude-cli-tui.test.ts:
+191 |   for (const effort of ["high", "medium"] as const) {
+192 |     request = { ...next(request, reply), output_config: { effort } }
+193 |     reply = await collectClaudeCliMessages(context, request)
+194 |     const detail = JSON.parse(text(reply)) as { pid: number; effort: string; args: Array<string> }
+195 |     expect(detail.effort).toBe(effort)
+196 |     expect(detail.pid === first.pid).toBe(scenario === "effort")
+                                           ^
+error: expect(received).toBe(expected)
+
+Expected: true
+Received: false
+
+      at <anonymous> (<repo>/tests/claude-cli-tui.test.ts:196:38)
+(fail) interactive effort changes with effort keep the selected mode [2256.30ms]
+(pass) interactive effort changes with tap keep the selected mode [3202.30ms]
+
+ 1 pass
+ 15 filtered out
+ 1 fail
+ 11 expect() calls
+Ran 2 tests across 1 file. [5.56s]
+
+=== claude-empty-exit-red.log ===
+bun test v1.4.4 (38afee6c8)
+
+tests/claude-cli-bridge.test.ts:
+[warn] claude-cli: Claude Code wrote to stderr before exiting { code: 1, stderr: 'fake claude: not signed in' }
+(pass) claude cli bridge failures > reports a silent fail without leaking stderr to the client [801.91ms]
+525 |     try {
+526 |       await streamClaudeCliMessages(context, userPayload("hi"))
+527 |       throw new Error("expected a throw")
+528 |     } catch (error) {
+529 |       const message = (error as Error).message
+530 |       expect(message).toContain(scenario === "fail" ? "exited with code 1" : "without an answer")
+                            ^
+error: expect(received).toContain(expected)
+
+Expected to contain: "without an answer"
+Received: "expected a throw"
+
+      at <anonymous> (<repo>/tests/claude-cli-bridge.test.ts:530:23)
+(fail) claude cli bridge failures > reports a silent empty-exit without leaking stderr to the client [224.29ms]
+
+ 1 pass
+ 21 filtered out
+ 1 fail
+ 4 expect() calls
+Ran 2 tests across 1 file. [1132.00ms]
+
+=== claude-schema-red.log ===
+bun test v1.4.4 (38afee6c8)
+
+tests/claude-cli-tool-names.test.ts:
+(pass) ordinary object schemas and nested constraints remain unchanged [0.32ms]
+54 |           required: ["mode", "path"],
+55 |         },
+56 |       ],
+57 |     }
+58 |     const before = structuredClone(input)
+59 |     expect(bridgedSchema(input)).toEqual({
+                                      ^
+error: expect(received).toEqual(expected)
+
+  {
+    "$defs": {
+      "value": {
+        "anyOf": [
+          {
+            "type": "string",
+          },
+          {
+            "type": "number",
+          },
+        ],
+      },
+    },
+-   "properties": {
+-     "code": {
+-       "anyOf": [
+-         {
+-           "type": "string",
++   "oneOf": [
++     {
++       "properties": {
++         "code": {
++           "anyOf": [
++             {
++               "type": "string",
++             },
++             {
++               "type": "number",
++             },
++           ],
+          },
+-         {
+-           "type": "number",
++         "mode": {
++           "const": "read",
+          },
++       },
++       "required": [
++         "mode",
++         "code",
+        ],
++       "type": "object",
+      },
+-     "mode": {
+-       "anyOf": [
+-         {
+-           "const": "read",
++     {
++       "properties": {
++         "mode": {
++           "const": "write",
+          },
+-         {
+-           "const": "write",
++         "path": {
++           "type": "string",
+          },
++       },
++       "required": [
++         "mode",
++         "path",
+        ],
+-     },
+-     "path": {
+-       "type": "string",
++       "type": "object",
+      },
+-   },
+-   "required": [
+-     "mode",
+    ],
+    "title": "Browser command",
+-   "type": "object",
+  }
+
+- Expected  - 20
++ Received  + 30
+
+      at <anonymous> (<workspace>/tests/claude-cli-tool-names.test.ts:59:34)
+(fail) root oneOf keeps property variants and only shared required names [0.62ms]
+(pass) root oneOf with an optional branch does not invent required names [0.03ms]
+54 |           required: ["mode", "path"],
+55 |         },
+56 |       ],
+57 |     }
+58 |     const before = structuredClone(input)
+59 |     expect(bridgedSchema(input)).toEqual({
+                                      ^
+error: expect(received).toEqual(expected)
+
+  {
+    "$defs": {
+      "value": {
+        "anyOf": [
+          {
+            "type": "string",
+          },
+          {
+            "type": "number",
+          },
+        ],
+      },
+    },
+-   "properties": {
+-     "code": {
+-       "anyOf": [
+-         {
+-           "type": "string",
++   "anyOf": [
++     {
++       "properties": {
++         "code": {
++           "anyOf": [
++             {
++               "type": "string",
++             },
++             {
++               "type": "number",
++             },
++           ],
+          },
+-         {
+-           "type": "number",
++         "mode": {
++           "const": "read",
+          },
++       },
++       "required": [
++         "mode",
++         "code",
+        ],
++       "type": "object",
+      },
+-     "mode": {
+-       "anyOf": [
+-         {
+-           "const": "read",
++     {
++       "properties": {
++         "mode": {
++           "const": "write",
+          },
+-         {
+-           "const": "write",
++         "path": {
++           "type": "string",
+          },
++       },
++       "required": [
++         "mode",
++         "path",
+        ],
+-     },
+-     "path": {
+-       "type": "string",
++       "type": "object",
+      },
+-   },
+-   "required": [
+-     "mode",
+    ],
+    "title": "Browser command",
+-   "type": "object",
+  }
+
+- Expected  - 20
++ Received  + 30
+
+      at <anonymous> (<workspace>/tests/claude-cli-tool-names.test.ts:59:34)
+(fail) root anyOf keeps property variants and only shared required names [0.10ms]
+(pass) root anyOf with an optional branch does not invent required names
+92 |       { properties: { code: { minLength: 1 } }, required: ["code"] },
+93 |       { properties: { path: { type: "string" } }, required: ["path"] },
+94 |     ],
+95 |   }
+96 |   const before = structuredClone(input)
+97 |   expect(bridgedSchema(input)).toEqual({
+                                    ^
+error: expect(received).toEqual(expected)
+
+  {
+    "additionalProperties": false,
+-   "properties": {
+-     "code": {
+-       "allOf": [
+-         {
+-           "type": "string",
+-         },
+-         {
++   "allOf": [
++     {
++       "properties": {
++         "code": {
+            "minLength": 1,
+          },
++       },
++       "required": [
++         "code",
+        ],
+      },
+-     "path": {
++     {
++       "properties": {
++         "path": {
++           "type": "string",
++         },
++       },
++       "required": [
++         "path",
++       ],
++     },
++   ],
++   "properties": {
++     "code": {
+        "type": "string",
+      },
+    },
+    "required": [
+      "code",
+-     "path",
+    ],
+    "type": "object",
+  }
+
+- Expected  - 9
++ Received  + 20
+
+      at <anonymous> (<workspace>/tests/claude-cli-tool-names.test.ts:97:32)
+(fail) root allOf intersects shared property constraints and unions required names [0.10ms]
+118 |         ],
+119 |       },
+120 |       { properties: { extra: { type: "boolean" } }, required: ["extra"] },
+121 |     ],
+122 |   }
+123 |   expect(bridgedSchema(input)).toEqual({
+                                     ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "properties": {
+-     "base": {
+-       "type": "string",
+-     },
+-     "extra": {
+-       "type": "boolean",
+-     },
+-     "mode": {
+-       "anyOf": [
++   "allOf": [
++     {
++       "oneOf": [
+          {
+-           "const": "a",
++           "properties": {
++             "mode": {
++               "const": "a",
++             },
++           },
++           "required": [
++             "mode",
++           ],
+          },
+          {
+-           "const": "b",
++           "properties": {
++             "mode": {
++               "const": "b",
++             },
++           },
++           "required": [
++             "mode",
++           ],
+          },
+        ],
++     },
++     {
++       "properties": {
++         "extra": {
++           "type": "boolean",
++         },
++       },
++       "required": [
++         "extra",
++       ],
++     },
++   ],
++   "properties": {
++     "base": {
++       "type": "string",
+      },
+    },
+    "required": [
+      "base",
+-     "mode",
+-     "extra",
+    ],
+-   "type": "object",
+  }
+
+- Expected  - 14
++ Received  + 34
+
+      at <anonymous> (<workspace>/tests/claude-cli-tool-names.test.ts:123:32)
+(fail) root combinators compose without flattening property-level unions [0.09ms]
+(pass) tool_choice none preserves the same MCP definitions for the prompt cache [0.04ms]
+(pass) names Claude Code would rewrite get a legal name of their own, unique and stable [0.11ms]
+(pass) a tool call comes back under the name the client declared [1.45ms]
+(pass) the prompt names tools as Claude Code lists them [0.17ms]
+(pass) a background sub-agent's notification beside the results reaches the run [0.32ms]
+(pass) the user's mid-turn words go on as theirs; the client's own reminders do not [0.04ms]
+
+ 9 pass
+ 4 fail
+ 27 expect() calls
+Ran 13 tests across 1 file. [23.00ms]

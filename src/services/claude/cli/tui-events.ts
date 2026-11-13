@@ -10,11 +10,42 @@ interface StreamState {
   id?: string
   dropped: boolean
   open: boolean
+  limits?: JsonObject
 }
 interface WholeMessage {
   message: JsonObject
   blocks: Array<JsonObject>
   updated: number
+}
+
+function replyLimits(value: unknown): JsonObject | undefined {
+  const headers = jsonObject(value)
+  if (!headers) return
+  const unifiedWindows: JsonObject = {}
+  for (const [name, key] of [
+    ["5h", "five_hour"],
+    ["7d", "seven_day"],
+    ["7d_oi", "seven_day_overage_included"],
+  ]) {
+    const used = headers[`anthropic-ratelimit-unified-${name}-utilization`]
+    const reset = headers[`anthropic-ratelimit-unified-${name}-reset`]
+    if (
+      typeof used !== "string"
+      || !used.trim()
+      || typeof reset !== "string"
+      || !reset.trim()
+      || !Number.isFinite(Number(used))
+      || !Number.isFinite(Number(reset))
+    )
+      continue
+    unifiedWindows[key] = {
+      utilization: Number(used),
+      resetsAt: Math.round(Number(reset)),
+    }
+  }
+  if (!Object.keys(unifiedWindows).length) return
+  const status = headers["anthropic-ratelimit-unified-status"]
+  return { unifiedWindows, ...(typeof status === "string" ? { status } : {}) }
 }
 
 /** Merge tapped SSE with persisted messages without emitting either reply twice. */
@@ -31,6 +62,8 @@ export class ClaudeTuiEvents {
   private failed = false
   private busy = false
   private stopReason: unknown
+  private limitsTold = 0
+  private pendingLimits: { stream: number; info: JsonObject } | undefined
   private readonly emit: (value: unknown) => void
   constructor(emit: (value: unknown) => void) {
     this.emit = emit
@@ -40,7 +73,11 @@ export class ClaudeTuiEvents {
     const row = jsonObject(value)
     if (!row || typeof row.s !== "number") return
     if (row.open) {
-      this.streams.set(row.s, { dropped: false, open: true })
+      this.streams.set(row.s, {
+        dropped: false,
+        open: true,
+        limits: replyLimits(row.h),
+      })
       return
     }
     const stream = this.streams.get(row.s)
@@ -54,12 +91,25 @@ export class ClaudeTuiEvents {
           stream.dropped =
             this.whole.has(message.id) || this.completed.has(message.id)
           if (!stream.dropped) this.streamed.add(message.id)
+          if (!stream.dropped && stream.limits) {
+            this.tellLimits(row.s, stream.limits)
+            stream.limits = undefined
+          }
         }
       }
       if (!stream.dropped) this.wire(event)
     }
     if (row.end) {
       stream.open = false
+      if (
+        stream.limits
+        && row.s > this.limitsTold
+        && row.s >= (this.pendingLimits?.stream ?? 0)
+      )
+        this.pendingLimits = { stream: row.s, info: stream.limits }
+      stream.limits = undefined
+      if (!this.busy && stream.id && this.completed.has(stream.id))
+        this.settleLimits()
       if (row.end === "cut" && !stream.dropped)
         this.error("Claude Code interactive stream was interrupted")
     }
@@ -79,7 +129,13 @@ export class ClaudeTuiEvents {
     if (row.type === "assistant" && message) {
       if (row.isApiErrorMessage || message.model === "<synthetic>") {
         const info = jsonObject(row.apiErrorParams)?.rate_limit_info
-        if (info) this.emit({ type: "rate_limit_event", rate_limit_info: info })
+        if (info) {
+          // A synthetic error is newer than the reply headers already read.
+          this.settleLimits()
+          this.limitsTold = Math.max(this.limitsTold, ...this.streams.keys())
+          for (const stream of this.streams.values()) stream.limits = undefined
+          this.emit({ type: "rate_limit_event", rate_limit_info: info })
+        }
         // A refusal can be retracted when Claude Code retries or changes models.
         if (message.stop_reason === "refusal") {
           this.stopReason = "refusal"
@@ -133,6 +189,7 @@ export class ClaudeTuiEvents {
     }
     this.flushWhole(true)
     this.finishWhole()
+    this.settleLimits()
     if (!this.failed)
       this.emit({
         type: "result",
@@ -153,6 +210,25 @@ export class ClaudeTuiEvents {
     this.streams.clear()
     this.streamed.clear()
     this.whole.clear()
+  }
+
+  private tellLimits(stream: number, info: JsonObject): void {
+    if (stream <= this.limitsTold) return
+    this.emit({ type: "rate_limit_event", rate_limit_info: info })
+    this.limitsTold = stream
+    if (this.pendingLimits && this.pendingLimits.stream <= stream)
+      this.pendingLimits = undefined
+  }
+
+  private settleLimits(): void {
+    for (const [number, stream] of this.streams) {
+      if (stream.limits && number >= (this.pendingLimits?.stream ?? 0))
+        this.pendingLimits = { stream: number, info: stream.limits }
+      stream.limits = undefined
+    }
+    const limits = this.pendingLimits
+    this.pendingLimits = undefined
+    if (limits) this.tellLimits(limits.stream, limits.info)
   }
 
   private flushWhole(finish = false): void {

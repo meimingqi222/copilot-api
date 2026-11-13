@@ -53,6 +53,30 @@ async function translate(values: Array<unknown>, structured = false) {
 }
 
 describe("CLI internal turn normalization", () => {
+  test.each([
+    [{ type: "result", is_error: false }],
+    [
+      event({ type: "message_start", message: { id: "empty" } }),
+      event({ type: "message_delta", delta: { stop_reason: "end_turn" } }),
+      event({ type: "message_stop" }),
+      { type: "result", is_error: false },
+    ],
+  ])(
+    "a silent CLI turn is an error, not a successful empty answer: %j",
+    async (...values) => {
+      const events = await translate(values)
+      expect(events.some((item) => item.type === "error")).toBe(true)
+      await expect(
+        collectAnthropicResponse(
+          (async function* () {
+            yield* events
+          })(),
+          "test",
+        ),
+      ).rejects.toThrow("without an answer")
+    },
+  )
+
   test.each([0, 429])(
     "standing refusal keeps its stop reason but a later HTTP %s stays an error",
     async (status) => {

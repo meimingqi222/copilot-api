@@ -16,6 +16,121 @@ import {
 
 const schema = { type: "object", properties: {} }
 
+function bridgedSchema(inputSchema: Record<string, unknown>) {
+  return bridgeTools(
+    payload({ tools: [{ name: "schema_tool", input_schema: inputSchema }] }),
+  ).find((tool) => tool.name === "schema_tool")!.inputSchema
+}
+
+test("ordinary object schemas and nested constraints remain unchanged", () => {
+  const input = {
+    type: "object",
+    properties: {
+      value: { oneOf: [{ type: "string" }, { type: "number" }] },
+      options: { allOf: [{ type: "object" }, { required: ["nested"] }] },
+    },
+    required: ["value"],
+    additionalProperties: false,
+    $defs: { nested: { anyOf: [{ type: "null" }, { type: "string" }] } },
+  }
+  expect(bridgedSchema(input)).toEqual(input)
+})
+
+for (const union of ["oneOf", "anyOf"]) {
+  test(`root ${union} keeps property variants and only shared required names`, () => {
+    const nested = { anyOf: [{ type: "string" }, { type: "number" }] }
+    const input = {
+      title: "Browser command",
+      $defs: { value: nested },
+      [union]: [
+        {
+          type: "object",
+          properties: { mode: { const: "read" }, code: nested },
+          required: ["mode", "code"],
+        },
+        {
+          type: "object",
+          properties: { mode: { const: "write" }, path: { type: "string" } },
+          required: ["mode", "path"],
+        },
+      ],
+    }
+    const before = structuredClone(input)
+    expect(bridgedSchema(input)).toEqual({
+      type: "object",
+      title: "Browser command",
+      $defs: { value: nested },
+      properties: {
+        mode: { anyOf: [{ const: "read" }, { const: "write" }] },
+        code: nested,
+        path: { type: "string" },
+      },
+      required: ["mode"],
+    })
+    expect(input).toEqual(before)
+  })
+
+  test(`root ${union} with an optional branch does not invent required names`, () => {
+    expect(
+      bridgedSchema({
+        [union]: [
+          { properties: { code: { type: "string" } }, required: ["code"] },
+          { type: "object", properties: {} },
+        ],
+      }).required ?? [],
+    ).toEqual([])
+  })
+}
+
+test("root allOf intersects shared property constraints and unions required names", () => {
+  const input = {
+    type: "object",
+    properties: { code: { type: "string" } },
+    required: ["code"],
+    additionalProperties: false,
+    allOf: [
+      { properties: { code: { minLength: 1 } }, required: ["code"] },
+      { properties: { path: { type: "string" } }, required: ["path"] },
+    ],
+  }
+  const before = structuredClone(input)
+  expect(bridgedSchema(input)).toEqual({
+    type: "object",
+    properties: {
+      code: { allOf: [{ type: "string" }, { minLength: 1 }] },
+      path: { type: "string" },
+    },
+    required: ["code", "path"],
+    additionalProperties: false,
+  })
+  expect(input).toEqual(before)
+})
+
+test("root combinators compose without flattening property-level unions", () => {
+  const input = {
+    required: ["base"],
+    properties: { base: { type: "string" } },
+    allOf: [
+      {
+        oneOf: [
+          { properties: { mode: { const: "a" } }, required: ["mode"] },
+          { properties: { mode: { const: "b" } }, required: ["mode"] },
+        ],
+      },
+      { properties: { extra: { type: "boolean" } }, required: ["extra"] },
+    ],
+  }
+  expect(bridgedSchema(input)).toEqual({
+    type: "object",
+    properties: {
+      base: { type: "string" },
+      mode: { anyOf: [{ const: "a" }, { const: "b" }] },
+      extra: { type: "boolean" },
+    },
+    required: ["base", "mode", "extra"],
+  })
+})
+
 test("tool_choice none preserves the same MCP definitions for the prompt cache", () => {
   expect(bridgeTools(payload({ tool_choice: { type: "none" } }))).toEqual(
     bridgeTools(payload()),

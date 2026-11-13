@@ -30,13 +30,30 @@ export function sessionKey(
     if (Object.keys(output).length) config.output_config = output
     else delete config.output_config
   }
-  const history = messages.map((message) => ({
-    role: message.role,
-    content:
+  const history = messages.map((message) => {
+    const blocks =
       typeof message.content === "string" ?
-        [{ type: "text", text: message.content }]
-      : message.content,
-  }))
+        [{ type: "text" as const, text: message.content }]
+      : message.content
+    // Text partitioning is not a history edit. Preserve whitespace and every
+    // non-text boundary, especially separately signed thinking blocks.
+    const content: Array<(typeof blocks)[number]> = []
+    for (const block of blocks) {
+      const previous = content.at(-1)
+      if (
+        message.role === "assistant"
+        && block.type === "text"
+        && previous?.type === "text"
+        && Object.keys(block).every((key) => key === "type" || key === "text")
+        && Object.keys(previous).every(
+          (key) => key === "type" || key === "text",
+        )
+      )
+        previous.text += block.text
+      else content.push({ ...block })
+    }
+    return { role: message.role, content }
+  })
   return createHash("sha256")
     .update(JSON.stringify(stable({ owner, config, history })))
     .digest("hex")

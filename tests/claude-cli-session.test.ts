@@ -100,6 +100,31 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
 }
 
 describe("Claude CLI persistent sessions", () => {
+  test("adjacent assistant text blocks reuse the run without ignoring changed whitespace", async () => {
+    const request = payload()
+    const reply = await collectClaudeCliMessages(context, request)
+    const follow = nextPayload(request, reply)
+    const answer = reply.content.find((block) => block.type === "text")!
+    if (answer.type !== "text") throw new Error("expected text")
+    const split = Math.floor(answer.text.length / 2)
+    follow.messages[1] = {
+      role: "assistant",
+      content: [
+        { type: "text", text: answer.text.slice(0, split) },
+        { type: "text", text: answer.text.slice(split) },
+      ],
+    }
+    const second = await collectClaudeCliMessages(context, follow)
+    expect(detail(second)).toMatchObject({ pid: detail(reply).pid, turn: 2 })
+    const changed = nextPayload(follow, second)
+    changed.messages[1] = {
+      role: "assistant",
+      content: [{ type: "text", text: answer.text + " " }],
+    }
+    const third = await collectClaudeCliMessages(context, changed)
+    expect(detail(third).pid).not.toBe(detail(reply).pid)
+  })
+
   test.each(["none", "no-tools"])(
     "a title request with %s leaves the main conversation available",
     async (choice) => {

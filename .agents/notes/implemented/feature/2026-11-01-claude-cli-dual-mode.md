@@ -43,9 +43,25 @@ undici Agent is a stub that ignores the required connector. Fetches are direct
 and carry no account credentials. Each image is at most 5 MB; message files and
 the per-run URL cache are capped at 20 MB, with 20 files per message and 32 cached
 URLs. Files are pasted in order, waiting for Claude Code's image acknowledgment,
-then deleted after the user row is persisted. Acknowledgments use only output
-since the current paste; retained markers from previous turns must not release
-the wait before Claude finishes loading the new image. Downloads stop on cancellation.
+then deleted after the user row is persisted. The complete terminal grid is
+retained across pastes: Claude Code can repaint only the digit of an image
+marker and reuse its other cells. A second grid contains only cells painted
+since this paste. Acknowledgments use that fresh output, or a changed prompt
+ending in the expected marker; an unchanged old prompt must not acknowledge a
+new image. Downloads stop on cancellation.
+
+Before the first paste, the prompt and a completed MCP `tools/list` are both
+required. `src/services/claude/cli/mcp-helper.ts` writes the per-run listed file
+after sending its tools. A drawn prompt alone is not proof that tools loaded.
+
+Interactive effort changes use the existing acknowledged control channel.
+`src/services/claude/cli/tui-tap.js` reads an atomically replaced per-run effort
+file and changes only `output_config.effort` on main Messages requests. Other
+body fields, background requests and the caller's Request/init remain intact.
+The helper accepts updates only after the tap has processed a main request.
+Without that handshake, or when restoring an implicit default in a run started
+with explicit `--effort`, the bridge restarts in interactive mode. It never
+types `/effort` (which can change saved account defaults) or falls back to `-p`.
 
 `src/services/claude/cli/tui-events.ts` joins main tapped SSE with the session
 transcript by message ID. Streamed replies suppress their persisted twin;
@@ -63,6 +79,33 @@ can finish a turn before the next tap read observes that reply. Clearing every
 ID at result delivery lets that late copy contaminate the next response.
 Both late tapped messages and late transcript copies are suppressed; per-turn
 stream state is still cleared and the recent history is bounded for long runs.
+
+The 2026-11-13 follow-up was checked against Magpie main
+`363adb352806f4b2a52673672a83b62f89313daa` (latest release `v0.1.3961`):
+`b7631300ec6a` supplies successful replies' allowance from the main response
+headers; `9e6687e3a5d1` and `325dc3ab3233` cover startup dialogs and undrawn
+process diagnostics; `fe6533ad8bf7` drains terminal output before recording exit.
+The tap copies only `anthropic-ratelimit-unified-*` headers. The event merger
+tells their finite window readings before `message_start`, or after a complete
+transcript message at turn settlement, never merely when the headers arrive.
+Stream sequence numbers prevent an older reading overwriting a newer one;
+synthetic errors' readings supersede all already-read tap headers.
+After a transcript turn-end row the helper rereads the tap before settlement:
+its first read can have hit EOF just before the reply wrote its headers.
+A late duplicate of an already-completed message may still report its latest
+allowance at its stream end while idle, without replaying the answer or waiting
+for another turn. The completed-message regression covers both contracts.
+
+Startup retains the terminal grid while retrying ignored onboarding keys.
+Chrome is declined with Esc; Bypass Permissions consent is never given, even
+in our config directory, because our allowed-tools contract does not need it.
+An undrawn run reports byte count and, on POSIX, descendant program names and
+memory. A detected macOS `security find-generic-password` descendant is reported
+as a pending Keychain read, not proof of a locked keychain. Process arguments
+are never included in these diagnostics. Terminal exit waits briefly for final
+PTY bytes and queued screen parsing. None of these failures retries as Print.
+Magpie's Go-specific PTY changes and terminal `/usage` fixes are not ported:
+this bridge uses Bun's PTY and fetches quota directly through the OAuth API.
 
 ## Alternatives considered
 
@@ -120,3 +163,43 @@ without PTY timing or sleeps. Natural-red output is retained in
 `.agents/notes-evidence/claude-late-tap-red.log`. The CI image test did not retain
 its malformed response, so this proves the implementation defect and matching
 failure mechanism, not that this was the only possible cause of that CI run.
+
+- `tests/claude-cli-tui.test.ts::interactive %s are pasted as files in order and removed after acceptance`
+  covers partial-number redraws, 19 interleaved images over two turns, exact
+  byte/order delivery, file cleanup and same-process reuse.
+- `tests/claude-cli-tui.test.ts::the first interactive prompt waits for the MCP tool list`
+  runs the production MCP helper with a delayed list request.
+- `tests/claude-cli-tui.test.ts::interactive effort changes with %s from %s keep the selected mode`
+  covers same-process updates, restoring the default and no-tap restarts.
+- `tests/claude-cli-tui.test.ts::tap tees only main SSE and leaves the actual request and response bytes intact`
+  checks actual outgoing effort for JSON-string and Request bodies, preserves
+  safeguards/format, and controls background requests and removed overrides.
+- `tests/claude-cli-tui.test.ts::a silent interactive turn fails with 502`
+  checks both streaming and non-streaming admission and run cleanup.
+
+Proved: Before the fixes, the real PTY fixture's partial image-number redraw
+timed out with HTTP 502; the slow MCP fixture answered with `toolsListed:false`;
+effort updates restarted the run, and the tap sent medium instead of xhigh.
+Sanitized failing output is retained in
+`.agents/notes-evidence/claude-cli-parity-red.log`. The image red used two
+images; the green regression was then extended to 19 per turn. These tests use
+real PTYs and the production bridge with a fake Claude executable, not paid
+Claude inference; they reproduce the terminal mechanism, not a live account's
+version-specific rendering.
+
+- `tests/claude-cli-tui.test.ts::interactive reply limits keep the newest observation when old streams end %s`
+  checks both stream completion orders and newer synthetic errors.
+- `tests/claude-cli-tui.test.ts::transcript replies defer tapped limits until the complete message ends`
+  protects transcript fallback from mid-message allowance delivery.
+- `tests/claude-cli-tui.test.ts::a successful interactive response updates the credential allowance (stream=%s)`
+  exercises the PTY, event translation and typed credential quota together.
+- `tests/claude-cli-tui.test.ts::interactive startup diagnostics explain %s without exposing process arguments`
+  checks refusal of unsafe consent, final output and a simulated waiting
+  Keychain subprocess. It never invokes the real Keychain or reads credentials.
+
+Proved: Before this follow-up, allowance events were absent (five assertions
+failed), the Chrome offer was misread as the prompt and the turn failed with
+502, and an early exit lost Claude Code's startup explanation. Sanitized natural
+red output is in `.agents/notes-evidence/claude-magpie-followup-red.log`.
+These regressions and their green reruns use fake Claude processes with real
+PTYs, not paid inference or a live locked Keychain.

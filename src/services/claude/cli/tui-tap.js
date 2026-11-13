@@ -10,9 +10,11 @@ import fs from "node:fs"
 ;(() => {
   const file = process.env.COPILOT_API_CLAUDE_TAP
   if (!file) return
+  const effortFile = process.env.COPILOT_API_CLAUDE_EFFORT
   // none of it is handed on to what Claude Code runs, nor says it is here
   delete process.env.COPILOT_API_CLAUDE_TAP
   delete process.env.COPILOT_API_CLAUDE_PRELOAD
+  delete process.env.COPILOT_API_CLAUDE_EFFORT
   const ours = /(^|\s)--preload(=|\s+)\S*\.copilot-tui-\S*/
   const opts = (process.env.BUN_OPTIONS || "").replace(ours, "").trim()
   if (opts) process.env.BUN_OPTIONS = opts
@@ -81,15 +83,38 @@ import fs from "node:fs"
   }
   class FetchSession extends Real {
     async fetch(input, init) {
+      const url = String((input && input.url) || input)
+      const headers = new Headers(
+        (init && init.headers) || (input && input.headers) || undefined,
+      )
+      const main =
+        headers.get("x-claude-code-request-class") === "main"
+        && /\/v1\/messages(\?|$)/.test(url)
+      if (main && effortFile) {
+        const { effort } = JSON.parse(fs.readFileSync(effortFile, "utf8"))
+        if (typeof effort === "string" && effort) {
+          const body =
+            typeof init?.body === "string" ? init.body
+            : input instanceof Request && !init?.body ?
+              await input.clone().text()
+            : undefined
+          if (body === undefined)
+            throw new Error("Interactive effort requires a JSON request body")
+          const payload = JSON.parse(body)
+          init = {
+            ...init,
+            body: JSON.stringify({
+              ...payload,
+              output_config: { ...payload.output_config, effort },
+            }),
+          }
+        }
+        fs.writeFileSync(effortFile + ".live", "", { mode: 0o600 })
+      }
       const res = await super.fetch(input, init)
       try {
-        const url = String((input && input.url) || input)
-        const headers = new Headers(
-          (init && init.headers) || (input && input.headers) || undefined,
-        )
         if (
-          headers.get("x-claude-code-request-class") === "main"
-          && /\/v1\/messages(\?|$)/.test(url)
+          main
           && res.body
           && (res.headers.get("content-type") || "").startsWith(
             "text/event-stream",
@@ -103,7 +128,12 @@ import fs from "node:fs"
           // told before Claude Code has the reply, so the helper knows a
           // stream is coming before any of its messages
           const s = ++streams
-          put({ s, open: true })
+          const h = Object.fromEntries(
+            [...res.headers].filter(([name]) =>
+              name.startsWith("anthropic-ratelimit-unified-"),
+            ),
+          )
+          put({ s, open: true, h })
           read(s, mine)
         }
       } catch {}

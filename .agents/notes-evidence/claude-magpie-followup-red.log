@@ -1,0 +1,197 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/claude-cli-tui.test.ts:
+511 |     // An open header alone must not interrupt a message in progress.
+512 |     expect(output).toEqual([])
+513 |     events.tap({ s: 2, e: {
+514 |       type: "message_start", message: { id: "new", content: [] },
+515 |     } })
+516 |     expect(output[0]).toMatchObject({
+                            ^
+error: expect(received).toMatchObject(expected)
+
+  {
+-   "rate_limit_info": {
+-     "unifiedWindows": {
+-       "five_hour": {
+-         "resetsAt": 1800000001,
+-         "utilization": 0.42,
+-       },
++   "event": {
++     "message": {
++       "content": [],
++       "id": "new",
+      },
++     "type": "message_start",
+    },
+-   "type": "rate_limit_event",
++   "type": "stream_event",
+  }
+
+- Expected  - 7
++ Received  + 6
+
+      at <anonymous> (<repo>/tests/claude-cli-tui.test.ts:516:23)
+(fail) interactive reply limits keep the newest observation when old streams end before [0.90ms]
+511 |     // An open header alone must not interrupt a message in progress.
+512 |     expect(output).toEqual([])
+513 |     events.tap({ s: 2, e: {
+514 |       type: "message_start", message: { id: "new", content: [] },
+515 |     } })
+516 |     expect(output[0]).toMatchObject({
+                            ^
+error: expect(received).toMatchObject(expected)
+
+  {
+-   "rate_limit_info": {
+-     "unifiedWindows": {
+-       "five_hour": {
+-         "resetsAt": 1800000001,
+-         "utilization": 0.42,
+-       },
++   "event": {
++     "message": {
++       "content": [],
++       "id": "new",
+      },
++     "type": "message_start",
+    },
+-   "type": "rate_limit_event",
++   "type": "stream_event",
+  }
+
+- Expected  - 7
++ Received  + 6
+
+      at <anonymous> (<repo>/tests/claude-cli-tui.test.ts:516:23)
+(fail) interactive reply limits keep the newest observation when old streams end after [0.27ms]
+511 |     // An open header alone must not interrupt a message in progress.
+512 |     expect(output).toEqual([])
+513 |     events.tap({ s: 2, e: {
+514 |       type: "message_start", message: { id: "new", content: [] },
+515 |     } })
+516 |     expect(output[0]).toMatchObject({
+                            ^
+error: expect(received).toMatchObject(expected)
+
+  {
+-   "rate_limit_info": {
+-     "unifiedWindows": {
+-       "five_hour": {
+-         "resetsAt": 1800000001,
+-         "utilization": 0.42,
+-       },
++   "event": {
++     "message": {
++       "content": [],
++       "id": "new",
+      },
++     "type": "message_start",
+    },
+-   "type": "rate_limit_event",
++   "type": "stream_event",
+  }
+
+- Expected  - 7
++ Received  + 6
+
+      at <anonymous> (<repo>/tests/claude-cli-tui.test.ts:516:23)
+(fail) interactive reply limits keep the newest observation when old streams end error [0.24ms]
+566 |   expect(output).toEqual([])
+567 |   events.transcript({ type: "system", subtype: "turn_duration" })
+568 |   events.tick()
+569 |   const types = output.map((row) => row.type === "stream_event" ?
+570 |     (row.event as { type: string }).type : row.type)
+571 |   expect(types.indexOf("rate_limit_event")).toBeGreaterThan(types.indexOf("message_stop"))
+                                                  ^
+error: expect(received).toBeGreaterThan(expected)
+
+Expected: > 5
+Received: -1
+
+      at <anonymous> (<repo>/tests/claude-cli-tui.test.ts:571:45)
+(fail) transcript replies defer tapped limits until the complete message ends [0.53ms]
+638 |   const response = await session.fetch("https://example.com/v1/messages", init)
+639 |   expect(await new Response(response.body).text()).toBe(frames)
+640 |   for (let n = 0; n < 50 && !rows.some((row) => row.end); n++)
+641 |     await Bun.sleep(1)
+642 |   expect(calls[0]).toEqual({ input: "https://example.com/v1/messages", init })
+643 |   expect(rows.find((row) => row.open)?.h).toEqual({
+                                                ^
+error: expect(received).toEqual(expected)
+
+- {
+-   "anthropic-ratelimit-unified-5h-reset": "1800000000.6",
+-   "anthropic-ratelimit-unified-5h-utilization": "0.42",
+- }
++ undefined
+
+- Expected  - 4
++ Received  + 1
+
+      at <anonymous> (<repo>/tests/claude-cli-tui.test.ts:643:43)
+(fail) tap tees only main SSE and leaves the actual request and response bytes intact [2.47ms]
+
+ 0 pass
+ 20 filtered out
+ 5 fail
+ 11 expect() calls
+Ran 5 tests across 1 file. [115.00ms]
+bun test v1.4.4 (38afee6c8)
+
+tests/claude-cli-tui.test.ts:
+163 |   const status =
+164 |     quota ? 429
+165 |     : tooLong ? 400
+166 |     : 502
+167 |   const text = tooLong ? message + TOO_LONG_HINT : message
+168 |   return new HTTPError(
+               ^
+error: Claude Code interactive bridge failed; select -p mode or check the server installation
+   response: Response (144 bytes) {
+  ok: false,
+  url: "",
+  status: 502,
+  statusText: "",
+  headers: Headers {
+    "content-type": "application/json",
+  },
+  redirected: false,
+  bodyUsed: false,
+  Blob (144 bytes)
+},
+ responseBody: "Claude Code interactive bridge failed; select -p mode or check the server installation",
+ reportedUsage: undefined,
+ serviceTier: undefined,
+
+      at toHttpError (<repo>/src/services/claude/cli/errors.ts:168:10)
+      at withHeadPeek (<repo>/src/services/claude/cli/bridge.ts:339:11)
+(fail) real PTY chrome output keeps text, usage and a persistent second turn [11407.38ms]
+
+ 0 pass
+ 24 filtered out
+ 1 fail
+Ran 1 test across 1 file. [11.51s]
+bun test v1.4.4 (38afee6c8)
+
+tests/claude-cli-tui.test.ts:
+790 |       expect(code).toBe(1)
+791 |       expect(stdout).toContain("copilot_tui_unavailable")
+792 |       expect(stdout).not.toContain('"subtype":"init"')
+793 |       expect(stdout).not.toContain("UNSAFE_ACCEPTED")
+794 |       if (scenario === "bypass") expect(stderr).toContain("Bypass Permissions")
+795 |       if (scenario === "startup-fail") expect(stderr).toContain("startup explanation from Claude Code")
+                                                            ^
+error: expect(received).toContain(expected)
+
+Expected to contain: "startup explanation from Claude Code"
+Received: "claude-tui: Error: Error: Interactive prompt unavailable\n"
+
+      at <anonymous> (<repo>/tests/claude-cli-tui.test.ts:795:55)
+(fail) interactive startup diagnostics explain startup-fail without exposing process arguments [3159.61ms]
+
+ 0 pass
+ 27 filtered out
+ 1 fail
+ 5 expect() calls
+Ran 1 test across 1 file. [3.26s]

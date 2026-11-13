@@ -520,18 +520,23 @@ describe("claude cli bridge failures", () => {
    * paths or user content. It is logged for the operator but must never be
    * forwarded to the API client.
    */
-  test("reports a non-zero exit without leaking stderr to the client", async () => {
-    process.env.FAKE_CLAUDE_SCENARIO = "fail"
-    try {
-      await streamClaudeCliMessages(context, userPayload("hi"))
-      throw new Error("expected a throw")
-    } catch (error) {
-      const message = (error as Error).message
-      expect(message).toContain("exited with code 1")
-      expect(message).not.toContain("not signed in")
-      expect(message).not.toContain("fake claude")
-    }
-  })
+  test.each(["fail", "empty-exit"])(
+    "reports a silent %s without leaking stderr to the client",
+    async (scenario) => {
+      process.env.FAKE_CLAUDE_SCENARIO = scenario
+      try {
+        await streamClaudeCliMessages(context, userPayload("hi"))
+        throw new Error("expected a throw")
+      } catch (error) {
+        const message = (error as Error).message
+        expect(message).toContain(
+          scenario === "fail" ? "exited with code 1" : "without an answer",
+        )
+        expect(message).not.toContain("not signed in")
+        expect(message).not.toContain("fake claude")
+      }
+    },
+  )
 
   test("a failed run leaves no registered run behind", async () => {
     process.env.FAKE_CLAUDE_SCENARIO = "error"
