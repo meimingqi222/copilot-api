@@ -46,6 +46,9 @@ Focused suites: `tests/codebuddy-route-diagnostics.test.ts`.
 - `tests/codebuddy-route-diagnostics.test.ts::free model trace agrees with routing for chosen and backup candidates`
 - `tests/codebuddy-route-diagnostics.test.ts::free model trace retains model-specific credit refusal`
 - `tests/codebuddy-route-diagnostics.test.ts::repeated exhausted refresh preserves deadline until recovery`
+  freezes the clock before creating the fixture, then advances it for recovery;
+  the exact deadline assertions must not depend on two real-time reads sharing
+  a millisecond (CI exposed a 1ms boundary between those reads).
 - `tests/codebuddy-route-diagnostics.test.ts::free trace still reports account verification and rate rests`
 
 Proved: historical pre-fix runs failed the trace/model rest and repeated

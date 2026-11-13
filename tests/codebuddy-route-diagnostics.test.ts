@@ -113,11 +113,13 @@ test("free model trace retains model-specific credit refusal", () => {
 
 test("repeated exhausted refresh preserves deadline until recovery", () => {
   const now = Date.now()
-  const connection = fixture()
-  const until = connection.credentials[0].cooldownUntil
-  const at = connection.credentials[0].exhaustedAt
-  const date = spyOn(Date, "now").mockReturnValue(now + 3600000)
+  // Freeze before fixture creation so its deadline shares the recovery baseline.
+  const date = spyOn(Date, "now").mockReturnValue(now)
   try {
+    const connection = fixture()
+    const until = connection.credentials[0].cooldownUntil
+    const at = connection.credentials[0].exhaustedAt
+    date.mockReturnValue(now + 3600000)
     setConnectionQuotaState(connection, "exhausted")
     expect(connection.credentials[0].cooldownUntil).toBe(until)
     expect(connection.credentials[0].exhaustedAt).toBe(at)
