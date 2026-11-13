@@ -37,6 +37,8 @@ import {
 } from "~/services/oauth/antigravity"
 import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"
 
+import { createAntigravityAcpChatCompletionsOnce } from "./acp/bridge"
+import { resolveAntigravityTransport } from "./acp/transport"
 import { buildAntigravityHeaders } from "./headers"
 import {
   type AntigravityUpstreamBody,
@@ -187,6 +189,14 @@ export async function createAntigravityChatCompletionsOnce(
 ): Promise<AsyncIterable<CopilotStreamEvent> | ChatCompletionResponse> {
   if (connection.protocol !== "antigravity-native") {
     throw new Error("Antigravity chat requires an Antigravity OAuth connection")
+  }
+
+  if (resolveAntigravityTransport(connection) === "acp") {
+    return createAntigravityAcpChatCompletionsOnce(
+      { connection, credential },
+      payload,
+      signal,
+    )
   }
 
   const accessToken = await ensureOAuthConnectionAccessToken(

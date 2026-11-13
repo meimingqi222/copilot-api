@@ -196,7 +196,10 @@ export function patchRequiresModelRefresh(patch: ConnectionPatch): boolean {
     || Boolean(
       patch.settings
         && Object.keys(patch.settings).some(
-          (key) => key !== "claudeTransport" && key !== "claudeCliMode",
+          (key) =>
+            key !== "claudeTransport"
+            && key !== "claudeCliMode"
+            && key !== "antigravityTransport",
         ),
     )
   )
@@ -295,6 +298,13 @@ function applySettingsPatchToConnection(
         || settings.claudeTransport === "http")
     ) {
       meta.claudeTransport = settings.claudeTransport
+    }
+    if (
+      provider === "antigravity"
+      && (settings.antigravityTransport === "acp"
+        || settings.antigravityTransport === "http")
+    ) {
+      meta.antigravityTransport = settings.antigravityTransport
     }
     // OAuth settings 有字段白名单 + 空字符串清除为 undefined 的语义
     // （MiniMax Code 的 region 也在这里：它是与凭证绑定的账号域，

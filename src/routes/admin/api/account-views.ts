@@ -64,6 +64,15 @@ export function publicAccountFromConnection(
   ) {
     settings.claudeTransport = conn.metadata.claudeTransport
   }
+  if (provider === "antigravity") {
+    delete settings.antigravityTransport
+    if (
+      conn.metadata?.antigravityTransport === "acp"
+      || conn.metadata?.antigravityTransport === "http"
+    ) {
+      settings.antigravityTransport = conn.metadata.antigravityTransport
+    }
+  }
   const authStatus = getConnectionAuthStatus(conn)
   const authError = getConnectionAuthError(conn)
   const quotaState = getConnectionQuotaState(conn)

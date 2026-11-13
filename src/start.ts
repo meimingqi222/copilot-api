@@ -33,6 +33,8 @@ import {
 import { scheduleQuotaRefresh } from "./lib/quota/scheduler"
 import { ensureDirectProviderConnections } from "./lib/provider-defaults"
 import { initProxyFromEnv } from "./lib/proxy"
+import { setAntigravityCallbackBaseUrl } from "./services/antigravity/acp/server-address"
+import { runRegistry as antigravityAcpRunRegistry } from "./services/antigravity/acp/run-registry"
 import { setClaudeCallbackBaseUrl } from "./services/claude/cli/server-address"
 import {
   loadAdminPasswordFromDb,
@@ -385,6 +387,7 @@ async function runServer(options: RunServerOptions): Promise<void> {
   // The Claude CLI transport's MCP helper calls back into this server; only
   // here is the actually-bound port known (a `--port 0` run picks its own).
   setClaudeCallbackBaseUrl(`http://127.0.0.1:${bunServer.port}`)
+  setAntigravityCallbackBaseUrl(`http://127.0.0.1:${bunServer.port}`)
 
   let shuttingDown = false
   const shutdown = async () => {
@@ -392,6 +395,7 @@ async function runServer(options: RunServerOptions): Promise<void> {
     shuttingDown = true
     logger.info("Shutting down...")
     runRegistry.clear()
+    antigravityAcpRunRegistry.disposeAll()
     try {
       await flushAllPersistentMaps()
       await flushManagedConnectionsOnShutdown()

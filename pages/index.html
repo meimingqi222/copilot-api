@@ -1931,6 +1931,35 @@
                             x-text="t('accounts.xaiEndpointHint')"
                           ></p>
                         </div>
+                        <!-- Antigravity Transport Toggle (ACP vs HTTP legacy) -->
+                        <div
+                          x-show="(account.provider || 'copilot') === 'antigravity'"
+                          class="mb-4 p-3 bg-[var(--apple-bg-secondary)] rounded-lg"
+                        >
+                          <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                              <i
+                                data-lucide="route"
+                                class="w-4 h-4 text-[var(--apple-text-secondary)]"
+                              ></i>
+                              <span
+                                class="text-sm text-[var(--apple-text-secondary)]"
+                                x-text="t('accounts.antigravityTransport')"
+                              ></span>
+                            </div>
+                            <button
+                              @click="toggleAntigravityTransport(account)"
+                              type="button"
+                              class="btn btn-sm"
+                              :class="antigravityTransport(account) === 'acp' ? 'btn-primary' : 'btn-secondary'"
+                              x-text="t('accounts.antigravityTransport.' + antigravityTransport(account))"
+                            ></button>
+                          </div>
+                          <p
+                            class="text-xs text-[var(--apple-text-tertiary)] mt-1"
+                            x-text="t('accounts.antigravityTransportHint')"
+                          ></p>
+                        </div>
                         <!-- Available Models -->
                         <div
                           x-show="account.provider === 'claude'"

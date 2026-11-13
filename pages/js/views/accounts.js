@@ -1033,6 +1033,27 @@ function accountsView() {
       }
     },
 
+    antigravityTransport(account) {
+      return account.settings?.antigravityTransport === "http" ? "http" : "acp"
+    },
+
+    async toggleAntigravityTransport(account) {
+      const nextTransport =
+        this.antigravityTransport(account) === "acp" ? "http" : "acp"
+      try {
+        const result = await API.accounts.update(account.id, {
+          settings: { antigravityTransport: nextTransport },
+        })
+        account.settings = result.account.settings
+        this.showToast(
+          I18n.t("accounts.antigravityTransportSuccess"),
+          "success",
+        )
+      } catch {
+        this.showToast(I18n.t("error.update"), "error")
+      }
+    },
+
     async decreasePriority(account) {
       const newPriority = Math.max(0, (account.priority ?? 0) - 1)
       account.priority = newPriority

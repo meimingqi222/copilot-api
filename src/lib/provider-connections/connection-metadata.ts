@@ -76,6 +76,8 @@ interface ConnectionMetadata {
   /** Claude 账号选定的生成请求传输方式。 */
   claudeTransport?: "cli" | "http"
   claudeCliMode?: "print" | "interactive"
+  /** Antigravity 账号选定的生成请求传输方式。 */
+  antigravityTransport?: "acp" | "http"
   // provider-specific credentials extras（非 token 字段）
   // 如 mimo 的 xiaomichatbotPh / mimoWsToken
   // OAuth 的 email / accountId / projectId / deviceId / apiKey / idToken / refreshToken

@@ -819,6 +819,12 @@ const i18n = {
       "accounts.claudeTransportHint":
         "默认固定走 Claude Code CLI；未安装时会报错，不会自动改走 HTTP。点击按钮可切换。全局 HTTP 环境变量会覆盖此设置。",
       "accounts.claudeTransportSuccess": "Claude 接入方式已更新",
+      "accounts.antigravityTransport": "Antigravity 接入方式",
+      "accounts.antigravityTransport.acp": "Antigravity ACP",
+      "accounts.antigravityTransport.http": "HTTP（旧版）",
+      "accounts.antigravityTransportHint":
+        "检测到本机 agy CLI 时默认走 ACP 协议以降低直连封号风险，未安装则回退 HTTP。点击按钮可切换，全局环境变量 COPILOT_API_ANTIGRAVITY_TRANSPORT 会覆盖此设置。",
+      "accounts.antigravityTransportSuccess": "Antigravity 接入方式已更新",
       "accounts.claudeCliMode": "Claude Code 运行模式",
       "accounts.claudeCliMode.print": "-p 模式（默认）",
       "accounts.claudeCliMode.interactive": "交互式 TUI 模式",
@@ -2962,6 +2968,12 @@ const i18n = {
       "accounts.claudeTransportHint":
         "Claude Code CLI is the fixed default. If it is missing, requests fail instead of switching to HTTP. Click to change transport. The global HTTP environment setting overrides this choice.",
       "accounts.claudeTransportSuccess": "Claude transport updated",
+      "accounts.antigravityTransport": "Antigravity transport",
+      "accounts.antigravityTransport.acp": "Antigravity ACP",
+      "accounts.antigravityTransport.http": "HTTP (legacy)",
+      "accounts.antigravityTransportHint":
+        "Defaults to ACP via local agy CLI when installed to reduce direct-API ban risk, or falls back to HTTP. Click to switch. COPILOT_API_ANTIGRAVITY_TRANSPORT overrides this choice.",
+      "accounts.antigravityTransportSuccess": "Antigravity transport updated",
       "accounts.claudeCliMode": "Claude Code run mode",
       "accounts.claudeCliMode.print": "Print (-p, default)",
       "accounts.claudeCliMode.interactive": "Interactive TUI",
