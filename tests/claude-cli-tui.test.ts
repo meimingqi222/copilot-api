@@ -900,9 +900,11 @@ test.each(["bypass", "startup-fail", "undrawn"])(
         expect(stderr).toContain("startup explanation from Claude Code")
       if (scenario === "undrawn") {
         expect(stderr).toContain("0 bytes read")
-        expect(stderr).toContain(
-          process.platform === "darwin" ? "macOS Keychain" : "security",
-        )
+        if (process.platform === "darwin")
+          expect(stderr).toContain("macOS Keychain")
+        else
+          // Linux ps names the shell interpreter, not necessarily its script.
+          expect(stderr).toMatch(/it waits on .+, \d+ MiB resident/)
         expect(stderr).not.toContain("private-diagnostic-argument")
       }
     } finally {

@@ -196,6 +196,8 @@ version-specific rendering.
 - `tests/claude-cli-tui.test.ts::interactive startup diagnostics explain %s without exposing process arguments`
   checks refusal of unsafe consent, final output and a simulated waiting
   Keychain subprocess. It never invokes the real Keychain or reads credentials.
+  macOS must identify the Keychain read; Linux must report waiting program names
+  and resident memory, not the script filename (`ps` can name its interpreter).
 
 Proved: Before this follow-up, allowance events were absent (five assertions
 failed), the Chrome offer was misread as the prompt and the turn failed with
