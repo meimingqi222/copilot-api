@@ -17,7 +17,16 @@ import type {
   ApiCredential,
   ProviderConnection,
 } from "~/lib/provider-connections"
+import {
+  addPerformanceTiming,
+  markUpstreamEvent,
+  markUpstreamSent,
+} from "~/lib/request-performance"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
+import {
+  measureLocalWork,
+  performanceContext,
+} from "~/lib/upstream-performance"
 import type {
   ChatCompletionChunk,
   ChatCompletionResponse,
@@ -119,6 +128,14 @@ function makeChunk(
         logprobs: null,
       },
     ],
+  }
+}
+
+function encodeSseChunk(chunk: ChatCompletionChunk): CopilotStreamEvent {
+  return {
+    data: measureLocalWork("streamTranslationActiveMs", () =>
+      JSON.stringify(chunk),
+    ),
   }
 }
 
@@ -225,6 +242,8 @@ async function startNewRun(params: {
   run.client = client
   runRegistry.register(run)
 
+  const c = performanceContext()
+  const connectStarted = performance.now()
   try {
     await client.initialize()
     const mcpServers = await createBridgeMcpSpec(token, bridgeDir, params.tools)
@@ -237,6 +256,11 @@ async function startNewRun(params: {
     if (targetModel) {
       await client.setModel(sessionId, targetModel)
     }
+    addPerformanceTiming(
+      c,
+      "upstreamConnectMs",
+      performance.now() - connectStarted,
+    )
     dispatchPrompt(run, params.promptBlocks)
     return run
   } catch (error) {
@@ -248,14 +272,20 @@ async function startNewRun(params: {
 
 function dispatchPrompt(run: AgyRun, blocks: Array<AcpContentBlock>): void {
   run.activePromptInFlight = true
+  run.resetTurnUsage()
+  const sentAt = performance.now()
+  run.turnUpstreamSentAt = sentAt
+  markUpstreamSent(performanceContext(), sentAt)
   void run.client
     .prompt(run.sessionId, blocks)
     .then((result) => {
       run.activePromptInFlight = false
+      const usage = result.usage ?? run.consumeTurnUsage()
+      run.resetTurnUsage()
       run.pushEvent({
         type: "prompt_done",
         stopReason: result.stopReason ?? "end_turn",
-        usage: result.usage,
+        usage,
       })
     })
     .catch((error: unknown) => {
@@ -273,9 +303,17 @@ async function resolveOrStartRun(
   payload: ChatCompletionsPayload,
   model: string,
 ): Promise<AgyRun> {
-  const mcpTools = extractMcpTools(payload.tools)
-  const toolsSignature = computeToolsSignature(mcpTools)
-  const trailingTools = extractTrailingToolResults(payload.messages)
+  const { mcpTools, toolsSignature, trailingTools } = measureLocalWork(
+    "adapterPreparationMs",
+    () => {
+      const tools = extractMcpTools(payload.tools)
+      return {
+        mcpTools: tools,
+        toolsSignature: computeToolsSignature(tools),
+        trailingTools: extractTrailingToolResults(payload.messages),
+      }
+    },
+  )
   const candidates = runRegistry.findCandidates(
     connection.id,
     model,
@@ -284,10 +322,14 @@ async function resolveOrStartRun(
 
   // 1. 若末尾是 tool_result 且命中挂起中的 run，精准唤醒对应进程继续执行
   if (trailingTools.length > 0) {
-    const parkedRun = candidates.find((c) =>
-      c.hasParkedCall(trailingTools[0].toolCallId),
+    const parkedRun = candidates.find((candidate) =>
+      candidate.hasParkedCall(trailingTools[0].toolCallId),
     )
     if (parkedRun) {
+      parkedRun.resetTurnUsage()
+      const sentAt = performance.now()
+      parkedRun.turnUpstreamSentAt = sentAt
+      markUpstreamSent(performanceContext(), sentAt)
       for (const tr of trailingTools) {
         parkedRun.resolveParkedCall(tr.toolCallId, {
           content: [{ type: "text", text: tr.text }],
@@ -302,12 +344,12 @@ async function resolveOrStartRun(
 
   // 2. 若是同一对话的新一轮 user 消息（上一轮非 tool 调用结束），精准匹配前缀哈希续接
   const prefixRun = candidates.find(
-    (c) =>
-      c.isIdle
-      && c.lastMessageCount > 0
-      && payload.messages.length > c.lastMessageCount
-      && hashMessages(payload.messages.slice(0, c.lastMessageCount))
-        === c.lastMessageHash,
+    (candidate) =>
+      candidate.isIdle
+      && candidate.lastMessageCount > 0
+      && payload.messages.length > candidate.lastMessageCount
+      && hashMessages(payload.messages.slice(0, candidate.lastMessageCount))
+        === candidate.lastMessageHash,
   )
   if (prefixRun) {
     // 跳过调用方附带的上一轮 assistant 回复，仅发送新增的 user/system 消息
@@ -318,7 +360,9 @@ async function resolveOrStartRun(
     ) {
       startIdx++
     }
-    const deltaBlocks = buildAcpPromptBlocks(payload, startIdx)
+    const deltaBlocks = measureLocalWork("adapterPreparationMs", () =>
+      buildAcpPromptBlocks(payload, startIdx),
+    )
     if (deltaBlocks.length > 0) {
       prefixRun.lastMessageCount = payload.messages.length
       prefixRun.lastMessageHash = hashMessages(payload.messages)
@@ -329,7 +373,9 @@ async function resolveOrStartRun(
   }
 
   // 3. 否则启动全新隔离会话
-  const promptBlocks = buildAcpPromptBlocks(payload, 0)
+  const promptBlocks = measureLocalWork("adapterPreparationMs", () =>
+    buildAcpPromptBlocks(payload, 0),
+  )
   return startNewRun({
     connection,
     credential,
@@ -369,15 +415,15 @@ async function* streamAcpEvents(
         throw new Error(event.message)
       }
 
+      markUpstreamEvent(performanceContext(), run.turnUpstreamSentAt)
+
       if (event.type === "thinking") {
         const delta =
           sentRole ?
             { reasoning_content: event.text }
           : { role: "assistant" as const, reasoning_content: event.text }
         sentRole = true
-        yield {
-          data: JSON.stringify(makeChunk(responseId, created, model, delta)),
-        }
+        yield encodeSseChunk(makeChunk(responseId, created, model, delta))
         continue
       }
 
@@ -387,9 +433,7 @@ async function* streamAcpEvents(
             { content: event.text }
           : { role: "assistant" as const, content: event.text }
         sentRole = true
-        yield {
-          data: JSON.stringify(makeChunk(responseId, created, model, delta)),
-        }
+        yield encodeSseChunk(makeChunk(responseId, created, model, delta))
         continue
       }
 
@@ -402,19 +446,15 @@ async function* streamAcpEvents(
           if (item.type === "tool_call_ready") {
             batched.push(item.call)
           } else if (item.type === "text") {
-            yield {
-              data: JSON.stringify(
-                makeChunk(responseId, created, model, { content: item.text }),
-              ),
-            }
+            yield encodeSseChunk(
+              makeChunk(responseId, created, model, { content: item.text }),
+            )
           } else if (item.type === "thinking") {
-            yield {
-              data: JSON.stringify(
-                makeChunk(responseId, created, model, {
-                  reasoning_content: item.text,
-                }),
-              ),
-            }
+            yield encodeSseChunk(
+              makeChunk(responseId, created, model, {
+                reasoning_content: item.text,
+              }),
+            )
           }
         }
 
@@ -433,14 +473,17 @@ async function* streamAcpEvents(
             { tool_calls: toolCallsDelta }
           : { role: "assistant" as const, tool_calls: toolCallsDelta }
         sentRole = true
-        yield {
-          data: JSON.stringify(makeChunk(responseId, created, model, delta)),
-        }
-        yield {
-          data: JSON.stringify(
-            makeChunk(responseId, created, model, {}, "tool_calls"),
-          ),
-        }
+        yield encodeSseChunk(makeChunk(responseId, created, model, delta))
+        const finishChunk = makeChunk(
+          responseId,
+          created,
+          model,
+          {},
+          "tool_calls",
+        )
+        const turnUsage = toOpenAiUsage(run.consumeTurnUsage())
+        if (turnUsage) finishChunk.usage = turnUsage
+        yield encodeSseChunk(finishChunk)
         yield { data: "[DONE]" }
         return
       }
@@ -451,7 +494,7 @@ async function* streamAcpEvents(
         const endChunk = makeChunk(responseId, created, model, {}, finishReason)
         const usage = toOpenAiUsage(event.usage)
         if (usage) endChunk.usage = usage
-        yield { data: JSON.stringify(endChunk) }
+        yield encodeSseChunk(endChunk)
         yield { data: "[DONE]" }
         return
       }

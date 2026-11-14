@@ -6,7 +6,10 @@ import {
   __resetModelAliasesForTest,
   replaceModelAliases,
 } from "~/lib/model-aliases"
-import { __resetProviderConnectionsForTest } from "~/lib/provider-connections"
+import {
+  __resetProviderConnectionsForTest,
+  upsertProviderConnection,
+} from "~/lib/provider-connections"
 import { resolveUsageModelId } from "~/lib/usage"
 
 import { setTestAccounts } from "./helpers/set-accounts"
@@ -102,5 +105,48 @@ describe("resolveUsageModelId", () => {
 
     // 别名 gpt-5 应解析为 claude-sonnet-4，以便用量统计和定价查询使用真实模型
     expect(resolveUsageModelId("claude-1", "gpt-5")).toBe("claude-sonnet-4")
+  })
+
+  test("strips connectionId prefix for account-managed and plain connections", () => {
+    setTestAccounts([
+      windsurfAccount({
+        id: "62daa365-dd0b-4a6f-bee2-d40cf9668953",
+        provider: "antigravity",
+        availableModels: [
+          {
+            id: "gemini-3.8-flash",
+            name: "Gemini 3.8 Flash",
+            vendor: "Google",
+            pickerEnabled: true,
+            supportedEndpoints: ["/chat/completions"],
+            provider: "antigravity",
+            upstreamId: "gemini-3.8-flash-medium",
+          },
+        ],
+      }),
+    ])
+    upsertProviderConnection({
+      id: "plain-or-1",
+      name: "OpenRouter",
+      protocol: "openai-compatible",
+      baseUrl: "https://openrouter.ai/api/v1",
+      enabled: true,
+      priority: 10,
+      credentials: [],
+      createdAt: Date.now(),
+    })
+
+    expect(
+      resolveUsageModelId(
+        "62daa365-dd0b-4a6f-bee2-d40cf9668953",
+        "62daa365-dd0b-4a6f-bee2-d40cf9668953/gemini-3.8-flash",
+      ),
+    ).toBe("gemini-3.8-flash")
+    expect(
+      resolveUsageModelId("plain-or-1", "plain-or-1/anthropic/claude-sonnet-4"),
+    ).toBe("anthropic/claude-sonnet-4")
+    expect(resolveUsageModelId("plain-or-1", "anthropic/claude-sonnet-4")).toBe(
+      "anthropic/claude-sonnet-4",
+    )
   })
 })

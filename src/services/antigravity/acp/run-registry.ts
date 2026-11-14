@@ -8,7 +8,12 @@
 
 import { rmSync } from "node:fs"
 
-import type { AcpSessionUpdate, AcpUsage, AgyAcpClient } from "./client"
+import {
+  normalizeAcpUsage,
+  type AcpSessionUpdate,
+  type AcpUsage,
+  type AgyAcpClient,
+} from "./client"
 
 export interface McpToolResult {
   content: Array<{ type: "text"; text: string }>
@@ -68,11 +73,13 @@ export class AgyRun {
   activePromptInFlight = false
   lastActiveAt = Date.now()
   tainted = false
+  turnUpstreamSentAt?: number
 
   private idleTimer: ReturnType<typeof setTimeout> | undefined
   private readonly announcedQueue: Array<AnnouncedToolCall> = []
   private readonly parkedCalls = new Map<string, PendingToolCall>()
   private readonly turnEvents: Array<AgyTurnEvent> = []
+  private lastTurnUsage?: AcpUsage
   private waiter: (() => void) | undefined
   private disposed = false
 
@@ -109,8 +116,25 @@ export class AgyRun {
     this.notifyWaiter()
   }
 
+  resetTurnUsage(): void {
+    this.lastTurnUsage = undefined
+  }
+
+  consumeTurnUsage(): AcpUsage | undefined {
+    const usage = this.lastTurnUsage
+    this.lastTurnUsage = undefined
+    return usage
+  }
+
   handleUpdate(update: AcpSessionUpdate): void {
+    const updateUsage = normalizeAcpUsage(update)
+    if (updateUsage) {
+      this.lastTurnUsage = { ...this.lastTurnUsage, ...updateUsage }
+    }
     const kind = update.sessionUpdate
+    if (kind === "usage_update") {
+      return
+    }
     if (kind === "agent_message_chunk") {
       const text = update.content?.text
       if (typeof text === "string" && text.length > 0) {

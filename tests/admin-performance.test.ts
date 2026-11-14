@@ -784,3 +784,28 @@ test("rolling live ranges (last1h/last6h) end at now and pick fine buckets", asy
   expect(sixHour.series.length).toBeGreaterThanOrEqual(180)
   expect(sixHour.series.length).toBeLessThanOrEqual(182)
 })
+
+test("GET /admin/api/usage/performance omits zero-TPS untimed fallback rows", async () => {
+  const ts = new Date("2026-05-25T08:00:00.000Z").getTime()
+  statsStore.recordUsage({
+    date: "2026-05-25",
+    accountId: "ag-1",
+    provider: "antigravity",
+    model: "gemini-3.8-flash",
+    promptTokens: 50,
+    completionTokens: 0,
+    totalTokens: 50,
+    cost: 0,
+    timestamp: ts,
+    tps: 0,
+    streaming: false,
+  })
+
+  const response = await server.fetch(
+    adminRequest("http://localhost/admin/api/usage/performance?range=all"),
+  )
+  expect(response.status).toBe(200)
+  const body = (await response.json()) as PerformanceResponse
+  expect(body.performance).toHaveLength(0)
+  expect(body.byProvider).toHaveLength(0)
+})

@@ -124,12 +124,19 @@ interface PerformanceByModel {
  * their coverage is narrower than `avgStreamingTps` (legacy rows have no
  * first-output boundary). `decodeSamples` reports that coverage.
  */
+function hasPerformanceSample(row: UsageRawRow): boolean {
+  if (row.request_count === 0) return false
+  if (row.ttft_ms !== null) return true
+  if (row.tps !== null && row.tps > 0 && row.completion_tokens > 0) return true
+  return readGenerationSample(row) !== undefined
+}
+
 export function computePerformanceByModel(
   rows: Array<UsageRawRow>,
 ): Array<PerformanceByModel> {
   const timedModels = new Set<string>()
   for (const row of rows) {
-    if (row.ttft_ms !== null || row.tps !== null) timedModels.add(row.model)
+    if (hasPerformanceSample(row)) timedModels.add(row.model)
   }
   const byModel = new Map<string, PerfAccumulator>()
   for (const row of rows) {
@@ -175,7 +182,7 @@ export function computePerformanceByProviderModel(
   const keys = rows.map((row) => providerBucketKey(row))
   const timedKeys = new Set<string>()
   for (const [index, row] of rows.entries()) {
-    if (row.ttft_ms !== null || row.tps !== null) {
+    if (hasPerformanceSample(row)) {
       timedKeys.add(keys[index] + "\0" + row.model)
     }
   }

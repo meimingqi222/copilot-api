@@ -33,17 +33,30 @@ import { codexServiceTierCostMultiplier } from "~/lib/stats/service-tier-pricing
 import { requestPerformanceSnapshot } from "~/lib/request-performance"
 import { incrementUserTokens } from "~/lib/users"
 
+function stripConnectionIdPrefix(connectionId: string, model: string): string {
+  const slashIndex = model.indexOf("/")
+  if (slashIndex <= 0) return model
+  const prefix = model.slice(0, slashIndex)
+  const rest = model.slice(slashIndex + 1)
+  if (rest.length > 0 && prefix.toLowerCase() === connectionId.toLowerCase()) {
+    return rest
+  }
+  return model
+}
+
 /** Map request model id to the account catalog public id when possible. */
 export function resolveUsageModelId(accountId: string, model: string): string {
   // 用 connection 字段直接判断（替代原 getAccount 路径）
   const conn = getProviderConnection(accountId)
+  const normalizedModel =
+    conn ? stripConnectionIdPrefix(conn.id, model.trim()) : model
   if (!conn || !isAccountManagedConnection(conn)) {
     // 没有 account-managed connection 时也解析别名，以便用真实 model id 查询定价
-    return resolveModelAlias(model, accountId).resolvedModelId
+    return resolveModelAlias(normalizedModel, accountId).resolvedModelId
   }
 
   const native = canonicalNativeModelId(
-    parseModelReference(model, conn.modelPrefix).nativeModelId,
+    parseModelReference(normalizedModel, conn.modelPrefix).nativeModelId,
   )
   // 解析模型别名：将客户端请求的别名映射到真实 model id，
   // 确保用量统计和定价查询使用真实模型而非别名

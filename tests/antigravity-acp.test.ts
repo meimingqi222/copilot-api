@@ -12,6 +12,7 @@ import {
 import { publicAccountFromConnection } from "~/routes/admin/api/account-views"
 import { syncAntigravityAcpCredentials } from "~/services/antigravity/acp/auth-sync"
 import { resolveAcpModelId } from "~/services/antigravity/acp/bridge"
+import { normalizeAcpUsage } from "~/services/antigravity/acp/client"
 import { handleAntigravityMcpCallback } from "~/services/antigravity/acp/mcp-callback"
 import {
   buildAcpPromptBlocks,
@@ -508,5 +509,68 @@ describe("antigravity acp admin account settings", () => {
     expect(
       publicAccountFromConnection(conn).settings?.antigravityTransport,
     ).toBe("acp")
+  })
+})
+
+describe("antigravity acp usage normalization", () => {
+  test("extracts camelCase, snake_case, and usage_update payloads", () => {
+    expect(
+      normalizeAcpUsage({
+        stopReason: "end_turn",
+        usage: {
+          inputTokens: 120,
+          outputTokens: 45,
+          cachedReadTokens: 80,
+          thoughtTokens: 10,
+          totalTokens: 255,
+        },
+      }),
+    ).toEqual({
+      inputTokens: 120,
+      outputTokens: 45,
+      cachedReadTokens: 80,
+      thoughtTokens: 10,
+      totalTokens: 255,
+    })
+
+    expect(
+      normalizeAcpUsage({
+        usageMetadata: {
+          promptTokenCount: 200,
+          candidatesTokenCount: 60,
+          cachedContentTokenCount: 50,
+          thoughtsTokenCount: 15,
+          totalTokenCount: 325,
+        },
+      }),
+    ).toEqual({
+      inputTokens: 200,
+      outputTokens: 60,
+      cachedReadTokens: 50,
+      thoughtTokens: 15,
+      totalTokens: 325,
+    })
+
+    const run = new AgyRun({
+      token: "tok-usage",
+      connectionId: "conn-1",
+      model: "gemini-4-hydrogen-high",
+      toolsSignature: "sig-1",
+      bridgeDir: makeTempDir("ag-acp-usage-"),
+    })
+    run.handleUpdate({
+      sessionUpdate: "usage_update",
+      usage: {
+        input_tokens: 30,
+        output_tokens: 18,
+        cache_read_input_tokens: 12,
+      },
+    })
+    expect(run.consumeTurnUsage()).toEqual({
+      inputTokens: 30,
+      outputTokens: 18,
+      cachedReadTokens: 12,
+    })
+    expect(run.consumeTurnUsage()).toBeUndefined()
   })
 })

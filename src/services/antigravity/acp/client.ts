@@ -30,6 +30,107 @@ export interface AcpUsage {
   totalTokens?: number
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value) ?
+      (value as Record<string, unknown>)
+    : undefined
+}
+
+function pickFiniteNumber(
+  obj: Record<string, unknown>,
+  keys: Array<string>,
+): number | undefined {
+  for (const key of keys) {
+    const val = obj[key]
+    if (typeof val === "number" && Number.isFinite(val) && val >= 0) {
+      return val
+    }
+  }
+  return undefined
+}
+
+/**
+ * 从 ACP `session/prompt` 返回或 `session/update` 通知中提取并归一化 token 用量。
+ * 兼容 camelCase（ACP）、snake_case（OpenAI/Anthropic）及 Gemini `usageMetadata`。
+ */
+export function normalizeAcpUsage(raw: unknown): AcpUsage | undefined {
+  const root = asRecord(raw)
+  if (!root) return undefined
+  const meta = asRecord(root._meta)
+  const candidate =
+    asRecord(root.usage)
+    ?? asRecord(root.usageMetadata)
+    ?? asRecord(meta?.usage)
+    ?? root
+
+  const promptDetails = asRecord(candidate.prompt_tokens_details)
+  const completionDetails = asRecord(candidate.completion_tokens_details)
+
+  const inputTokens = pickFiniteNumber(candidate, [
+    "inputTokens",
+    "input_tokens",
+    "prompt_tokens",
+    "promptTokenCount",
+  ])
+  const outputTokens = pickFiniteNumber(candidate, [
+    "outputTokens",
+    "output_tokens",
+    "completion_tokens",
+    "candidatesTokenCount",
+  ])
+  const cachedReadTokens =
+    pickFiniteNumber(candidate, [
+      "cachedReadTokens",
+      "cached_read_tokens",
+      "cache_read_input_tokens",
+      "cachedTokens",
+      "cachedContentTokenCount",
+    ])
+    ?? (promptDetails ?
+      pickFiniteNumber(promptDetails, ["cached_tokens"])
+    : undefined)
+  const cachedWriteTokens = pickFiniteNumber(candidate, [
+    "cachedWriteTokens",
+    "cached_write_tokens",
+    "cache_creation_input_tokens",
+  ])
+  const thoughtTokens =
+    pickFiniteNumber(candidate, [
+      "thoughtTokens",
+      "thought_tokens",
+      "reasoning_tokens",
+      "thoughtsTokenCount",
+    ])
+    ?? (completionDetails ?
+      pickFiniteNumber(completionDetails, ["reasoning_tokens"])
+    : undefined)
+  const totalTokens = pickFiniteNumber(candidate, [
+    "totalTokens",
+    "total_tokens",
+    "totalTokenCount",
+  ])
+
+  if (
+    inputTokens === undefined
+    && outputTokens === undefined
+    && cachedReadTokens === undefined
+    && cachedWriteTokens === undefined
+    && thoughtTokens === undefined
+    && totalTokens === undefined
+  ) {
+    return undefined
+  }
+
+  return {
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(cachedReadTokens !== undefined ? { cachedReadTokens } : {}),
+    ...(cachedWriteTokens !== undefined ? { cachedWriteTokens } : {}),
+    ...(thoughtTokens !== undefined ? { thoughtTokens } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
+  }
+}
+
 interface AcpPromptResult {
   stopReason?: string
   usage?: AcpUsage
@@ -44,6 +145,8 @@ export interface AcpSessionUpdate {
   rawInput?: Record<string, unknown>
   status?: string
   title?: string
+  usage?: Record<string, unknown>
+  usageMetadata?: Record<string, unknown>
 }
 
 interface PendingRpc {
@@ -223,10 +326,17 @@ export class AgyAcpClient {
     sessionId: string,
     prompt: Array<AcpContentBlock>,
   ): Promise<AcpPromptResult> {
-    return this.request<AcpPromptResult>("session/prompt", {
+    const raw = await this.request<Record<string, unknown>>("session/prompt", {
       sessionId,
       prompt,
     })
+    const stopReason =
+      typeof raw?.stopReason === "string" ? raw.stopReason : undefined
+    const usage = normalizeAcpUsage(raw)
+    return {
+      ...(stopReason !== undefined ? { stopReason } : {}),
+      ...(usage !== undefined ? { usage } : {}),
+    }
   }
 
   cancel(sessionId: string): void {
