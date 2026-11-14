@@ -69,7 +69,7 @@ describe("antigravity acp transport", () => {
 })
 
 describe("antigravity acp auth-sync", () => {
-  test("writes isolated jetski-standalone-oauth-token file", async () => {
+  test("writes the token file agy actually reads", async () => {
     const dataDir = makeTempDir("ag-acp-data-")
     redirectPathsToDir(dataDir)
 
@@ -90,7 +90,7 @@ describe("antigravity acp auth-sync", () => {
     const { geminiDir } = await syncAntigravityAcpCredentials(conn, cred)
     const tokenJson = JSON.parse(
       readFileSync(
-        path.join(geminiDir, "jetski-standalone-oauth-token"),
+        path.join(geminiDir, "antigravity-cli", "antigravity-oauth-token"),
         "utf8",
       ),
     ) as {
@@ -98,16 +98,20 @@ describe("antigravity acp auth-sync", () => {
         access_token: string
         refresh_token?: string
         token_type: string
+        expiry: string
       }
       auth_method: string
-      id_token_email?: string
+      id_token?: string
     }
 
     expect(tokenJson.token.access_token).toBe("ya29.test-access-token")
     expect(tokenJson.token.refresh_token).toBe("1//test-refresh-token")
     expect(tokenJson.token.token_type).toBe("Bearer")
-    expect(tokenJson.auth_method).toBe("oauth-personal")
-    expect(tokenJson.id_token_email).toBe("user@example.com")
+    // agy 的枚举值是 consumer；oauth-personal 会被判定为 unknown auth method
+    expect(tokenJson.auth_method).toBe("consumer")
+    expect(tokenJson.token.expiry).toMatch(/Z$/)
+    // 没有 id_token 时不应写入占位字段
+    expect(tokenJson.id_token).toBeUndefined()
   })
 })
 
