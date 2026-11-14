@@ -96,6 +96,23 @@ describe("account proxy updates", () => {
     }
   }
 
+  test("creation writes proxyUrl/modelPrefix to typed fields, not metadata mirrors", () => {
+    const connection = managedConnectionFromInput({
+      id: "create-typed",
+      name: "create-typed",
+      provider: "codex",
+      credentials: {},
+      settings: { proxyUrl: OLD_PROXY, modelPrefix: "keep/" },
+    })
+    expect(connection.proxyUrl).toBe(OLD_PROXY)
+    expect(connection.modelPrefix).toBe("keep/")
+    expect(connection.metadata?.proxyUrl).toBeUndefined()
+    expect(connection.metadata?.modelPrefix).toBeUndefined()
+    // settings 副本保留(导出/管理契约),但不再是路由读取的来源。
+    expect(getConnectionSettings(connection)?.proxyUrl).toBe(OLD_PROXY)
+    expect(getConnectionSettings(connection)?.modelPrefix).toBe("keep/")
+  })
+
   test("an unrelated settings patch preserves the connection proxy", () => {
     const connection = managedConnectionFromInput({
       id: "codex-proxy",

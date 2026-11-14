@@ -45,11 +45,11 @@ const repo = new Repository<PersistedFile>({
       throw new Error("provider-connections.json has unexpected shape")
     }
     const file = parsed as PersistedFile
-    // 懒升级:v1 → v2(下次保存时自动写回 v2)
-    if (file.version === 1) {
-      file.connections = file.connections.map((c) => upgradeConnectionV1ToV2(c))
-      ;(file as unknown as PersistedFileV2).version = 2
-    }
+    // 懒归一化:v1 提升为类型化字段,v2 清理残留镜像键(幂等,下次保存写回)。
+    // 停双写后新数据只落类型化字段;旧文件里的镜像键在这里先提升后删除,
+    // 回退读路径因此可以逐步退役,而不必担心磁盘上的旧值丢失。
+    file.connections = file.connections.map((c) => upgradeConnectionV1ToV2(c))
+    ;(file as unknown as PersistedFileV2).version = 2
     return file as PersistedFileV2
   },
 })
@@ -291,7 +291,7 @@ function normalizeCredential(value: unknown): ApiCredential | null {
  * - metadata.lastRateLimitReason → credential.lastRateLimitReason
  * - metadata.proxyUrl → connection.proxyUrl
  * - metadata.modelPrefix → connection.modelPrefix
- * - metadata.cooldownUntil / lastRateLimitAt → 已在 credential 本体字段,删除 metadata 副本
+ * - metadata.cooldownUntil / lastRateLimitAt → credential 本体字段(缺失时提升),删除 metadata 副本
  * - metadata.provider / quotaState / subtitle → 派生值,不提升(序列化时派生)
  */
 export function upgradeConnectionV1ToV2(
@@ -329,6 +329,20 @@ export function upgradeConnectionV1ToV2(
       && typeof meta.lastRateLimitReason === "string"
     ) {
       newCred.lastRateLimitReason = meta.lastRateLimitReason
+    }
+    // cooldownUntil / lastRateLimitAt:原先假设 credential 本体已有值、只删
+    // metadata 副本。v2 残留清理不能做此假设,缺失时先提升再删,避免丢冷却。
+    if (
+      newCred.cooldownUntil === undefined
+      && typeof meta.cooldownUntil === "number"
+    ) {
+      newCred.cooldownUntil = meta.cooldownUntil
+    }
+    if (
+      newCred.lastRateLimitAt === undefined
+      && typeof meta.lastRateLimitAt === "number"
+    ) {
+      newCred.lastRateLimitAt = meta.lastRateLimitAt
     }
     result.credentials = [newCred, ...result.credentials.slice(1)]
   }

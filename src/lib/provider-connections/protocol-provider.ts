@@ -88,10 +88,9 @@ export function accountManagedModelPrefix(conn: ProviderConnection): string {
   const meta = readConnectionMetadata(conn)
   if (meta) {
     if (isOAuthProviderId(meta.provider)) {
-      const custom =
-        typeof meta.modelPrefix === "string" ?
-          meta.modelPrefix.trim()
-        : undefined
+      // 优先读 connection.modelPrefix(类型化字段),回退 metadata 镜像(过渡期)。
+      const raw = conn.modelPrefix ?? meta.modelPrefix
+      const custom = typeof raw === "string" ? raw.trim() : undefined
       if (custom) return custom
     }
     return meta.provider

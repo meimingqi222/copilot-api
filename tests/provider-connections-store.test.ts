@@ -234,6 +234,9 @@ describe("loadProviderConnections", () => {
     await saveProviderConnections([legacy])
     await initializeProviderConnections()
     const connection = listProviderConnections()[0]!
+    // 加载会归一化掉 metadata 镜像;以归一化后的状态为基线,验证 repair 不改它。
+    const expectedCredential = structuredClone(connection.credentials[0])
+    const expectedMetadata = structuredClone(connection.metadata)
     const fetch = spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("quota temporarily unavailable", { status: 503 }),
     )
@@ -246,8 +249,8 @@ describe("loadProviderConnections", () => {
       expect(
         buildRouteTargets({ publicModelId: "gpt-5", endpoint: "responses" }),
       ).toHaveLength(0)
-      expect(connection.credentials[0]).toEqual(credential)
-      expect(connection.metadata).toEqual(legacy.metadata)
+      expect(connection.credentials[0]).toEqual(expectedCredential)
+      expect(connection.metadata).toEqual(expectedMetadata)
     } finally {
       fetch.mockRestore()
     }
@@ -323,6 +326,9 @@ describe("loadProviderConnections", () => {
       await saveProviderConnections([legacy])
       await initializeProviderConnections()
       const connection = listProviderConnections()[0]!
+      // 加载会归一化掉 metadata 镜像;以归一化后的状态为基线,验证 repair 不改它。
+      const expectedCredential = structuredClone(connection.credentials[0])
+      const expectedMetadata = structuredClone(connection.metadata)
       const fetch = spyOn(globalThis, "fetch").mockResolvedValue(
         new Response("quota temporarily unavailable", { status: 503 }),
       )
@@ -342,13 +348,57 @@ describe("loadProviderConnections", () => {
         expect(
           buildRouteTargets({ publicModelId: "gpt-5", endpoint: "responses" }),
         ).toHaveLength(0)
-        expect(connection.credentials[0]).toEqual(credential)
-        expect(connection.metadata).toEqual(legacy.metadata)
+        expect(connection.credentials[0]).toEqual(expectedCredential)
+        expect(connection.metadata).toEqual(expectedMetadata)
       } finally {
         fetch.mockRestore()
       }
     },
   )
+
+  test("loading a v2 file promotes and clears leftover metadata mirrors", async () => {
+    const at = Date.now()
+    const until = at + 60_000
+    // 非 codex 连接,避免加载时的 Codex repair 干扰;类型化字段缺失,只剩镜像。
+    const residue = {
+      id: "residue",
+      name: "residue",
+      protocol: "openai-compatible",
+      baseUrl: "https://api.example.com/v1",
+      enabled: true,
+      priority: 0,
+      createdAt: at,
+      credentials: [
+        {
+          id: "residue",
+          authMode: "bearer",
+          value: "sk-residue",
+          enabled: true,
+          status: "ready",
+          createdAt: at,
+        },
+      ],
+      metadata: {
+        provider: "copilot",
+        quotaState: "exhausted",
+        quotaExhaustedAt: at,
+        cooldownUntil: until,
+        proxyUrl: "http://residue-proxy.invalid:8080",
+      },
+    }
+    await fs.writeFile(
+      tempPath,
+      JSON.stringify({ version: 2, connections: [residue] }),
+    )
+    const [connection] = await loadProviderConnections()
+    const cred = connection!.credentials[0]!
+    expect(cred.exhaustedAt).toBe(at)
+    expect(cred.cooldownUntil).toBe(until)
+    expect(connection!.proxyUrl).toBe("http://residue-proxy.invalid:8080")
+    expect(connection!.metadata?.quotaExhaustedAt).toBeUndefined()
+    expect(connection!.metadata?.cooldownUntil).toBeUndefined()
+    expect(connection!.metadata?.proxyUrl).toBeUndefined()
+  })
 
   test("v1 Codex snapshots with camelCase meters repair without inventing freshness", async () => {
     const legacy = legacyFeatureExhaustion("additional")

@@ -36,7 +36,7 @@ export async function fetchOAuthProviderQuota(
 }
 
 /**
- * 将配额快照落到 connection(metadata.quotaInfo + quotaState,
+ * 将配额快照落到 connection(credential.quota + metadata.quotaState,
  * credential.status 随 setConnectionQuotaState 联动)。
  */
 export function applyOAuthQuotaSnapshot(

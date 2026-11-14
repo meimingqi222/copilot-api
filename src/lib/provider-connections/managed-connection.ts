@@ -214,6 +214,10 @@ export function managedConnectionFromInput(
     enabled,
     status: credentialStatus,
     cooldownUntil: input.cooldownUntil,
+    exhaustedAt: input.quotaExhaustedAt ?? input.exhaustedAt,
+    lastRateLimitAt: input.lastRateLimitAt,
+    lastRateLimitReason: input.lastRateLimitReason,
+    quota: input.quotaInfo,
     lastError:
       input.runtimeState?.authStatus === "error" ?
         input.runtimeState.lastError
@@ -242,29 +246,11 @@ export function managedConnectionFromInput(
     settings,
   }
   if (input.isExhausted !== undefined) metadata.isExhausted = input.isExhausted
-  if (input.exhaustedAt !== undefined) metadata.exhaustedAt = input.exhaustedAt
-  if (input.quotaExhaustedAt !== undefined) {
-    metadata.quotaExhaustedAt = input.quotaExhaustedAt
-  }
-  if (input.quotaInfo) {
-    // 同时写入 credential.quota(类型化字段)与 metadata.quotaInfo(兼容读路径)
-    metadata.quotaInfo = input.quotaInfo
-    credential.quota = input.quotaInfo
-  }
-  if (input.lastRateLimitAt !== undefined) {
-    metadata.lastRateLimitAt = input.lastRateLimitAt
-  }
-  if (input.lastRateLimitReason !== undefined) {
-    metadata.lastRateLimitReason = input.lastRateLimitReason
-  }
   if (Object.keys(extras).length > 0) metadata.credentialExtras = extras
   if (input.cpaMetadata) metadata.cpaMetadata = input.cpaMetadata
-  // OAuth routing 字段从 settings 提取到 metadata 顶层
-  if (typeof settings.proxyUrl === "string")
-    metadata.proxyUrl = settings.proxyUrl
-  if (typeof settings.modelPrefix === "string") {
-    metadata.modelPrefix = settings.modelPrefix
-  }
+  // OAuth routing 字段从 settings 提取到 metadata 顶层。
+  // proxyUrl / modelPrefix 是传输/路由字段,落到 connection 类型化字段(见返回值),
+  // 不再写 metadata 镜像;quota / exhaustedAt / lastRateLimit* 已落 credential。
   if (typeof settings.tokenEndpoint === "string") {
     metadata.tokenEndpoint = settings.tokenEndpoint
   }
@@ -290,6 +276,14 @@ export function managedConnectionFromInput(
     ...(headers ? { headers } : {}),
     enabled,
     priority: input.priority ?? 0,
+    proxyUrl:
+      typeof settings.proxyUrl === "string" ?
+        settings.proxyUrl.trim() || undefined
+      : undefined,
+    modelPrefix:
+      typeof settings.modelPrefix === "string" ?
+        settings.modelPrefix.trim() || undefined
+      : undefined,
     credentials: [credential],
     models:
       input.availableModels ?

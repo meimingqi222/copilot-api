@@ -49,6 +49,7 @@ export {
   getConnectionProvider,
   getConnectionProxy,
   getConnectionProxyUrl,
+  getConnectionQuotaExhaustedAt,
   getConnectionQuotaInfo,
   getConnectionQuotaState,
   getConnectionRedirectUri,

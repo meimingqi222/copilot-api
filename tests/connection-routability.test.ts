@@ -26,6 +26,7 @@ import {
   setConnectionCooldownUntil,
   setConnectionExhausted,
   setConnectionQuotaState,
+  setConnectionRateLimitInfo,
   setCredentialEnabled,
   type ProviderConnection,
 } from "~/lib/provider-connections"
@@ -225,8 +226,10 @@ describe("getConnectionRoutability", () => {
     const live = mustGet("c-legacy")
     const at = Date.now() - 25 * 60 * 60 * 1000
     setConnectionExhausted(live, true, at)
-    // 复现线上形态：credential 侧已被配额恢复路径清掉，只剩遗留镜像字段
+    // 复现线上旧形态：credential 侧已被配额恢复路径清掉，只剩遗留镜像字段。
+    // 停写后 setter 不再写镜像,这里手动注入模拟旧磁盘数据。
     live.credentials[0].exhaustedAt = undefined
+    readConnectionMetadata(live)!.exhaustedAt = at
     expect(readConnectionMetadata(live)?.exhaustedAt).toBe(at)
 
     refreshConnectionAvailability(live)
@@ -276,7 +279,32 @@ describe("getConnectionRoutability", () => {
     refreshConnectionAvailability(live)
 
     const meta = readConnectionMetadata(live)
-    expect(meta?.exhaustedAt).toBe(at)
+    // 停写后耗尽时刻落在 credential.exhaustedAt,不再写 metadata 镜像。
+    expect(live.credentials[0].exhaustedAt).toBe(at)
     expect(meta?.isExhausted).toBe(true)
+  })
+})
+
+describe("metadata mirrors retired (typed-only writes)", () => {
+  test("setters write typed fields and leave no metadata mirror values", async () => {
+    await setupConnection("c-mirrors")
+    const conn = mustGet("c-mirrors")
+    const at = Date.now()
+    setConnectionQuotaState(conn, "exhausted")
+    setConnectionCooldownUntil(conn, at + 60_000)
+    setConnectionExhausted(conn, true, at)
+    setConnectionRateLimitInfo(conn, at, "usage_limit_reached")
+
+    const cred = conn.credentials[0]
+    const meta = readConnectionMetadata(conn)
+    expect(cred.exhaustedAt).toBe(at)
+    expect(cred.cooldownUntil).toBe(at + 60_000)
+    expect(cred.lastRateLimitAt).toBe(at)
+    expect(cred.lastRateLimitReason).toBe("usage_limit_reached")
+    expect(meta?.quotaExhaustedAt).toBeUndefined()
+    expect(meta?.exhaustedAt).toBeUndefined()
+    expect(meta?.cooldownUntil).toBeUndefined()
+    expect(meta?.lastRateLimitAt).toBeUndefined()
+    expect(meta?.lastRateLimitReason).toBeUndefined()
   })
 })

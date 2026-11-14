@@ -14,6 +14,7 @@ import { createLogger } from "~/lib/logger"
 import {
   DEFAULTS,
   classifyUpstreamError,
+  getConnectionQuotaExhaustedAt,
   getMutableProviderConnection,
   isAccountManagedConnection,
   markCredentialAuthError,
@@ -205,10 +206,11 @@ function syncConnectionExhaustedState(conn: ProviderConnection): void {
     setConnectionExhausted(conn, false)
     return
   }
+  const cred = conn.credentials[0]
   setConnectionExhausted(
     conn,
     true,
-    meta?.lastRateLimitAt ?? meta?.quotaExhaustedAt,
+    cred?.lastRateLimitAt ?? getConnectionQuotaExhaustedAt(conn),
   )
 }
 

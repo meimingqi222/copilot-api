@@ -1,0 +1,47 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/connection-routability.test.ts:
+299 |     const meta = readConnectionMetadata(conn)
+300 |     expect(cred.exhaustedAt).toBe(at)
+301 |     expect(cred.cooldownUntil).toBe(at + 60_000)
+302 |     expect(cred.lastRateLimitAt).toBe(at)
+303 |     expect(cred.lastRateLimitReason).toBe("usage_limit_reached")
+304 |     expect(meta?.quotaExhaustedAt).toBeUndefined()
+                                         ^
+error: expect(received).toBeUndefined()
+
+Received: 1794660709233
+
+      at <anonymous> (/Users/meimingqi222/Developer/amp-workspace/copilot-api/tests/connection-routability.test.ts:304:36)
+(fail) metadata mirrors retired (typed-only writes) > setters write typed fields and leave no metadata mirror values [1.27ms]
+
+ 0 pass
+ 16 filtered out
+ 1 fail
+ 5 expect() calls
+Ran 1 test across 1 file. [99.00ms]
+
+=== guard 2: load normalization reverted to v1-only ===
+bun test v1.4.4 (38afee6c8)
+
+tests/provider-connections-store.test.ts:
+390 |       tempPath,
+391 |       JSON.stringify({ version: 2, connections: [residue] }),
+392 |     )
+393 |     const [connection] = await loadProviderConnections()
+394 |     const cred = connection!.credentials[0]!
+395 |     expect(cred.exhaustedAt).toBe(at)
+                                   ^
+error: expect(received).toBe(expected)
+
+Expected: 1794660779885
+Received: undefined
+
+      at <anonymous> (/Users/meimingqi222/Developer/amp-workspace/copilot-api/tests/provider-connections-store.test.ts:395:30)
+(fail) loadProviderConnections > loading a v2 file promotes and clears leftover metadata mirrors [0.90ms]
+
+ 0 pass
+ 23 filtered out
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [99.00ms]

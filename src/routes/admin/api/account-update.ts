@@ -322,7 +322,7 @@ function applySettingsPatchToConnection(
         // routing 字段同步到 metadata 顶层
         switch (key) {
           case "modelPrefix": {
-            meta.modelPrefix = value
+            conn.modelPrefix = value
             break
           }
           case "tokenEndpoint": {

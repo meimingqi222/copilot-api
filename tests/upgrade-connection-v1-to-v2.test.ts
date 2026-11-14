@@ -72,6 +72,14 @@ describe("upgradeConnectionV1ToV2", () => {
     expect(v2.modelPrefix).toBe("prefix-")
   })
 
+  test("promotes cooldownUntil and lastRateLimitAt to credential when absent", () => {
+    const v1 = makeV1Connection()
+    const v2 = upgradeConnectionV1ToV2(v1)
+    // v2 残留清理不能假设 credential 已有值:缺失时先提升再删镜像,避免丢冷却。
+    expect(v2.credentials[0].cooldownUntil).toBe(4000)
+    expect(v2.credentials[0].lastRateLimitAt).toBe(3000)
+  })
+
   test("removes promoted metadata keys", () => {
     const v1 = makeV1Connection()
     const v2 = upgradeConnectionV1ToV2(v1)

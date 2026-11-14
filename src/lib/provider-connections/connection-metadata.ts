@@ -411,7 +411,7 @@ export function ensureConnectionMetadata(
 }
 
 /**
- * 设置 metadata.cooldownUntil + credential.cooldownUntil（同步）。
+ * 设置 credential.cooldownUntil（冷却只落类型化字段,不再写 metadata 镜像）。
  * 同时镜像 syncMapQuotaStateToCredentialStatus:冷却生效时把
  * credential.status 置为 "cooldown"（auth_error 优先级更高，不覆盖）。
  */
@@ -419,10 +419,12 @@ export function setConnectionCooldownUntil(
   conn: ProviderConnection,
   value: number | undefined,
 ): void {
-  const meta = ensureConnectionMetadata(conn)
-  meta.cooldownUntil = value
   const cred = conn.credentials[0]
   cred.cooldownUntil = value
+  // 退役过渡:冷却只落 credential,删除遗留 metadata 镜像(A3 会连删除一起移除)。
+  if (conn.metadata) {
+    delete (conn.metadata as Record<string, unknown>).cooldownUntil
+  }
   if (
     value
     && value > Date.now()
@@ -454,12 +456,12 @@ export function setConnectionQuotaState(
   const exhaustedAt =
     quotaState === "exhausted" ? (previousExhaustedAt ?? Date.now()) : undefined
   meta.quotaState = quotaState
-  meta.quotaExhaustedAt = exhaustedAt
-  // T5.2.5:同时写入 credential.exhaustedAt(类型化字段)
+  // 耗尽时刻只落 credential.exhaustedAt(类型化字段),删除遗留 metadata 镜像。
   const cred = conn.credentials[0]
   if (cred) {
     cred.exhaustedAt = exhaustedAt
   }
+  delete meta.quotaExhaustedAt
   if (quotaState === "exhausted") {
     if (cred && cred.status !== "auth_error") {
       cred.status = "quota_exhausted"
@@ -509,7 +511,7 @@ export function setConnectionQuotaState(
   }
 }
 
-/** 设置 metadata.isExhausted + exhaustedAt。T5.2.5:同时写入 credential.exhaustedAt。 */
+/** 设置 metadata.isExhausted + credential.exhaustedAt(耗尽时刻只落类型化字段)。 */
 export function setConnectionExhausted(
   conn: ProviderConnection,
   isExhausted: boolean,
@@ -517,28 +519,31 @@ export function setConnectionExhausted(
 ): void {
   const meta = ensureConnectionMetadata(conn)
   meta.isExhausted = isExhausted
-  const at = !isExhausted ? undefined : (exhaustedAt ?? meta.exhaustedAt)
-  meta.exhaustedAt = at
-  // T5.2.5:同时写入 credential.exhaustedAt(类型化字段)
   const cred = conn.credentials[0]
+  const at = !isExhausted ? undefined : (exhaustedAt ?? cred?.exhaustedAt)
   if (cred) {
     cred.exhaustedAt = at
   }
+  // 退役过渡:耗尽时刻只落 credential,删除遗留 metadata 镜像。
+  delete meta.exhaustedAt
 }
 
-/** 设置 metadata.lastRateLimitAt + lastRateLimitReason。T5.2.5:同时写入 credential.lastRateLimitReason。 */
+/** 设置 credential.lastRateLimitAt + lastRateLimitReason(只落类型化字段)。 */
 export function setConnectionRateLimitInfo(
   conn: ProviderConnection,
   at: number | undefined,
   reason: string | undefined,
 ): void {
-  const meta = ensureConnectionMetadata(conn)
-  meta.lastRateLimitAt = at
-  meta.lastRateLimitReason = reason
-  // T5.2.5:同时写入 credential.lastRateLimitReason(类型化字段)
   const cred = conn.credentials[0]
   if (cred) {
+    cred.lastRateLimitAt = at
     cred.lastRateLimitReason = reason
+  }
+  // 退役过渡:限流信息只落 credential,删除遗留 metadata 镜像。
+  if (conn.metadata) {
+    const meta = conn.metadata as Record<string, unknown>
+    delete meta.lastRateLimitAt
+    delete meta.lastRateLimitReason
   }
 }
 
