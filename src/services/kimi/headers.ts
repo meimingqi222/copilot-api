@@ -1,29 +1,17 @@
-import { createHash, randomUUID } from "node:crypto"
+import { randomUUID } from "node:crypto"
 import { hostname } from "node:os"
 
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import { getCredentialContextString } from "~/lib/provider-connections"
+import { uuidv5 } from "~/lib/uuid"
 
 // UUID v5 namespace (RFC 4122 OID namespace) for deterministic Kimi device ids.
 const KIMI_DEVICE_NS = "6ba7b812-9dad-11d1-80b4-00c04fd430c8"
 
 /** Deterministic UUID v5 from a name. Same input → same UUID, stable across restarts. */
 function deterministicKimiDeviceId(name: string): string {
-  const hash = createHash("sha1")
-  hash.update(Buffer.from(KIMI_DEVICE_NS.replaceAll("-", ""), "hex"))
-  hash.update(name, "utf8")
-  const digest = hash.digest()
-  digest[6] = (digest[6] & 0x0f) | 0x50
-  digest[8] = (digest[8] & 0x3f) | 0x80
-  const hex = digest.toString("hex")
-  return [
-    hex.slice(0, 8),
-    hex.slice(8, 12),
-    hex.slice(12, 16),
-    hex.slice(16, 20),
-    hex.slice(20, 32),
-  ].join("-")
+  return uuidv5(name, KIMI_DEVICE_NS)
 }
 
 /**

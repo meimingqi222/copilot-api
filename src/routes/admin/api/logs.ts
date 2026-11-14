@@ -1,4 +1,5 @@
 import { Hono } from "hono"
+import type { Context } from "hono"
 
 import {
   logStore,
@@ -64,52 +65,49 @@ function parseBool(v: string | undefined): boolean | undefined {
   return undefined
 }
 
-logApiRoutes.get("/", (c) => {
+/** Shared filter fields for the log list and export endpoints. */
+function parseLogFilters(
+  c: Context,
+): Omit<LogQueryOptions, "limit" | "offset"> {
   const level = c.req.query("level") as LogLevel | undefined
   const search = c.req.query("search")
-  const limit = Math.min(Number(c.req.query("limit") ?? 100), 500)
-  const offset = Number(c.req.query("offset") ?? 0)
   const endpoint = c.req.query("endpoint") as LogEndpoint | undefined
   const apiKind = (c.req.query("apiKind") ?? endpoint) as ApiKind | undefined
   const stage = c.req.query("stage") as TraceStage | undefined
-  const ok = parseBool(c.req.query("ok"))
-  const outcome = c.req.query("outcome") as RequestOutcome | undefined
-  const kind = c.req.query("kind")
-  const provider = c.req.query("provider")
-  const model = c.req.query("model")
-  const modelMismatch = parseBool(c.req.query("modelMismatch"))
-  const connectionId = c.req.query("connectionId")
-  const requestId = c.req.query("requestId")
   const statusMin = parseNumber(c.req.query("statusMin"))
   const statusMax = parseNumber(c.req.query("statusMax"))
   const status = parseNumber(c.req.query("status"))
-  const hasError = parseBool(c.req.query("hasError"))
-  const streaming = parseBool(c.req.query("streaming"))
-  const timeFrom = parseTime(c.req.query("timeFrom"))
-  const timeTo = parseTime(c.req.query("timeTo"))
-
-  const { entries, filteredTotal } = logStore.query({
+  return {
     level: level || undefined,
     search: search || undefined,
-    limit,
-    offset,
     endpoint: c.req.query("apiKind") ? endpoint || undefined : undefined,
     apiKind: apiKind || undefined,
     stage: stage || undefined,
-    ok,
-    outcome,
-    kind: kind || undefined,
-    provider: provider || undefined,
-    model: model || undefined,
-    modelMismatch,
-    connectionId: connectionId || undefined,
-    requestId: requestId || undefined,
+    ok: parseBool(c.req.query("ok")),
+    outcome: c.req.query("outcome") as RequestOutcome | undefined,
+    kind: c.req.query("kind") || undefined,
+    provider: c.req.query("provider") || undefined,
+    model: c.req.query("model") || undefined,
+    modelMismatch: parseBool(c.req.query("modelMismatch")),
+    connectionId: c.req.query("connectionId") || undefined,
+    requestId: c.req.query("requestId") || undefined,
     statusMin: status ?? statusMin,
     statusMax: status ?? statusMax,
-    hasError,
-    streaming,
-    timeFrom,
-    timeTo,
+    hasError: parseBool(c.req.query("hasError")),
+    streaming: parseBool(c.req.query("streaming")),
+    timeFrom: parseTime(c.req.query("timeFrom")),
+    timeTo: parseTime(c.req.query("timeTo")),
+  }
+}
+
+logApiRoutes.get("/", (c) => {
+  const limit = Math.min(Number(c.req.query("limit") ?? 100), 500)
+  const offset = Number(c.req.query("offset") ?? 0)
+
+  const { entries, filteredTotal } = logStore.query({
+    ...parseLogFilters(c),
+    limit,
+    offset,
   })
 
   return c.json({
@@ -121,52 +119,14 @@ logApiRoutes.get("/", (c) => {
 })
 
 logApiRoutes.get("/export", (c) => {
-  const search = c.req.query("search")
-  const level = c.req.query("level") as LogLevel | undefined
-  const endpoint = c.req.query("endpoint") as LogEndpoint | undefined
-  const apiKind = (c.req.query("apiKind") ?? endpoint) as ApiKind | undefined
-  const stage = c.req.query("stage") as TraceStage | undefined
-  const ok = parseBool(c.req.query("ok"))
-  const outcome = c.req.query("outcome") as RequestOutcome | undefined
-  const kind = c.req.query("kind")
-  const provider = c.req.query("provider")
-  const model = c.req.query("model")
-  const modelMismatch = parseBool(c.req.query("modelMismatch"))
-  const connectionId = c.req.query("connectionId")
-  const requestId = c.req.query("requestId")
-  const hasError = parseBool(c.req.query("hasError"))
-  const streaming = parseBool(c.req.query("streaming"))
-  const timeFrom = parseTime(c.req.query("timeFrom"))
-  const timeTo = parseTime(c.req.query("timeTo"))
-  const statusMin = parseNumber(c.req.query("statusMin"))
-  const statusMax = parseNumber(c.req.query("statusMax"))
-  const status = parseNumber(c.req.query("status"))
   const rawLimit = Number(c.req.query("limit") ?? 5000)
   const limit =
     Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 5000) : 5000
 
   const options: LogQueryOptions = {
-    level: level || undefined,
-    search: search || undefined,
+    ...parseLogFilters(c),
     limit,
     offset: 0,
-    endpoint: c.req.query("apiKind") ? endpoint || undefined : undefined,
-    apiKind: apiKind || undefined,
-    stage: stage || undefined,
-    ok,
-    outcome,
-    kind: kind || undefined,
-    provider: provider || undefined,
-    model: model || undefined,
-    modelMismatch,
-    connectionId: connectionId || undefined,
-    requestId: requestId || undefined,
-    statusMin: status ?? statusMin,
-    statusMax: status ?? statusMax,
-    hasError,
-    streaming,
-    timeFrom,
-    timeTo,
   }
 
   const ts = new Date().toISOString().replaceAll(/[:.]/g, "-")

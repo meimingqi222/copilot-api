@@ -16,10 +16,7 @@ import {
  * Account 路径或 chat→responses 翻译。
  */
 
-import type {
-  ChatCompletionResponse,
-  CopilotStreamEvent,
-} from "~/services/protocols/chat/types"
+import type { ChatCompletionResponse } from "~/services/protocols/chat/types"
 import type {
   CopilotStreamEventLike,
   ResponsesPayload,
@@ -33,18 +30,13 @@ import { dumpUpstreamResponsesWire } from "~/lib/request-dump"
 import {
   buildBaseHeaders,
   connectionFetchInit,
-  detectOpenAIStreamError,
   detectResponsesStreamError,
   handleUpstreamFailure,
   joinUrl,
   safeSseStream,
 } from "~/services/protocols/shared"
 
-import type {
-  AdapterChatResult,
-  AdapterResponsesResult,
-  ProtocolAdapter,
-} from "./types"
+import type { AdapterResponsesResult, ProtocolAdapter } from "./types"
 
 import {
   buildStatelessRequestInput,
@@ -55,6 +47,7 @@ import {
   snoopResponsesStreamForTranscript,
 } from "./openai-responses-transcript"
 import { discoverJsonModels, discoveredModelMappings } from "./discover-models"
+import { createOpenAICompatibleChatCompletion } from "./openai-compatible-chat"
 import {
   replayResponsesReasoningText,
   replaysReasoningText,
@@ -89,50 +82,11 @@ export const openAIResponsesCompatibleAdapter: ProtocolAdapter = {
     return discoveredModelMappings(body.data, classifyDiscoveredModelEndpoints)
   },
 
-  async createChatCompletions({
-    target,
-    connection,
-    credential,
-    payload,
-    signal,
-  }) {
-    const upstreamPayload = {
-      ...payload,
-      model: target.upstreamModelId,
-    }
-
-    const response = await fetch(
-      joinUrl(connection.baseUrl, "/chat/completions"),
-      connectionFetchInit(connection, {
-        method: "POST",
-        headers: buildBaseHeaders(connection, credential),
-        body: serializeUpstreamBody(upstreamPayload),
-        signal,
-      }),
-    )
-
-    if (!response.ok) {
-      await handleUpstreamFailure(
-        response,
-        credential,
-        "Failed to create chat completions",
-        "openai-responses-compatible",
-      )
-    }
-
-    if (payload.stream) {
-      const stream = await safeSseStream(response, detectOpenAIStreamError)
-      return {
-        credentialId: credential.id,
-        response: stream as unknown as AsyncIterable<CopilotStreamEvent>,
-      } satisfies AdapterChatResult
-    }
-
-    const body = (await readUpstreamJson(response)) as ChatCompletionResponse
-    return {
-      credentialId: credential.id,
-      response: body,
-    } satisfies AdapterChatResult
+  async createChatCompletions(params) {
+    return createOpenAICompatibleChatCompletion(params, {
+      providerLabel: "openai-responses-compatible",
+      parseNonStream: (raw) => raw as unknown as ChatCompletionResponse,
+    })
   },
 
   async createResponses({ target, connection, credential, payload, signal }) {

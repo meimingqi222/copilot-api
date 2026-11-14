@@ -17,10 +17,11 @@
  * (same idea as Claude's getStableSessionId / Codex prompt_cache_key).
  */
 
-import { createHash, randomUUID } from "node:crypto"
+import { randomUUID } from "node:crypto"
 
 import { hashKeyPart, PersistentTTLMap } from "~/lib/cache/persistent-map"
 import { extractSessionIds, resolveStableSessionId } from "~/lib/routing"
+import { uuidv5 } from "~/lib/uuid"
 
 interface CloudSessionIds {
   /** Stable cascade id sent on the wire. */
@@ -103,18 +104,6 @@ const UUID_V5_NAMESPACE_OID = Buffer.from(
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-function uuidV5(name: string): string {
-  const bytes = createHash("sha1")
-    .update(UUID_V5_NAMESPACE_OID)
-    .update(name, "utf8")
-    .digest()
-    .subarray(0, 16)
-  bytes[6] = (bytes[6] & 0x0f) | 0x50
-  bytes[8] = (bytes[8] & 0x3f) | 0x80
-  const hex = bytes.toString("hex")
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
-}
-
 /**
  * Deterministic UUID for any session/conversation string (CPA `normalizeDevinUUID`).
  * An existing UUID is passed through so a client that already sends one keeps
@@ -124,7 +113,7 @@ export function devinSessionUuid(raw: string): string {
   const trimmed = raw.trim()
   if (!trimmed) return randomUUID()
   if (UUID_RE.test(trimmed)) return trimmed.toLowerCase()
-  return uuidV5(trimmed)
+  return uuidv5(trimmed, UUID_V5_NAMESPACE_OID)
 }
 
 const persistedSessions = new PersistentTTLMap<StoredCloudSessionIds>(

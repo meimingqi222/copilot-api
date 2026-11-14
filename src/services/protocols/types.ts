@@ -56,7 +56,7 @@ export type AdapterGeminiResult =
   | { credentialId: string; response: GeminiGenerateContentResponse }
 
 /** Shared parameters for all adapter create* methods. */
-interface AdapterParams<TPayload> {
+export interface AdapterParams<TPayload> {
   target: RouteTarget
   connection: ProviderConnection
   credential: ApiCredential

@@ -7,6 +7,7 @@
  * falls back to HTTP.
  */
 
+import { BoundedEntryStore } from "~/lib/bounded-entry-store"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 import { globalTimers } from "~/lib/timer-registry"
 import type { CopilotStreamEventLike } from "~/services/protocols/responses/types"
@@ -24,14 +25,17 @@ interface TranscriptStoreResult {
   entries: number
 }
 
-const transcripts = new Map<string, TranscriptEntry>()
-let transcriptBytes = 0
-
 const MAX_TRANSCRIPT_ITEMS = 4000
 const MAX_TRANSCRIPT_BYTES = 8 * 1024 * 1024
 const MAX_TOTAL_TRANSCRIPT_BYTES = 32 * 1024 * 1024
 const MAX_TRANSCRIPT_ENTRIES = 256
 const TRANSCRIPT_IDLE_MS = 60 * 60_000
+
+const transcripts = new BoundedEntryStore<TranscriptEntry>({
+  maxEntries: MAX_TRANSCRIPT_ENTRIES,
+  maxTotalBytes: MAX_TOTAL_TRANSCRIPT_BYTES,
+  idleMs: TRANSCRIPT_IDLE_MS,
+})
 
 type ResponsesTranscriptProvider = "codex" | "xai"
 
@@ -80,7 +84,7 @@ export function getCodexTranscript(key: string): Array<unknown> | undefined {
   const entry = transcripts.get(key)
   if (!entry) return undefined
   if (Date.now() - entry.updatedAt > TRANSCRIPT_IDLE_MS) {
-    deleteTranscript(key)
+    transcripts.delete(key)
     return undefined
   }
   return entry.fullInput
@@ -90,16 +94,14 @@ export function setCodexTranscript(
   key: string,
   fullInput: Array<unknown>,
 ): TranscriptStoreResult {
-  pruneIdleTranscripts()
+  transcripts.pruneIdle()
   const bytes = estimateJsonBytes(fullInput, MAX_TRANSCRIPT_BYTES)
   if (fullInput.length > MAX_TRANSCRIPT_ITEMS || bytes > MAX_TRANSCRIPT_BYTES) {
-    deleteTranscript(key)
+    transcripts.delete(key)
     return transcriptStoreResult(false, bytes)
   }
-  deleteTranscript(key)
+  transcripts.delete(key)
   transcripts.set(key, { fullInput, updatedAt: Date.now(), bytes })
-  transcriptBytes += bytes
-  pruneTranscriptCapacity()
   return transcriptStoreResult(transcripts.has(key), bytes)
 }
 
@@ -160,13 +162,13 @@ function transcriptStoreResult(
   return {
     stored,
     entryBytes,
-    totalBytes: transcriptBytes,
+    totalBytes: transcripts.bytes,
     entries: transcripts.size,
   }
 }
 
 export function clearCodexTranscript(key: string): void {
-  deleteTranscript(key)
+  transcripts.delete(key)
 }
 
 export function clearResponsesTranscriptsByExecutionId(
@@ -180,44 +182,11 @@ export function clearResponsesTranscriptsByExecutionId(
     if (sep === -1) continue
     const rest = key.slice(sep + 2)
     if (rest === id || rest.startsWith(`${id}::`)) {
-      deleteTranscript(key)
+      transcripts.delete(key)
       cleared += 1
     }
   }
   return cleared
-}
-
-function pruneIdleTranscripts(now = Date.now()): void {
-  for (const [key, entry] of transcripts) {
-    if (now - entry.updatedAt > TRANSCRIPT_IDLE_MS) {
-      deleteTranscript(key)
-    }
-  }
-}
-
-function pruneTranscriptCapacity(): void {
-  while (
-    transcripts.size > MAX_TRANSCRIPT_ENTRIES
-    || transcriptBytes > MAX_TOTAL_TRANSCRIPT_BYTES
-  ) {
-    let oldestKey: string | undefined
-    let oldestAt = Number.POSITIVE_INFINITY
-    for (const [key, entry] of transcripts) {
-      if (entry.updatedAt < oldestAt) {
-        oldestKey = key
-        oldestAt = entry.updatedAt
-      }
-    }
-    if (!oldestKey) return
-    deleteTranscript(oldestKey)
-  }
-}
-
-function deleteTranscript(key: string): void {
-  const existing = transcripts.get(key)
-  if (!existing) return
-  transcriptBytes = Math.max(0, transcriptBytes - existing.bytes)
-  transcripts.delete(key)
 }
 
 function estimateJsonBytes(value: unknown, limit: number): number {
@@ -280,11 +249,10 @@ function estimateJsonBytes(value: unknown, limit: number): number {
   return visit(value) ? bytes : limit + 1
 }
 
-globalTimers.interval(() => pruneIdleTranscripts(), 5 * 60_000)
+globalTimers.interval(() => transcripts.pruneIdle(), 5 * 60_000)
 
 export function clearCodexTranscriptsForTest(): void {
   transcripts.clear()
-  transcriptBytes = 0
 }
 
 export function getCodexTranscriptCountForTest(): number {
@@ -292,7 +260,7 @@ export function getCodexTranscriptCountForTest(): number {
 }
 
 export function getCodexTranscriptBytesForTest(): number {
-  return transcriptBytes
+  return transcripts.bytes
 }
 
 // ── Replay tool-call pair pruning ──────────────────────────────────────────

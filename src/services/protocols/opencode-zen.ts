@@ -67,6 +67,7 @@ import { collectResponsesFromEventStream } from "~/services/responses/sse-collec
 
 import type {
   AdapterChatResult,
+  AdapterParams,
   AdapterResponsesResult,
   ProtocolAdapter,
 } from "./types"
@@ -861,6 +862,67 @@ function zenUrl(baseUrl: string, endpoint: string): string {
   return joinUrl(baseUrl, endpoint)
 }
 
+/**
+ * Shared upstream send for the chat and responses lines: both must go out
+ * streaming (gate 4), reuse a stable session (gate 3) and carry the free-tier
+ * fingerprint. Only the path, fingerprint style and error label differ; the
+ * caller aggregates or restores the returned stream per its wire.
+ */
+async function zenFetchUpstreamStream(
+  params: AdapterParams<unknown>,
+  opts: { path: string; wireKind: "chat" | "responses"; errorLabel: string },
+): Promise<{
+  stream: AsyncIterable<CopilotStreamEvent>
+  wire: ZenToolWire
+  upstreamModelId: string
+}> {
+  const { target, connection, credential, payload, signal, ctx } = params
+  const upstreamModelId = target.upstreamModelId
+  const session = await zenSessionForRequest(connection, upstreamModelId, ctx)
+  const requestId = zenRequestId()
+
+  const upstreamPayload: Record<string, unknown> = {
+    ...(payload as unknown as Record<string, unknown>),
+    model: upstreamModelId,
+    // 门禁 4（见文件头）：上游必须流式，非流式由调用方聚合回 JSON。
+    stream: true,
+  }
+  // 调用方的工具照常透传,只把四件组补齐;重命名过的工具在响应侧改回去
+  const wire = applyFreeTierFingerprint(upstreamPayload, opts.wireKind)
+
+  const response = await fetch(
+    zenUrl(connection.baseUrl, opts.path),
+    connectionFetchInit(connection, {
+      method: "POST",
+      headers: zenHeaders(
+        connection,
+        credential,
+        session,
+        requestId,
+        "text/event-stream",
+      ),
+      body: serializeUpstreamBody(upstreamPayload),
+      signal,
+    }),
+  )
+
+  if (!response.ok) {
+    await handleUpstreamFailure(
+      response,
+      credential,
+      opts.errorLabel,
+      "opencode-zen-free",
+    )
+  }
+
+  const stream = await safeSseStream(response, detectOpenAIStreamError)
+  return {
+    stream: stream as unknown as AsyncIterable<CopilotStreamEvent>,
+    wire,
+    upstreamModelId,
+  }
+}
+
 export const openCodeZenAdapter: ProtocolAdapter = {
   protocol: "opencode-zen-free",
 
@@ -913,62 +975,22 @@ export const openCodeZenAdapter: ProtocolAdapter = {
       })
   },
 
-  async createChatCompletions({
-    target,
-    connection,
-    credential,
-    payload,
-    signal,
-    ctx,
-  }) {
-    const upstreamModelId = target.upstreamModelId
+  async createChatCompletions(params) {
+    const { credential, payload } = params
     // 门禁只认 muse-spark 走 Responses；真撞上了由上层按 model.endpoints 分流，
     // 这里仍然按 chat 线发，让上游的 400 说清楚而不是静默改协议。
-    const session = await zenSessionForRequest(connection, upstreamModelId, ctx)
-    const requestId = zenRequestId()
-
-    const upstreamPayload: Record<string, unknown> = {
-      ...(payload as unknown as Record<string, unknown>),
-      model: upstreamModelId,
-      // 门禁 4（见文件头）：上游必须流式，非流式由下方聚合回 JSON。
-      stream: true,
-    }
-    // 调用方的工具照常透传,只把四件组补齐;重命名过的工具在响应侧改回去
-    const wire = applyFreeTierFingerprint(upstreamPayload, "chat")
-
-    const response = await fetch(
-      zenUrl(connection.baseUrl, "/chat/completions"),
-      connectionFetchInit(connection, {
-        method: "POST",
-        headers: zenHeaders(
-          connection,
-          credential,
-          session,
-          requestId,
-          "text/event-stream",
-        ),
-        body: serializeUpstreamBody(upstreamPayload),
-        signal,
-      }),
+    const { stream, wire, upstreamModelId } = await zenFetchUpstreamStream(
+      params,
+      {
+        path: "/chat/completions",
+        wireKind: "chat",
+        errorLabel: "Failed to create chat completions",
+      },
     )
-
-    if (!response.ok) {
-      await handleUpstreamFailure(
-        response,
-        credential,
-        "Failed to create chat completions",
-        "opencode-zen-free",
-      )
-    }
-
-    const stream = await safeSseStream(response, detectOpenAIStreamError)
 
     // 非流式请求:上游只给了流,聚合回一个 ChatCompletionResponse。
     if (!payload.stream) {
-      const aggregated = await aggregateSseToResponse(
-        stream as unknown as AsyncIterable<CopilotStreamEvent>,
-        upstreamModelId,
-      )
+      const aggregated = await aggregateSseToResponse(stream, upstreamModelId)
       applyToolWireFixups(aggregated, wire)
       return {
         credentialId: credential.id,
@@ -978,64 +1000,25 @@ export const openCodeZenAdapter: ProtocolAdapter = {
 
     return {
       credentialId: credential.id,
-      response: restoreAndFilterToolStream(
-        stream as unknown as AsyncIterable<CopilotStreamEvent>,
-        wire,
-      ),
+      response: restoreAndFilterToolStream(stream, wire),
     } satisfies AdapterChatResult
   },
 
-  async createResponses({
-    target,
-    connection,
-    credential,
-    payload,
-    signal,
-    ctx,
-  }) {
-    const upstreamModelId = target.upstreamModelId
-    const session = await zenSessionForRequest(connection, upstreamModelId, ctx)
-    const requestId = zenRequestId()
-
-    const upstreamPayload: Record<string, unknown> = {
-      ...(payload as unknown as Record<string, unknown>),
-      model: upstreamModelId,
-      // 门禁 4（见文件头）：上游必须流式，非流式由下方聚合回 JSON。
-      stream: true,
-    }
-    const wire = applyFreeTierFingerprint(upstreamPayload, "responses")
-
-    const response = await fetch(
-      zenUrl(connection.baseUrl, "/responses"),
-      connectionFetchInit(connection, {
-        method: "POST",
-        headers: zenHeaders(
-          connection,
-          credential,
-          session,
-          requestId,
-          "text/event-stream",
-        ),
-        body: serializeUpstreamBody(upstreamPayload),
-        signal,
-      }),
+  async createResponses(params) {
+    const { credential, payload } = params
+    const { stream, wire, upstreamModelId } = await zenFetchUpstreamStream(
+      params,
+      {
+        path: "/responses",
+        wireKind: "responses",
+        errorLabel: "Failed to create responses",
+      },
     )
-
-    if (!response.ok) {
-      await handleUpstreamFailure(
-        response,
-        credential,
-        "Failed to create responses",
-        "opencode-zen-free",
-      )
-    }
-
-    const stream = await safeSseStream(response, detectOpenAIStreamError)
 
     // 非流式请求:上游只给了流,收敛回一个 ResponsesResponse。
     if (!payload.stream) {
       const aggregated = await collectResponsesFromEventStream(
-        stream as unknown as AsyncIterable<CopilotStreamEvent>,
+        stream,
         upstreamModelId,
       )
       applyToolWireFixups(aggregated, wire)
@@ -1048,7 +1031,7 @@ export const openCodeZenAdapter: ProtocolAdapter = {
     return {
       credentialId: credential.id,
       response: restoreAndFilterToolStream(
-        stream as unknown as AsyncIterable<CopilotStreamEvent>,
+        stream,
         wire,
       ) as unknown as AsyncIterable<{ data?: string }>,
     } satisfies AdapterResponsesResult

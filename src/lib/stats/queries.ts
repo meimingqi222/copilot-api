@@ -136,6 +136,20 @@ function queryUsageModelsByDate(
   return models
 }
 
+function usageDayRowToStats(row: UsageDayRow): Omit<UsageDayStats, "models"> {
+  return {
+    date: row.date,
+    requests: row.requests,
+    promptTokens: row.prompt_tokens,
+    completionTokens: row.completion_tokens,
+    cacheReadTokens: row.cache_read_tokens,
+    cacheWriteTokens: row.cache_write_tokens,
+    cacheUnknownPromptTokens: row.cache_unknown_prompt_tokens,
+    totalTokens: row.total_tokens,
+    cost: row.cost,
+  }
+}
+
 export function getUsageStatsForUserData(
   db: Database,
   userId: string,
@@ -149,15 +163,7 @@ export function getUsageStatsForUserData(
   })
 
   return rows.map((row) => ({
-    date: row.date,
-    requests: row.requests,
-    promptTokens: row.prompt_tokens,
-    completionTokens: row.completion_tokens,
-    cacheReadTokens: row.cache_read_tokens,
-    cacheWriteTokens: row.cache_write_tokens,
-    cacheUnknownPromptTokens: row.cache_unknown_prompt_tokens,
-    totalTokens: row.total_tokens,
-    cost: row.cost,
+    ...usageDayRowToStats(row),
     models: queryUsageModelsByDate(db, row.date, undefined, userId),
   }))
 }
@@ -175,15 +181,7 @@ export function getUsageStatsData(
   })
 
   return rows.map((row) => ({
-    date: row.date,
-    requests: row.requests,
-    promptTokens: row.prompt_tokens,
-    completionTokens: row.completion_tokens,
-    cacheReadTokens: row.cache_read_tokens,
-    cacheWriteTokens: row.cache_write_tokens,
-    cacheUnknownPromptTokens: row.cache_unknown_prompt_tokens,
-    totalTokens: row.total_tokens,
-    cost: row.cost,
+    ...usageDayRowToStats(row),
     models: queryUsageModelsByDate(db, row.date, accountId),
   }))
 }

@@ -1,6 +1,5 @@
 import {
   performanceFetch as fetch,
-  readUpstreamJson,
   serializeUpstreamBody,
 } from "~/lib/upstream-performance"
 
@@ -14,25 +13,19 @@ import {
 
 import type {
   ChatCompletionResponse,
-  CopilotStreamEvent,
   EmbeddingResponse,
 } from "~/services/protocols/chat/types"
 
 import {
   buildBaseHeaders,
   connectionFetchInit,
-  detectOpenAIStreamError,
   handleUpstreamFailure,
   joinUrl,
-  safeSseStream,
 } from "~/services/protocols/shared"
 
-import type {
-  AdapterChatResult,
-  AdapterEmbeddingsResult,
-  ProtocolAdapter,
-} from "./types"
+import type { AdapterEmbeddingsResult, ProtocolAdapter } from "./types"
 import { discoverJsonModels, discoveredModelMappings } from "./discover-models"
+import { createOpenAICompatibleChatCompletion } from "./openai-compatible-chat"
 
 /**
  * Unwraps the `{ data: { ... } }` envelope some upstreams (e.g. Cline Pass)
@@ -87,57 +80,15 @@ export const openAICompatibleAdapter: ProtocolAdapter = {
     return discoveredModelMappings(discovered, classifyDiscoveredModelEndpoints)
   },
 
-  async createChatCompletions({
-    target,
-    connection,
-    credential,
-    payload,
-    signal,
-  }) {
-    const upstreamPayload = {
-      ...payload,
-      model: target.upstreamModelId,
-    }
-
-    const response = await fetch(
-      joinUrl(connection.baseUrl, "/chat/completions"),
-      connectionFetchInit(connection, {
-        method: "POST",
-        headers: buildBaseHeaders(connection, credential),
-        body: serializeUpstreamBody(upstreamPayload),
-        signal,
-      }),
-    )
-
-    if (!response.ok) {
-      await handleUpstreamFailure(
-        response,
-        credential,
-        "Failed to create chat completions",
-        "openai-compatible",
-      )
-    }
-
-    if (payload.stream) {
-      const stream = await safeSseStream(response, detectOpenAIStreamError)
-      return {
-        credentialId: credential.id,
-        response: stream as unknown as AsyncIterable<CopilotStreamEvent>,
-      } satisfies AdapterChatResult
-    }
-
-    const raw = (await readUpstreamJson(response)) as Record<string, unknown>
-    // Some upstreams (e.g. Cline Pass) wrap the standard OpenAI response
-    // in a `data` envelope. Unwrap it so downstream code sees a normal
-    // ChatCompletionResponse with top-level `choices`.
-    const body = unwrapDataEnvelope(
-      raw,
-      "choices",
-    ) as unknown as ChatCompletionResponse
-    return {
-      credentialId: credential.id,
-      response: body,
-    } satisfies AdapterChatResult
+  async createChatCompletions(params) {
+    return createOpenAICompatibleChatCompletion(params, {
+      providerLabel: "openai-compatible",
+      // Some upstreams (e.g. Cline Pass) wrap the standard OpenAI response
+      // in a `data` envelope. Unwrap it so downstream code sees a normal
+      // ChatCompletionResponse with top-level `choices`.
+      parseNonStream: (raw) =>
+        unwrapDataEnvelope(raw, "choices") as unknown as ChatCompletionResponse,
+    })
   },
 
   async createEmbeddings({ target, connection, credential, payload, signal }) {

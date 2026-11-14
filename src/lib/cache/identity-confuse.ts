@@ -11,7 +11,7 @@
  * do. This mainly remaps identifiers per credential for multi-auth isolation.
  */
 
-import { createHash } from "node:crypto"
+import { uuidv5 } from "~/lib/uuid"
 
 import { isCodexIdentityConfuseEnabled } from "~/lib/routing"
 
@@ -36,24 +36,7 @@ function deterministicUuid(
   value: string,
 ): string {
   const name = `copilot-api:codex:identity-confuse:${kind}:${authId.trim()}:${value.trim()}`
-  // UUID v5 = SHA1(namespace_bytes + name_bytes), formatted as UUID.
-  const hash = createHash("sha1")
-  hash.update(Buffer.from(NAMESPACE_OID.replaceAll("-", ""), "hex"))
-  hash.update(name, "utf8")
-  const digest = hash.digest()
-
-  // Set version (5) and variant bits per RFC 4122.
-  digest[6] = (digest[6] & 0x0f) | 0x50
-  digest[8] = (digest[8] & 0x3f) | 0x80
-
-  const hex = digest.toString("hex")
-  return [
-    hex.slice(0, 8),
-    hex.slice(8, 12),
-    hex.slice(12, 16),
-    hex.slice(16, 20),
-    hex.slice(20, 32),
-  ].join("-")
+  return uuidv5(name, NAMESPACE_OID)
 }
 
 /**

@@ -14,11 +14,11 @@ import type {
   IRThinkingPart,
   DecodeLoss,
   IRTurn,
-  IRWebSearchResultPart,
   RequestIR,
 } from "~/services/ir/types"
 
 import { decodeMessagesContent } from "~/services/ir/codecs/messages-chat/messages-content"
+import { webSearchResultBlock } from "~/services/ir/codecs/messages-chat/web-search"
 
 import { sanitizeId } from "~/lib/id-sanitizer"
 import { readAnthropicServiceTier } from "~/lib/service-tier"
@@ -227,24 +227,6 @@ function asMessagesContent(
     ) ?
       content[0].text
     : content
-}
-
-function webSearchResultBlock(
-  part: IRWebSearchResultPart,
-): AnthropicWebSearchToolResultBlock {
-  return {
-    type: "web_search_tool_result",
-    tool_use_id: part.toolUseId,
-    content: part.results.map((result) => ({
-      type: "web_search_result",
-      url: result.url,
-      ...(result.title && { title: result.title }),
-      ...(result.pageAge && { page_age: result.pageAge }),
-      ...(result.encryptedContent && {
-        encrypted_content: result.encryptedContent,
-      }),
-    })),
-  }
 }
 
 /**

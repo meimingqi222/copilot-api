@@ -13,7 +13,6 @@ import { logger } from "~/lib/logger"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { serializeUpstreamBody } from "~/lib/upstream-performance"
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
-import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"
 import { resolveXaiModelId } from "~/services/oauth/model-catalog"
 import { stripCompactionTrigger } from "~/services/responses/compact"
 
@@ -21,7 +20,7 @@ import { xaiWsBaseUrl } from "./endpoint"
 import { buildXaiHeaders } from "./headers"
 import { sanitizeXaiResponsesBodyWithRefs } from "./sanitize-body"
 import { resolveXaiSessionId } from "./session"
-import { requireXaiAccessToken } from "./access"
+import { requireXaiAccessToken, fetchXaiWithCredentialRetry } from "./access"
 
 /**
  * True when an upstream error indicates an invalidated xAI OAuth access token:
@@ -101,56 +100,24 @@ export async function createXaiCompactOnce(
       Array.isArray(upstreamBody.input) ? upstreamBody.input.length : 0,
   })
   const httpBody = serializeUpstreamBody(upstreamBody)
-  let currentAccessToken = accessToken
-  let response = await fetchWithConnectionProxy(connection, url, {
-    method: "POST",
-    headers: buildXaiHeaders(
-      currentAccessToken,
-      false,
-      sessionId,
-      false,
-      connection.headers,
-    ),
-    body: httpBody,
-    signal,
+  const response = await fetchXaiWithCredentialRetry({
+    connection,
+    credential,
+    accessToken,
+    send: (token) =>
+      fetchWithConnectionProxy(connection, url, {
+        method: "POST",
+        headers: buildXaiHeaders(
+          token,
+          false,
+          sessionId,
+          false,
+          connection.headers,
+        ),
+        body: httpBody,
+        signal,
+      }),
   })
-
-  if (response.status === 403) {
-    const errorBody = await response
-      .clone()
-      .text()
-      .catch(() => "")
-    if (
-      /unauthenticated:bad-credentials|could not be validated/i.test(errorBody)
-    ) {
-      logger.warn(
-        `xAI returned 403 bad-credentials for connection "${connection.name}". Forcing token refresh...`,
-      )
-      const refreshedToken = await ensureOAuthConnectionAccessToken(
-        connection,
-        credential,
-        {
-          forceRefresh: true,
-          failedAccessToken: currentAccessToken,
-        },
-      )
-      if (refreshedToken && refreshedToken !== currentAccessToken) {
-        currentAccessToken = refreshedToken
-        response = await fetchWithConnectionProxy(connection, url, {
-          method: "POST",
-          headers: buildXaiHeaders(
-            currentAccessToken,
-            false,
-            sessionId,
-            false,
-            connection.headers,
-          ),
-          body: httpBody,
-          signal,
-        })
-      }
-    }
-  }
 
   if (!response.ok) {
     throw new HTTPError(

@@ -29,6 +29,7 @@ import type {
 import { logger } from "~/lib/logger"
 import { globalTimers } from "~/lib/timer-registry"
 import { asRecord } from "~/lib/json-shape"
+import { BoundedEntryStore } from "~/lib/bounded-entry-store"
 import { buildResponsesTranscriptInput } from "~/services/codex/ws-transcript-cache"
 import { outputItemKey } from "~/services/responses/output-item"
 import { replayResponsesReasoningText } from "~/services/protocols/reasoning-replay"
@@ -40,9 +41,6 @@ interface StatelessTranscript {
   bytes: number
 }
 
-const transcripts = new Map<string, StatelessTranscript>()
-let transcriptBytes = 0
-
 /** 单条转录本(全量 input + output)上限:超了就丢,降级为无状态。 */
 const MAX_TRANSCRIPT_ITEMS = 4000
 const MAX_TRANSCRIPT_BYTES = 8 * 1024 * 1024
@@ -52,6 +50,12 @@ const MAX_TRANSCRIPT_ENTRIES = 256
 
 /** 超过这么久没被链式引用就淘汰。 */
 const TRANSCRIPT_IDLE_MS = 60 * 60_000
+
+const transcripts = new BoundedEntryStore<StatelessTranscript>({
+  maxEntries: MAX_TRANSCRIPT_ENTRIES,
+  maxTotalBytes: MAX_TOTAL_TRANSCRIPT_BYTES,
+  idleMs: TRANSCRIPT_IDLE_MS,
+})
 
 /**
  * 单轮流式 output 收集上限。超了就放弃本轮记账(下轮退化为无状态),避免
@@ -76,7 +80,7 @@ export function getStatelessTranscript(
   const entry = transcripts.get(key)
   if (!entry) return undefined
   if (Date.now() - entry.updatedAt > TRANSCRIPT_IDLE_MS) {
-    deleteTranscript(key)
+    transcripts.delete(key)
     return undefined
   }
   return { input: entry.input, instructions: entry.instructions }
@@ -95,11 +99,11 @@ export function recordStatelessTranscript(args: {
   // ws-transcript-cache.ts 的 appendCodexTranscript 同一约束)。
   const { connectionId, responseId, instructions } = args
   if (!connectionId || !responseId) return
-  pruneIdleTranscripts()
+  transcripts.pruneIdle()
   const key = statelessTranscriptKey(connectionId, responseId)
   let input = [...args.input, ...args.output]
   if (input.length > MAX_TRANSCRIPT_ITEMS) {
-    deleteTranscript(key)
+    transcripts.delete(key)
     return
   }
   if (args.readableReasoning) {
@@ -111,13 +115,11 @@ export function recordStatelessTranscript(args: {
   }
   const bytes = estimateBytes(input, instructions)
   if (bytes > MAX_TRANSCRIPT_BYTES) {
-    deleteTranscript(key)
+    transcripts.delete(key)
     return
   }
-  deleteTranscript(key)
+  transcripts.delete(key)
   transcripts.set(key, { input, instructions, updatedAt: Date.now(), bytes })
-  transcriptBytes += bytes
-  pruneTranscriptCapacity()
 }
 
 /**
@@ -316,43 +318,9 @@ function estimateBytes(input: Array<unknown>, instructions?: string): number {
   }
 }
 
-function pruneIdleTranscripts(now = Date.now()): void {
-  for (const [key, entry] of transcripts) {
-    if (now - entry.updatedAt > TRANSCRIPT_IDLE_MS) {
-      deleteTranscript(key)
-    }
-  }
-}
-
-function pruneTranscriptCapacity(): void {
-  while (
-    transcripts.size > MAX_TRANSCRIPT_ENTRIES
-    || transcriptBytes > MAX_TOTAL_TRANSCRIPT_BYTES
-  ) {
-    let oldestKey: string | undefined
-    let oldestAt = Number.POSITIVE_INFINITY
-    for (const [key, entry] of transcripts) {
-      if (entry.updatedAt < oldestAt) {
-        oldestKey = key
-        oldestAt = entry.updatedAt
-      }
-    }
-    if (!oldestKey) return
-    deleteTranscript(oldestKey)
-  }
-}
-
-function deleteTranscript(key: string): void {
-  const existing = transcripts.get(key)
-  if (!existing) return
-  transcriptBytes = Math.max(0, transcriptBytes - existing.bytes)
-  transcripts.delete(key)
-}
-
-globalTimers.interval(() => pruneIdleTranscripts(), 5 * 60_000)
+globalTimers.interval(() => transcripts.pruneIdle(), 5 * 60_000)
 
 /** Test hook: drop all cached transcripts. */
 export function clearStatelessTranscriptsForTest(): void {
   transcripts.clear()
-  transcriptBytes = 0
 }

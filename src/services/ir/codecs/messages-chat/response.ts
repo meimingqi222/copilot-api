@@ -18,6 +18,7 @@ import {
   imageFromChat,
   imageToChat,
 } from "~/services/ir/codecs/messages-chat/request"
+import { webSearchResultBlock } from "~/services/ir/codecs/messages-chat/web-search"
 import {
   extractReasoningBlockText,
   extractReasoningTextAlias,
@@ -232,19 +233,7 @@ export function encodeMessagesResponse(ir: ResultIR): AnthropicResponse {
         input: parseToolInput(part.input),
       })
     else if (part.type === "web_search_result")
-      content.push({
-        type: "web_search_tool_result",
-        tool_use_id: part.toolUseId,
-        content: part.results.map((result) => ({
-          type: "web_search_result",
-          url: result.url,
-          ...(result.title && { title: result.title }),
-          ...(result.pageAge && { page_age: result.pageAge }),
-          ...(result.encryptedContent && {
-            encrypted_content: result.encryptedContent,
-          }),
-        })),
-      })
+      content.push(webSearchResultBlock(part))
     else if (part.type === "tool_call") {
       content.push({
         type: "tool_use",

@@ -1,4 +1,5 @@
 import { Hono } from "hono"
+import type { Context } from "hono"
 import { createHash } from "node:crypto"
 import { readFileSync, statSync } from "node:fs"
 import { resolve } from "node:path"
@@ -252,26 +253,44 @@ adminRoutes.get("/login", (c) => {
   return c.html(serveLoginPage())
 })
 
-adminRoutes.post("/login", async (c) => {
+/** Shared admin-login gate: password configured + per-IP brute-force guard. */
+function guardAdminLogin(
+  c: Context,
+):
+  | { blocked: false; clientIp: string }
+  | { blocked: true; response: Response } {
   if (!isAdminPasswordConfigured()) {
-    return c.json(
-      { error: "Admin password is not configured. Use /admin/setup first." },
-      400,
-    )
+    return {
+      blocked: true,
+      response: c.json(
+        { error: "Admin password is not configured. Use /admin/setup first." },
+        400,
+      ),
+    }
   }
 
   const clientIp = getClientIp(c)
-
   const protection = checkLoginAllowed(clientIp)
   if (!protection.allowed) {
     if (protection.retryAfterSeconds) {
       c.header("Retry-After", String(protection.retryAfterSeconds))
     }
-    return c.json(
-      { error: protection.reason ?? "Too many login attempts." },
-      429,
-    )
+    return {
+      blocked: true,
+      response: c.json(
+        { error: protection.reason ?? "Too many login attempts." },
+        429,
+      ),
+    }
   }
+
+  return { blocked: false, clientIp }
+}
+
+adminRoutes.post("/login", async (c) => {
+  const guard = guardAdminLogin(c)
+  if (guard.blocked) return guard.response
+  const clientIp = guard.clientIp
 
   let password: string | undefined
   let remember: boolean
@@ -322,25 +341,9 @@ adminRoutes.post("/login", async (c) => {
 })
 
 adminRoutes.post("/login/totp", async (c) => {
-  if (!isAdminPasswordConfigured()) {
-    return c.json(
-      { error: "Admin password is not configured. Use /admin/setup first." },
-      400,
-    )
-  }
-
-  const clientIp = getClientIp(c)
-
-  const protection = checkLoginAllowed(clientIp)
-  if (!protection.allowed) {
-    if (protection.retryAfterSeconds) {
-      c.header("Retry-After", String(protection.retryAfterSeconds))
-    }
-    return c.json(
-      { error: protection.reason ?? "Too many login attempts." },
-      429,
-    )
-  }
+  const guard = guardAdminLogin(c)
+  if (guard.blocked) return guard.response
+  const clientIp = guard.clientIp
 
   let totpToken: string | undefined
   let code: string | undefined

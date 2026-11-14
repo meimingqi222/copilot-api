@@ -74,7 +74,7 @@ import {
   restoreXaiNamespaceCallsInStream,
   restoreXaiNamespaceToolCallsInResponse,
 } from "./stream-transforms"
-import { requireXaiAccessToken } from "./access"
+import { requireXaiAccessToken, fetchXaiWithCredentialRetry } from "./access"
 
 export async function createXaiResponsesOnce(
   {
@@ -243,56 +243,24 @@ export async function createXaiResponsesOnce(
     wireBytes: Buffer.byteLength(httpBody),
   })
 
-  let currentAccessToken = accessToken
-  let response = await fetchWithConnectionProxy(connection, chatUrl, {
-    method: "POST",
-    headers: buildXaiHeaders(
-      currentAccessToken,
-      true,
-      sessionId,
-      useCliIdentity,
-      connection.headers,
-    ),
-    body: httpBody,
-    signal,
+  const response = await fetchXaiWithCredentialRetry({
+    connection,
+    credential,
+    accessToken,
+    send: (token) =>
+      fetchWithConnectionProxy(connection, chatUrl, {
+        method: "POST",
+        headers: buildXaiHeaders(
+          token,
+          true,
+          sessionId,
+          useCliIdentity,
+          connection.headers,
+        ),
+        body: httpBody,
+        signal,
+      }),
   })
-
-  if (response.status === 403) {
-    const errorBody = await response
-      .clone()
-      .text()
-      .catch(() => "")
-    if (
-      /unauthenticated:bad-credentials|could not be validated/i.test(errorBody)
-    ) {
-      logger.warn(
-        `xAI returned 403 bad-credentials for connection "${connection.name}". Forcing token refresh...`,
-      )
-      const refreshedToken = await ensureOAuthConnectionAccessToken(
-        connection,
-        credential,
-        {
-          forceRefresh: true,
-          failedAccessToken: currentAccessToken,
-        },
-      )
-      if (refreshedToken && refreshedToken !== currentAccessToken) {
-        currentAccessToken = refreshedToken
-        response = await fetchWithConnectionProxy(connection, chatUrl, {
-          method: "POST",
-          headers: buildXaiHeaders(
-            currentAccessToken,
-            true,
-            sessionId,
-            useCliIdentity,
-            connection.headers,
-          ),
-          body: httpBody,
-          signal,
-        })
-      }
-    }
-  }
 
   if (!response.ok) {
     throw new HTTPError(

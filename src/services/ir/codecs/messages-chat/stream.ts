@@ -12,6 +12,7 @@ import type {
 import { sanitizeId } from "~/lib/id-sanitizer"
 import { mergeUsage } from "~/services/ir/usage"
 import { MESSAGES_IMAGE_OUTPUT_ERROR } from "~/services/ir/image-generation"
+import { webSearchResultBlock } from "~/services/ir/codecs/messages-chat/web-search"
 import { openAIUsageToAnthropic } from "~/lib/usage-translation"
 
 export { decodeChatStream, encodeChatStream } from "./chat-stream"
@@ -388,19 +389,7 @@ export async function* encodeMessagesStream(
           yield {
             type: "content_block_start",
             index: event.index,
-            content_block: {
-              type: "web_search_tool_result",
-              tool_use_id: part.toolUseId,
-              content: part.results.map((result) => ({
-                type: "web_search_result",
-                url: result.url,
-                ...(result.title && { title: result.title }),
-                ...(result.pageAge && { page_age: result.pageAge }),
-                ...(result.encryptedContent && {
-                  encrypted_content: result.encryptedContent,
-                }),
-              })),
-            },
+            content_block: webSearchResultBlock(part),
           }
         }
       } else if (event.type === "part_delta") {
