@@ -1,0 +1,67 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/usage-translation.test.ts:
+45 |       const original = buildChatCompletionResponse(usage)
+46 |       const ir = decodeChatResponse(original)
+47 |       const messages = encodeMessagesResponse(ir)
+48 |       const responses = encodeResponsesResult(ir)
+49 |       for (const result of [messages, responses]) {
+50 |         expect(result.usage).toMatchObject({
+                                  ^
+error: expect(received).toMatchObject(expected)
+
+  {
+-   "context_window": {
+-     "max_tokens": 128000,
+-     "used_tokens": 12000,
+-   },
+    "input_tokens": 0,
+    "output_tokens": 0,
+-   "usage_status": "pending",
+  }
+
+- Expected  - 5
++ Received  + 0
+
+      at <anonymous> (<workspace>/tests/usage-translation.test.ts:50:30)
+(fail) context occupancy is separate from billed usage > public result and stream codecs preserve metadata (pending=true) [1.12ms]
+45 |       const original = buildChatCompletionResponse(usage)
+46 |       const ir = decodeChatResponse(original)
+47 |       const messages = encodeMessagesResponse(ir)
+48 |       const responses = encodeResponsesResult(ir)
+49 |       for (const result of [messages, responses]) {
+50 |         expect(result.usage).toMatchObject({
+                                  ^
+error: expect(received).toMatchObject(expected)
+
+  {
+-   "context_window": {
+-     "max_tokens": 128000,
+-     "used_tokens": 12000,
+-   },
+    "input_tokens": 123,
+    "output_tokens": 7,
+  }
+
+- Expected  - 4
++ Received  + 0
+
+      at <anonymous> (<workspace>/tests/usage-translation.test.ts:50:30)
+(fail) context occupancy is separate from billed usage > public result and stream codecs preserve metadata (pending=false) [0.06ms]
+(pass) openAIUsageToAnthropic > no cache details at all [0.01ms]
+(pass) openAIUsageToAnthropic > cached_tokens only (cache read, no cache creation) [0.01ms]
+(pass) openAIUsageToAnthropic > cache_creation_input_tokens only (cache write, no cache read)
+(pass) openAIUsageToAnthropic > both cached_tokens and cache_creation_input_tokens present
+(pass) openAIUsageToAnthropic > clamps to 0 when cache totals exceed prompt_tokens
+(pass) anthropicUsageToOpenAI > no cache details at all [0.02ms]
+(pass) anthropicUsageToOpenAI > cache read only folds into prompt_tokens and exposes cached_tokens
+(pass) anthropicUsageToOpenAI > cache creation only folds into prompt_tokens
+(pass) anthropicUsageToOpenAI > both cache buckets fold into prompt_tokens
+(pass) anthropicUsageToOpenAI > round-trips through openAIUsageToAnthropic (conservation invariant)
+(pass) chat -> responses -> chat usage round trip > prompt_tokens, completion_tokens, and cached_tokens survive the round trip [0.28ms]
+(pass) chat -> responses -> chat usage round trip > round-tripped usage still satisfies the Anthropic conservation invariant [0.04ms]
+
+ 12 pass
+ 2 fail
+ 20 expect() calls
+Ran 14 tests across 1 file. [49.00ms]

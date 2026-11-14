@@ -110,7 +110,7 @@ describe("resolveUsageModelId", () => {
   test("strips connectionId prefix for account-managed and plain connections", () => {
     setTestAccounts([
       windsurfAccount({
-        id: "62daa365-dd0b-4a6f-bee2-d40cf9668953",
+        id: "00000000-0000-4000-8000-000000000001",
         provider: "antigravity",
         availableModels: [
           {
@@ -138,8 +138,8 @@ describe("resolveUsageModelId", () => {
 
     expect(
       resolveUsageModelId(
-        "62daa365-dd0b-4a6f-bee2-d40cf9668953",
-        "62daa365-dd0b-4a6f-bee2-d40cf9668953/gemini-3.8-flash",
+        "00000000-0000-4000-8000-000000000001",
+        "00000000-0000-4000-8000-000000000001/gemini-3.8-flash",
       ),
     ).toBe("gemini-3.8-flash")
     expect(

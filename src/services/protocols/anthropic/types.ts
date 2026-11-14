@@ -1,4 +1,5 @@
 import type { CacheCreationUsage } from "~/lib/cache-usage"
+import type { UsageMetadata } from "~/lib/usage-translation"
 // Anthropic API Types
 
 import type { CopilotStreamEventLike } from "~/services/protocols/responses/types"
@@ -198,7 +199,7 @@ export interface AnthropicResponse {
     | "refusal"
     | null
   stop_sequence: string | null
-  usage: {
+  usage: UsageMetadata & {
     input_tokens: number
     output_tokens: number
     cache_creation_input_tokens?: number
@@ -260,7 +261,7 @@ export interface AnthropicMessageDeltaEvent {
     stop_reason?: AnthropicResponse["stop_reason"]
     stop_sequence?: string | null
   }
-  usage?: {
+  usage?: UsageMetadata & {
     input_tokens?: number
     output_tokens: number
     cache_creation_input_tokens?: number
@@ -335,7 +336,7 @@ export function extractMessageContentFromAnthropicPayload(
 }
 
 // Shared streaming types
-export interface AnthropicStreamingUsage {
+export interface AnthropicStreamingUsage extends UsageMetadata {
   input_tokens?: number
   output_tokens: number
   cache_creation_input_tokens?: number

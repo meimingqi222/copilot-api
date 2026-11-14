@@ -281,6 +281,19 @@ export function recordUsage(input: UsageRecordInput): void {
         )
       : 0
 
+    // CLI bridges can report one token counter across several tool HTTP segments.
+    // Their active-time rate must not be replaced by the last segment's duration.
+    const usageTpsOverride = c.get("usageTpsOverride") as
+      | { accountId: string; requestId?: string; tps?: number }
+      | undefined
+    if (usageTpsOverride) c.set("usageTpsOverride", undefined)
+    const effectiveTps =
+      (
+        usageTpsOverride?.accountId === accountId
+        && usageTpsOverride.requestId === getRequestLogContext(c)?.requestId
+      ) ?
+        usageTpsOverride.tps
+      : tps
     statsStore.recordUsage({
       date: statsStore.getDateString(now),
       accountId,
@@ -300,7 +313,7 @@ export function recordUsage(input: UsageRecordInput): void {
       cost,
       timestamp: now,
       ttftMs,
-      tps,
+      tps: effectiveTps,
       streaming,
       performance: requestPerformanceSnapshot(c, streaming),
     })
@@ -325,7 +338,7 @@ export function recordUsage(input: UsageRecordInput): void {
       cacheReadTokens,
       cacheWriteTokens,
       ttftMs,
-      generationTps: tps,
+      generationTps: effectiveTps,
       streaming,
       finishReason,
     })

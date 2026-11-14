@@ -11,7 +11,11 @@ import {
   imageToChat,
 } from "~/services/ir/codecs/messages-chat/request"
 import type { IRStop, IRUsage, StreamEvent } from "~/services/ir/types"
-import { mergeUsage } from "~/services/ir/usage"
+import {
+  mergeUsage,
+  decodeUsageMetadata,
+  encodeUsageMetadata,
+} from "~/services/ir/usage"
 import type {
   ChatCompletionChunk,
   CopilotStreamEvent,
@@ -158,6 +162,7 @@ export async function* decodeChatStream(
         type: "usage",
         usage: {
           source: "reported",
+          ...decodeUsageMetadata(chunk.usage),
           inputTokens: chunk.usage.prompt_tokens,
           outputTokens: chunk.usage.completion_tokens,
           totalTokens: chunk.usage.total_tokens,
@@ -428,6 +433,7 @@ export async function* encodeChatStream(
             ...chunk({}, toChatStop(event.stop)),
             ...(usage && {
               usage: {
+                ...encodeUsageMetadata(usage),
                 prompt_tokens: translated.prompt_tokens,
                 completion_tokens: translated.completion_tokens,
                 total_tokens:
@@ -452,6 +458,7 @@ export async function* encodeChatStream(
           ...chunk({}),
           choices: [],
           usage: {
+            ...encodeUsageMetadata(usage),
             prompt_tokens: usage.inputTokens ?? 0,
             completion_tokens: usage.outputTokens ?? 0,
             total_tokens: (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0),

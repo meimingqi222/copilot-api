@@ -1,4 +1,5 @@
 import { cacheCreationFor1h } from "~/lib/cache-usage"
+import { decodeUsageMetadata, encodeUsageMetadata } from "~/services/ir/usage"
 import type {
   ResponsesPayload,
   ResponsesResponse,
@@ -39,6 +40,7 @@ export function decodeResponsesUsage(
   if (!usage) return undefined
   return {
     source: "reported",
+    ...decodeUsageMetadata(usage),
     inputTokens: usage.input_tokens,
     outputTokens: usage.output_tokens,
     totalTokens: usage.total_tokens,
@@ -55,6 +57,7 @@ function encodeResponsesUsage(
 ): ResponsesUsage | undefined {
   if (!usage) return undefined
   return {
+    ...encodeUsageMetadata(usage),
     input_tokens: usage.inputTokens,
     output_tokens: usage.outputTokens,
     total_tokens:

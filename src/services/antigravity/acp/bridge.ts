@@ -12,6 +12,7 @@ import { existsSync } from "node:fs"
 import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import type { Context } from "hono"
 
 import type {
   ApiCredential,
@@ -21,8 +22,10 @@ import {
   addPerformanceTiming,
   markUpstreamEvent,
   markUpstreamSent,
+  setDecodeTpsEligible,
 } from "~/lib/request-performance"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
+import { getRequestLogContext } from "~/lib/request-log"
 import {
   measureLocalWork,
   performanceContext,
@@ -32,6 +35,7 @@ import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
   CopilotStreamEvent,
+  Message,
 } from "~/services/protocols/chat/types"
 
 import { syncAntigravityAcpCredentials } from "./auth-sync"
@@ -39,7 +43,6 @@ import {
   AgyAcpClient,
   type AcpContentBlock,
   type AcpMcpServerSpec,
-  type AcpUsage,
 } from "./client"
 import {
   buildAcpPromptBlocks,
@@ -139,27 +142,55 @@ function encodeSseChunk(chunk: ChatCompletionChunk): CopilotStreamEvent {
   }
 }
 
-function toOpenAiUsage(usage: AcpUsage | undefined) {
-  if (!usage) return undefined
-  const rawInput = usage.inputTokens ?? 0
-  const cachedRead = usage.cachedReadTokens ?? 0
-  const cachedWrite = usage.cachedWriteTokens ?? 0
+function toOpenAiUsage(
+  run: AgyRun,
+  c?: Context,
+): NonNullable<ChatCompletionChunk["usage"]> {
+  const usage = run.consumeTurnUsage()
+  // Billing may arrive only after several HTTP tool segments. Measure the same
+  // active intervals as the output counter, excluding time spent in caller tools.
+  c?.set("usageTpsOverride", {
+    accountId: run.connectionId,
+    requestId: c && getRequestLogContext(c)?.requestId,
+    tps: run.usageTps,
+  })
+  if (run.resumedToolTurn) setDecodeTpsEligible(c, false)
+  const rawInput = usage?.inputTokens ?? 0
+  const cachedRead = usage?.cachedReadTokens ?? 0
+  const cachedWrite = usage?.cachedWriteTokens ?? 0
   // ACP 中 inputTokens 为未命中缓存的新增输入，OpenAI prompt_tokens 需包含缓存读取/写入部分
   const promptTokens = rawInput + cachedRead + cachedWrite
-  const completionTokens = usage.outputTokens ?? 0
-  const totalTokens = usage.totalTokens ?? promptTokens + completionTokens
+  const completionTokens = usage?.outputTokens ?? 0
+  const totalTokens = usage?.totalTokens ?? promptTokens + completionTokens
   return {
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
     total_tokens: totalTokens,
-    ...(typeof usage.cachedReadTokens === "number" ?
+    ...(!run.hasTurnUsage ? { usage_status: "pending" as const } : {}),
+    ...(run.contextUsage ?
+      {
+        context_window: {
+          used_tokens: run.contextUsage.used,
+          max_tokens: run.contextUsage.size,
+        },
+      }
+    : {}),
+    ...(typeof usage?.cachedReadTokens === "number" ?
       {
         prompt_tokens_details: {
           cached_tokens: usage.cachedReadTokens,
         },
       }
     : {}),
-    ...(typeof usage.thoughtTokens === "number" ?
+    ...(typeof usage?.cachedWriteTokens === "number" ?
+      {
+        prompt_tokens_details: {
+          cached_tokens: cachedRead,
+          cache_creation_input_tokens: cachedWrite,
+        },
+      }
+    : {}),
+    ...(typeof usage?.thoughtTokens === "number" ?
       {
         completion_tokens_details: {
           reasoning_tokens: usage.thoughtTokens,
@@ -200,6 +231,7 @@ async function startNewRun(params: {
   promptBlocks: Array<AcpContentBlock>
   messageCount: number
   messageHash: string
+  ownerKey: string
 }): Promise<AgyRun> {
   const binaryPath = findAgyBinary()
   if (!binaryPath) {
@@ -218,6 +250,7 @@ async function startNewRun(params: {
     connectionId: params.connection.id,
     model: params.model,
     toolsSignature: params.toolsSignature,
+    ownerKey: params.ownerKey,
     bridgeDir,
   })
   run.lastMessageCount = params.messageCount
@@ -275,17 +308,16 @@ function dispatchPrompt(run: AgyRun, blocks: Array<AcpContentBlock>): void {
   run.resetTurnUsage()
   const sentAt = performance.now()
   run.turnUpstreamSentAt = sentAt
+  run.startUsageSegment(sentAt)
   markUpstreamSent(performanceContext(), sentAt)
   void run.client
     .prompt(run.sessionId, blocks)
     .then((result) => {
       run.activePromptInFlight = false
-      const usage = result.usage ?? run.consumeTurnUsage()
-      run.resetTurnUsage()
+      run.updateTurnUsage(result.usage)
       run.pushEvent({
         type: "prompt_done",
         stopReason: result.stopReason ?? "end_turn",
-        usage,
       })
     })
     .catch((error: unknown) => {
@@ -302,6 +334,7 @@ async function resolveOrStartRun(
   credential: ApiCredential,
   payload: ChatCompletionsPayload,
   model: string,
+  c?: Context,
 ): Promise<AgyRun> {
   const { mcpTools, toolsSignature, trailingTools } = measureLocalWork(
     "adapterPreparationMs",
@@ -314,21 +347,49 @@ async function resolveOrStartRun(
       }
     },
   )
+  const ownerKey = JSON.stringify([credential.id, c?.get("userId") ?? null])
   const candidates = runRegistry.findCandidates(
     connection.id,
     model,
-    toolsSignature,
+    undefined,
+    ownerKey,
   )
+
+  // Match what the caller actually saw, not just the request before our reply.
+  const matchesHistory = (candidate: AgyRun) => {
+    const previous = payload.messages[candidate.lastMessageCount]
+    return (
+      candidate.toolsSignature === toolsSignature
+      && candidate.lastMessageCount > 0
+      && previous?.role === "assistant"
+      && hashMessages(payload.messages.slice(0, candidate.lastMessageCount))
+        === candidate.lastMessageHash
+      && hashMessages([previous]) === candidate.lastAssistantHash
+    )
+  }
 
   // 1. 若末尾是 tool_result 且命中挂起中的 run，精准唤醒对应进程继续执行
   if (trailingTools.length > 0) {
     const parkedRun = candidates.find((candidate) =>
       candidate.hasParkedCall(trailingTools[0].toolCallId),
     )
-    if (parkedRun) {
-      parkedRun.resetTurnUsage()
+    if (
+      parkedRun
+      && matchesHistory(parkedRun)
+      && payload.messages.length
+        === parkedRun.lastMessageCount + 1 + trailingTools.length
+      && payload.messages[parkedRun.lastMessageCount].tool_calls?.length
+        === trailingTools.length
+      && new Set(trailingTools.map((result) => result.toolCallId)).size
+        === trailingTools.length
+      && trailingTools.every((result) =>
+        parkedRun.hasParkedCall(result.toolCallId),
+      )
+    ) {
       const sentAt = performance.now()
       parkedRun.turnUpstreamSentAt = sentAt
+      parkedRun.startUsageSegment(sentAt)
+      parkedRun.resumedToolTurn = true
       markUpstreamSent(performanceContext(), sentAt)
       for (const tr of trailingTools) {
         parkedRun.resolveParkedCall(tr.toolCallId, {
@@ -340,34 +401,47 @@ async function resolveOrStartRun(
       parkedRun.lastMessageHash = hashMessages(payload.messages)
       return parkedRun
     }
+    // Replaying is necessary when instructions/history/tools changed. Delivering
+    // only tool results here would silently lose the caller's new instructions.
+    if (parkedRun) runRegistry.dispose(parkedRun.token)
   }
 
   // 2. 若是同一对话的新一轮 user 消息（上一轮非 tool 调用结束），精准匹配前缀哈希续接
-  const prefixRun = candidates.find(
+  const prefixRuns = candidates.filter(
     (candidate) =>
       candidate.isIdle
-      && candidate.lastMessageCount > 0
-      && payload.messages.length > candidate.lastMessageCount
-      && hashMessages(payload.messages.slice(0, candidate.lastMessageCount))
-        === candidate.lastMessageHash,
+      && matchesHistory(candidate)
+      && payload.messages.length > candidate.lastMessageCount + 1
+      && payload.messages
+        .slice(candidate.lastMessageCount + 1)
+        .every(
+          (message) =>
+            message.role === "user"
+            || message.role === "system"
+            || message.role === "developer",
+        ),
   )
+  // Identical visible replies can still conceal different native reasoning.
+  const prefixRun = prefixRuns.length === 1 ? prefixRuns[0] : undefined
   if (prefixRun) {
-    // 跳过调用方附带的上一轮 assistant 回复，仅发送新增的 user/system 消息
-    let startIdx = prefixRun.lastMessageCount
-    while (
-      startIdx < payload.messages.length
-      && payload.messages[startIdx].role === "assistant"
-    ) {
-      startIdx++
-    }
+    const startIdx = prefixRun.lastMessageCount + 1
     const deltaBlocks = measureLocalWork("adapterPreparationMs", () =>
       buildAcpPromptBlocks(payload, startIdx),
     )
     if (deltaBlocks.length > 0) {
       prefixRun.lastMessageCount = payload.messages.length
       prefixRun.lastMessageHash = hashMessages(payload.messages)
-      await syncAntigravityAcpCredentials(connection, credential)
-      dispatchPrompt(prefixRun, deltaBlocks)
+      // Claim synchronously before credential I/O so concurrent requests cannot
+      // both check out the same idle process.
+      prefixRun.activePromptInFlight = true
+      try {
+        await syncAntigravityAcpCredentials(connection, credential)
+        prefixRun.touch()
+        dispatchPrompt(prefixRun, deltaBlocks)
+      } catch (error) {
+        runRegistry.dispose(prefixRun.token)
+        throw error
+      }
       return prefixRun
     }
   }
@@ -385,6 +459,7 @@ async function resolveOrStartRun(
     promptBlocks,
     messageCount: payload.messages.length,
     messageHash: hashMessages(payload.messages),
+    ownerKey,
   })
 }
 
@@ -392,10 +467,12 @@ async function* streamAcpEvents(
   run: AgyRun,
   model: string,
   signal?: AbortSignal,
+  c?: Context,
 ): AsyncIterable<CopilotStreamEvent> {
   const responseId = `chatcmpl-${randomUUID()}`
   const created = Math.floor(Date.now() / 1000)
   let sentRole = false
+  const assistant: Message = { role: "assistant", content: "" }
 
   const onAbort = () => {
     run.tainted = true
@@ -428,6 +505,7 @@ async function* streamAcpEvents(
       }
 
       if (event.type === "text") {
+        assistant.content += event.text
         const delta =
           sentRole ?
             { content: event.text }
@@ -446,6 +524,7 @@ async function* streamAcpEvents(
           if (item.type === "tool_call_ready") {
             batched.push(item.call)
           } else if (item.type === "text") {
+            assistant.content += item.text
             yield encodeSseChunk(
               makeChunk(responseId, created, model, { content: item.text }),
             )
@@ -455,6 +534,8 @@ async function* streamAcpEvents(
                 reasoning_content: item.text,
               }),
             )
+          } else {
+            run.pushEvent(item)
           }
         }
 
@@ -467,6 +548,10 @@ async function* streamAcpEvents(
             arguments: call.argsJson,
           },
         }))
+        assistant.tool_calls = toolCallsDelta.map(
+          ({ index: _index, ...call }) => call,
+        )
+        run.lastAssistantHash = hashMessages([assistant])
 
         const delta =
           sentRole ?
@@ -481,19 +566,18 @@ async function* streamAcpEvents(
           {},
           "tool_calls",
         )
-        const turnUsage = toOpenAiUsage(run.consumeTurnUsage())
-        if (turnUsage) finishChunk.usage = turnUsage
+        finishChunk.usage = toOpenAiUsage(run, c)
         yield encodeSseChunk(finishChunk)
         yield { data: "[DONE]" }
         return
       }
 
       if (event.type === "prompt_done") {
+        run.lastAssistantHash = hashMessages([assistant])
         const finishReason =
           event.stopReason === "max_tokens" ? "length" : "stop"
         const endChunk = makeChunk(responseId, created, model, {}, finishReason)
-        const usage = toOpenAiUsage(event.usage)
-        if (usage) endChunk.usage = usage
+        endChunk.usage = toOpenAiUsage(run, c)
         yield encodeSseChunk(endChunk)
         yield { data: "[DONE]" }
         return
@@ -584,9 +668,11 @@ export async function createAntigravityAcpChatCompletionsOnce(
   {
     connection,
     credential,
+    c,
   }: {
     connection: ProviderConnection
     credential: ApiCredential
+    c?: Context
   },
   payload: ChatCompletionsPayload,
   signal?: AbortSignal,
@@ -600,8 +686,9 @@ export async function createAntigravityAcpChatCompletionsOnce(
     credential,
     payload,
     requestModel ?? model,
+    c,
   )
-  const stream = streamAcpEvents(run, model, signal)
+  const stream = streamAcpEvents(run, model, signal, c)
   if (payload.stream === true) {
     return stream
   }

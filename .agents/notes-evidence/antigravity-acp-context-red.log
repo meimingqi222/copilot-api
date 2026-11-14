@@ -1,0 +1,79 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/antigravity-acp-bridge.test.ts:
+68 |     const b = await complete(initial)
+69 |     const aText = String(a.choices[0].message.content)
+70 |     const bText = String(b.choices[0].message.content)
+71 |     expect(aText).not.toBe(bText)
+72 |     const next = await complete([...initial, { ...assistant(a), content: [{ type: "text", text: aText }], reasoning_content: undefined }, { role: "user", content: "Continue A only" }])
+73 |     expect(next.choices[0].message.content).toBe(aText.replace(/:1$/, ":2"))
+                                                 ^
+error: expect(received).toBe(expected)
+
+Expected: "session-37232:2"
+Received: "session-37240:2"
+
+      at <anonymous> (<workspace>/tests/antigravity-acp-bridge.test.ts:73:45)
+(fail) ACP public bridge continuations > same-prefix conversations resume their own completed assistant history [557.88ms]
+76 |   loopbackTest("changed instructions on a tool continuation are replayed, not silently discarded", async () => {
+77 |     const initial: Message[] = [{ role: "system", content: "Original instructions" }, { role: "user", content: "TOOL_LOOP" }]
+78 |     const first = await complete(initial, true)
+79 |     const call = first.choices[0].message.tool_calls![0]
+80 |     const next = await complete([{ role: "system", content: "NEW instruction: use Spanish" }, initial[1], assistant(first), { role: "tool", tool_call_id: call.id, content: "independent-result" }], true)
+81 |     expect(next.choices[0].finish_reason).toBe("stop")
+                                               ^
+error: expect(received).toBe(expected)
+
+Expected: "stop"
+Received: "tool_calls"
+
+      at <anonymous> (<workspace>/tests/antigravity-acp-bridge.test.ts:81:43)
+[warn] antigravity-acp: MCP callback failed { error: 'Antigravity ACP session closed' }
+(fail) ACP public bridge continuations > changed instructions on a tool continuation are replayed, not silently discarded [104.91ms]
+94 |         if (step < 2) {
+95 |           const call = response.choices[0].message.tool_calls![0]
+96 |           messages.push({ role: "tool", tool_call_id: call.id, content: `result-${step}` })
+97 |         }
+98 |       }
+99 |       expect(responses.map(response => response.usage?.prompt_tokens ?? -10000).reduce((a, b) => a + b)).toBe(1000)
+                                                                                                              ^
+error: expect(received).toBe(expected)
+
+Expected: 1000
+Received: -19000
+
+      at <anonymous> (<workspace>/tests/antigravity-acp-bridge.test.ts:99:106)
+(fail) ACP public bridge continuations > tool loop bills once and exposes context occupancy: final-only [111.16ms]
+94 |         if (step < 2) {
+95 |           const call = response.choices[0].message.tool_calls![0]
+96 |           messages.push({ role: "tool", tool_call_id: call.id, content: `result-${step}` })
+97 |         }
+98 |       }
+99 |       expect(responses.map(response => response.usage?.prompt_tokens ?? -10000).reduce((a, b) => a + b)).toBe(1000)
+                                                                                                              ^
+error: expect(received).toBe(expected)
+
+Expected: 1000
+Received: 1310
+
+      at <anonymous> (<workspace>/tests/antigravity-acp-bridge.test.ts:99:106)
+(fail) ACP public bridge continuations > tool loop bills once and exposes context occupancy: SNAPSHOT [114.29ms]
+94 |         if (step < 2) {
+95 |           const call = response.choices[0].message.tool_calls![0]
+96 |           messages.push({ role: "tool", tool_call_id: call.id, content: `result-${step}` })
+97 |         }
+98 |       }
+99 |       expect(responses.map(response => response.usage?.prompt_tokens ?? -10000).reduce((a, b) => a + b)).toBe(1000)
+                                                                                                              ^
+error: expect(received).toBe(expected)
+
+Expected: 1000
+Received: -9000
+
+      at <anonymous> (<workspace>/tests/antigravity-acp-bridge.test.ts:99:106)
+(fail) ACP public bridge continuations > tool loop bills once and exposes context occupancy: PARTIAL [123.01ms]
+
+ 0 pass
+ 5 fail
+ 6 expect() calls
+Ran 5 tests across 1 file. [1112.00ms]

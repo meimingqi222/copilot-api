@@ -230,7 +230,7 @@ export async function createAntigravityChatCompletionsOnce(
 
   if (resolveAntigravityTransport(connection) === "acp") {
     return createAntigravityAcpChatCompletionsOnce(
-      { connection, credential },
+      { connection, credential, c: ctx?.c },
       payload,
       signal,
       requestModel,

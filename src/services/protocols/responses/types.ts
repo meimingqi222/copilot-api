@@ -1,4 +1,5 @@
 import type { CacheCreationUsage } from "~/lib/cache-usage"
+import type { UsageMetadata } from "~/lib/usage-translation"
 /**
  * OpenAI Responses 协议的 wire 类型与共享 helpers。
  *
@@ -16,7 +17,7 @@ export interface CopilotStreamEventLike {
   event?: string
 }
 
-export interface ResponsesUsage {
+export interface ResponsesUsage extends UsageMetadata {
   input_tokens?: number
   input_tokens_details?: {
     cached_tokens?: number

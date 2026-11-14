@@ -9,7 +9,9 @@
 import { rmSync } from "node:fs"
 
 import {
+  normalizeAcpContextUsage,
   normalizeAcpUsage,
+  type AcpContextUsage,
   type AcpSessionUpdate,
   type AcpUsage,
   type AgyAcpClient,
@@ -63,6 +65,7 @@ export class AgyRun {
   readonly connectionId: string
   readonly model: string
   readonly toolsSignature: string
+  readonly ownerKey: string
   readonly bridgeDir: string
   sessionId = ""
   client!: AgyAcpClient
@@ -70,6 +73,10 @@ export class AgyRun {
   /** 已发送到调用方的历史消息签名（用于判断是否可复用当前活着的进程）。 */
   lastMessageCount = 0
   lastMessageHash = ""
+  lastAssistantHash = ""
+  contextUsage?: AcpContextUsage
+  resumedToolTurn = false
+  usageTps?: number
   activePromptInFlight = false
   lastActiveAt = Date.now()
   tainted = false
@@ -80,6 +87,10 @@ export class AgyRun {
   private readonly parkedCalls = new Map<string, PendingToolCall>()
   private readonly turnEvents: Array<AgyTurnEvent> = []
   private lastTurnUsage?: AcpUsage
+  private reportedTurnUsage?: AcpUsage
+  private usageSegmentStartedAt?: number
+  private generationMs = 0
+  private reportedOutputGenerationMs = 0
   private waiter: (() => void) | undefined
   private disposed = false
 
@@ -89,11 +100,13 @@ export class AgyRun {
     model: string
     toolsSignature: string
     bridgeDir: string
+    ownerKey?: string
   }) {
     this.token = params.token
     this.connectionId = params.connectionId
     this.model = params.model
     this.toolsSignature = params.toolsSignature
+    this.ownerKey = params.ownerKey ?? ""
     this.bridgeDir = params.bridgeDir
     this.touch()
   }
@@ -118,19 +131,66 @@ export class AgyRun {
 
   resetTurnUsage(): void {
     this.lastTurnUsage = undefined
+    this.reportedTurnUsage = undefined
+    this.generationMs = 0
+    this.reportedOutputGenerationMs = 0
+    this.resumedToolTurn = false
+    this.usageTps = undefined
+  }
+
+  startUsageSegment(now: number): void {
+    this.usageSegmentStartedAt = now
+    this.usageTps = undefined
+  }
+
+  get hasTurnUsage(): boolean {
+    return this.lastTurnUsage !== undefined
+  }
+
+  updateTurnUsage(usage: AcpUsage | undefined): void {
+    if (!usage) return
+    this.lastTurnUsage ??= {}
+    for (const key of Object.keys(usage) as Array<keyof AcpUsage>) {
+      const value = usage[key]
+      if (value !== undefined)
+        this.lastTurnUsage[key] = Math.max(value, this.lastTurnUsage[key] ?? 0)
+    }
   }
 
   consumeTurnUsage(): AcpUsage | undefined {
-    const usage = this.lastTurnUsage
-    this.lastTurnUsage = undefined
-    return usage
+    if (this.usageSegmentStartedAt !== undefined) {
+      this.generationMs += performance.now() - this.usageSegmentStartedAt
+      this.usageSegmentStartedAt = undefined
+    }
+    if (!this.lastTurnUsage) return undefined
+    const delta: AcpUsage = {}
+    for (const key of Object.keys(this.lastTurnUsage) as Array<
+      keyof AcpUsage
+    >) {
+      const next = this.lastTurnUsage[key]
+      if (next === undefined) continue
+      const previous = this.reportedTurnUsage?.[key]
+      if (previous === undefined || next > previous)
+        delta[key] = Math.max(0, next - (previous ?? 0))
+    }
+    this.reportedTurnUsage = {
+      ...this.reportedTurnUsage,
+      ...this.lastTurnUsage,
+    }
+    if (delta.outputTokens !== undefined) {
+      const elapsedMs = this.generationMs - this.reportedOutputGenerationMs
+      this.usageTps =
+        delta.outputTokens > 0 && elapsedMs > 0 ?
+          (delta.outputTokens * 1000) / elapsedMs
+        : undefined
+      this.reportedOutputGenerationMs = this.generationMs
+    }
+    return Object.keys(delta).length ? delta : undefined
   }
 
   handleUpdate(update: AcpSessionUpdate): void {
-    const updateUsage = normalizeAcpUsage(update)
-    if (updateUsage) {
-      this.lastTurnUsage = { ...this.lastTurnUsage, ...updateUsage }
-    }
+    this.contextUsage = normalizeAcpContextUsage(update) ?? this.contextUsage
+    this.updateTurnUsage(normalizeAcpUsage(update))
     const kind = update.sessionUpdate
     if (kind === "usage_update") {
       return
@@ -307,7 +367,8 @@ class AgyRunRegistry {
   findCandidates(
     connectionId: string,
     model: string,
-    toolsSignature: string,
+    toolsSignature?: string,
+    ownerKey = "",
   ): Array<AgyRun> {
     const matches: Array<AgyRun> = []
     for (const run of this.byToken.values()) {
@@ -315,7 +376,9 @@ class AgyRunRegistry {
         !run.tainted
         && run.connectionId === connectionId
         && run.model === model
-        && run.toolsSignature === toolsSignature
+        && (toolsSignature === undefined
+          || run.toolsSignature === toolsSignature)
+        && run.ownerKey === ownerKey
         && !run.client?.isClosed
       ) {
         matches.push(run)

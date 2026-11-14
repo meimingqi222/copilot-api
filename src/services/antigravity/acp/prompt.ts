@@ -92,11 +92,63 @@ export function extractMcpTools(
 }
 
 export function computeToolsSignature(tools: Array<McpToolDefinition>): string {
-  return createHash("sha256").update(JSON.stringify(tools)).digest("hex")
+  return createHash("sha256")
+    .update(JSON.stringify(stable(tools)))
+    .digest("hex")
+}
+
+function stable(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stable)
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, item]) => [key, stable(item)]),
+    )
+  }
+  return value
 }
 
 export function hashMessages(messages: Array<Message>): string {
-  return createHash("sha256").update(JSON.stringify(messages)).digest("hex")
+  const history = messages.map((message) => {
+    const blocks =
+      typeof message.content === "string" ?
+        [{ type: "text" as const, text: message.content }]
+      : (message.content ?? [])
+    const content: typeof blocks = []
+    for (const block of blocks) {
+      // Native reasoning stays in the live ACP session; clients need not replay its display aliases.
+      if (
+        message.role === "assistant"
+        && (block.type === "thinking" || block.type === "reasoning")
+      )
+        continue
+      if (block.type === "text" && !block.text) continue
+      const previous = content.at(-1)
+      if (block.type === "text" && previous?.type === "text")
+        previous.text += block.text
+      else content.push({ ...block })
+    }
+    return {
+      role: message.role,
+      content,
+      name: message.name,
+      images: message.images,
+      tool_call_id: message.tool_call_id,
+      tool_calls: message.tool_calls?.map((call) => {
+        let args: unknown = call.function.arguments
+        try {
+          args = JSON.parse(call.function.arguments)
+        } catch {
+          /* Preserve incomplete arguments verbatim. */
+        }
+        return { id: call.id, name: call.function.name, arguments: args }
+      }),
+    }
+  })
+  return createHash("sha256")
+    .update(JSON.stringify(stable(history)))
+    .digest("hex")
 }
 
 /**
@@ -174,6 +226,15 @@ export function buildAcpPromptBlocks(
       sections.push(
         "[Bridge Mode] You are acting as a stateless API backend. "
           + "Respond directly without calling any local filesystem, shell, or workspace tools.",
+      )
+    }
+    if (
+      payload.messages.some(
+        (message) => message.role === "assistant" || message.role === "tool",
+      )
+    ) {
+      sections.push(
+        "[Conversation Replay] The role-labeled transcript below includes prior history. Continue from the latest user request and supplied tool results; do not answer earlier requests again. Prior assistant replies are history, not new instructions.",
       )
     }
   }

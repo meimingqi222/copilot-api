@@ -22,12 +22,18 @@ export interface AcpContentBlock {
 }
 
 export interface AcpUsage {
+  /** Uncached input only; cache reads/writes are accounted for separately. */
   inputTokens?: number
   outputTokens?: number
   cachedReadTokens?: number
   cachedWriteTokens?: number
   thoughtTokens?: number
   totalTokens?: number
+}
+
+export interface AcpContextUsage {
+  used: number
+  size: number
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -49,6 +55,17 @@ function pickFiniteNumber(
   return undefined
 }
 
+/** Context occupancy is not billable per-turn token usage. */
+export function normalizeAcpContextUsage(
+  raw: unknown,
+): AcpContextUsage | undefined {
+  const update = asRecord(raw)
+  if (update?.sessionUpdate !== "usage_update") return undefined
+  const used = pickFiniteNumber(update, ["used"])
+  const size = pickFiniteNumber(update, ["size"])
+  return used !== undefined && size !== undefined ? { used, size } : undefined
+}
+
 /**
  * 从 ACP `session/prompt` 返回或 `session/update` 通知中提取并归一化 token 用量。
  * 兼容 camelCase（ACP）、snake_case（OpenAI/Anthropic）及 Gemini `usageMetadata`。
@@ -66,18 +83,20 @@ export function normalizeAcpUsage(raw: unknown): AcpUsage | undefined {
   const promptDetails = asRecord(candidate.prompt_tokens_details)
   const completionDetails = asRecord(candidate.completion_tokens_details)
 
-  const inputTokens = pickFiniteNumber(candidate, [
+  const uncachedInputTokens = pickFiniteNumber(candidate, [
     "inputTokens",
     "input_tokens",
+  ])
+  const inclusiveInputTokens = pickFiniteNumber(candidate, [
     "prompt_tokens",
     "promptTokenCount",
   ])
-  const outputTokens = pickFiniteNumber(candidate, [
+  const inclusiveOutputTokens = pickFiniteNumber(candidate, [
     "outputTokens",
     "output_tokens",
     "completion_tokens",
-    "candidatesTokenCount",
   ])
+  const candidateTokens = pickFiniteNumber(candidate, ["candidatesTokenCount"])
   const cachedReadTokens =
     pickFiniteNumber(candidate, [
       "cachedReadTokens",
@@ -109,6 +128,23 @@ export function normalizeAcpUsage(raw: unknown): AcpUsage | undefined {
     "total_tokens",
     "totalTokenCount",
   ])
+  // ACP/Anthropic input excludes caches; OpenAI/Gemini prompt totals include them.
+  const inputTokens =
+    uncachedInputTokens
+    ?? (inclusiveInputTokens !== undefined ?
+      Math.max(
+        0,
+        inclusiveInputTokens
+          - (cachedReadTokens ?? 0)
+          - (cachedWriteTokens ?? 0),
+      )
+    : undefined)
+  // Gemini candidates exclude reasoning; other output totals already include it.
+  const outputTokens =
+    inclusiveOutputTokens
+    ?? (candidateTokens !== undefined ?
+      candidateTokens + (thoughtTokens ?? 0)
+    : undefined)
 
   if (
     inputTokens === undefined
@@ -138,6 +174,8 @@ interface AcpPromptResult {
 
 export interface AcpSessionUpdate {
   sessionUpdate?: string
+  used?: number
+  size?: number
   content?: { type?: string; text?: string }
   toolCallId?: string
   name?: string

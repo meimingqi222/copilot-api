@@ -1,0 +1,84 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/antigravity-acp.test.ts:
+517 |     for (const input of ["inputTokens", "input_tokens", "prompt_tokens", "promptTokenCount"]) {
+518 |       expect(normalizeAcpUsage({
+519 |         [input]: 211,
+520 |         cachedReadTokens: 37,
+521 |         cachedWriteTokens: 19,
+522 |       })).toEqual({
+                ^
+error: expect(received).toEqual(expected)
+
+  {
+    "cachedReadTokens": 37,
+    "cachedWriteTokens": 19,
+-   "inputTokens": 155,
++   "inputTokens": 211,
+  }
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (<workspace>/tests/antigravity-acp.test.ts:522:11)
+(fail) antigravity acp usage normalization > subtracts inclusive prompt caches but preserves uncached native input [1.67ms]
+531 |     })).toEqual({ inputTokens: 0, cachedReadTokens: 31 })
+532 |   })
+533 |
+534 |   test("includes Gemini thoughts in output without double-counting native output", () => {
+535 |     for (const output of ["outputTokens", "output_tokens", "completion_tokens", "candidatesTokenCount"]) {
+536 |       expect(normalizeAcpUsage({ [output]: 47, thoughtsTokenCount: 13 })).toEqual({
+                                                                                ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "outputTokens": 60,
++   "outputTokens": 47,
+    "thoughtTokens": 13,
+  }
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (<workspace>/tests/antigravity-acp.test.ts:536:75)
+(fail) antigravity acp usage normalization > includes Gemini thoughts in output without double-counting native output [0.06ms]
+548 |
+549 |   test("keeps context occupancy separate from billable usage and validates both fields", async () => {
+550 |     const { normalizeAcpContextUsage } = await import("~/services/antigravity/acp/client")
+551 |     for (const [used, size] of [[173, 8192], [0, 8192], [0, 0]]) {
+552 |       const update = { sessionUpdate: "usage_update", used, size }
+553 |       expect(normalizeAcpContextUsage(update)).toEqual({ used, size })
+                   ^
+TypeError: normalizeAcpContextUsage is not a function. (In 'normalizeAcpContextUsage(update)', 'normalizeAcpContextUsage' is undefined)
+      at <anonymous> (<workspace>/tests/antigravity-acp.test.ts:553:14)
+(fail) antigravity acp usage normalization > keeps context occupancy separate from billable usage and validates both fields [0.30ms]
+590 |           cachedContentTokenCount: 50,
+591 |           thoughtsTokenCount: 15,
+592 |           totalTokenCount: 325,
+593 |         },
+594 |       }),
+595 |     ).toEqual({
+            ^
+error: expect(received).toEqual(expected)
+
+  {
+    "cachedReadTokens": 50,
+-   "inputTokens": 150,
+-   "outputTokens": 75,
++   "inputTokens": 200,
++   "outputTokens": 60,
+    "thoughtTokens": 15,
+    "totalTokens": 325,
+  }
+
+- Expected  - 2
++ Received  + 2
+
+      at <anonymous> (<workspace>/tests/antigravity-acp.test.ts:595:7)
+(fail) antigravity acp usage normalization > extracts camelCase, snake_case, and usage_update payloads [0.07ms]
+
+ 0 pass
+ 12 filtered out
+ 4 fail
+ 9 expect() calls
+Ran 4 tests across 1 file. [104.00ms]

@@ -1,4 +1,5 @@
 import type { CacheCreationUsage } from "~/lib/cache-usage"
+import type { UsageMetadata } from "~/lib/usage-translation"
 /**
  * Chat Completions / Embeddings 的 wire 类型。
  *
@@ -22,7 +23,7 @@ export interface ChatCompletionChunk {
   model: string
   choices: Array<Choice>
   system_fingerprint?: string
-  usage?: {
+  usage?: UsageMetadata & {
     prompt_tokens: number
     completion_tokens: number
     total_tokens: number
@@ -90,7 +91,7 @@ export interface ChatCompletionResponse {
   model: string
   choices: Array<ChoiceNonStreaming>
   system_fingerprint?: string
-  usage?: {
+  usage?: UsageMetadata & {
     prompt_tokens: number
     completion_tokens: number
     total_tokens: number

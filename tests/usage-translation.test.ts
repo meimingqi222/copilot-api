@@ -9,13 +9,217 @@ import {
 import {
   decodeChatResponse,
   encodeChatResponse,
+  decodeMessagesResponse,
+  encodeMessagesResponse,
 } from "~/services/ir/codecs/messages-chat/response"
+import {
+  decodeChatStream,
+  decodeMessagesStream,
+  encodeMessagesStream,
+  encodeChatStream,
+} from "~/services/ir/codecs/messages-chat/stream"
+import {
+  decodeResponsesStream,
+  encodeResponsesStream,
+} from "~/services/ir/codecs/responses/stream"
 import {
   decodeResponsesResult,
   encodeResponsesResult,
 } from "~/services/ir/codecs/responses/result"
+import { mergeUsage } from "~/services/ir/usage"
+import {
+  geminiUsage,
+  geminiUsageMetadata,
+} from "~/services/ir/codecs/gemini/result"
 
 // ── Phase C2.1: openAIUsageToAnthropic unit tests ───────────────────────────
+
+describe("context occupancy is separate from billed usage", () => {
+  for (const pending of [true, false, undefined]) {
+    test(`public result and stream codecs preserve metadata (pending=${pending})`, async () => {
+      const metadata = {
+        ...(pending !== undefined && {
+          context_window: { used_tokens: 12000, max_tokens: 128000 },
+        }),
+        ...(pending && { usage_status: "pending" as const }),
+      }
+      const usage = {
+        prompt_tokens: pending ? 0 : 123,
+        completion_tokens: pending ? 0 : 7,
+        total_tokens: pending ? 0 : 130,
+        ...metadata,
+      }
+      const original = buildChatCompletionResponse(usage)
+      const ir = decodeChatResponse(original)
+      const messages = encodeMessagesResponse(ir)
+      const responses = encodeResponsesResult(ir)
+      for (const result of [messages, responses]) {
+        expect(result.usage).toMatchObject({
+          ...metadata,
+          input_tokens: usage.prompt_tokens,
+          output_tokens: usage.completion_tokens,
+        })
+      }
+      for (const back of [
+        decodeMessagesResponse(messages),
+        decodeResponsesResult(responses),
+      ]) {
+        expect(encodeChatResponse(back).usage).toMatchObject(usage)
+      }
+      const frames = () =>
+        (async function* () {
+          yield {
+            data: JSON.stringify({
+              id: "test",
+              model: "test",
+              created: 1,
+              object: "chat.completion.chunk",
+              choices: [
+                { index: 0, delta: {}, finish_reason: "stop", logprobs: null },
+              ],
+              usage,
+            }),
+          }
+          yield { data: "[DONE]" }
+        })()
+      const messageFrames = []
+      for await (const event of encodeMessagesStream(
+        decodeChatStream(frames()),
+        999,
+      )) {
+        messageFrames.push(event)
+      }
+      expect(
+        messageFrames.find((event) => event.type === "message_delta")?.usage,
+      ).toMatchObject({
+        ...metadata,
+        input_tokens: usage.prompt_tokens,
+        output_tokens: usage.completion_tokens,
+      })
+      const responseFrames = []
+      for await (const event of encodeResponsesStream(
+        decodeChatStream(frames()),
+      )) {
+        responseFrames.push(event)
+      }
+      const completed = responseFrames
+        .map((frame) => JSON.parse(frame.data ?? "{}"))
+        .find((event) => event.type === "response.completed")
+      expect(completed.response.usage).toMatchObject({
+        ...metadata,
+        input_tokens: usage.prompt_tokens,
+        output_tokens: usage.completion_tokens,
+      })
+      if (!pending) {
+        for (const resultUsage of [
+          messages.usage,
+          responses.usage,
+          messageFrames.find((event) => event.type === "message_delta")?.usage,
+          completed.response.usage,
+        ]) {
+          expect(resultUsage).not.toHaveProperty("usage_status")
+          if (pending === undefined)
+            expect(resultUsage).not.toHaveProperty("context_window")
+        }
+      }
+      for (const decoded of [
+        decodeMessagesStream(
+          (async function* () {
+            for (const event of messageFrames)
+              yield { data: JSON.stringify(event) }
+          })(),
+        ),
+        decodeResponsesStream(
+          (async function* () {
+            for (const event of responseFrames) yield event
+          })(),
+          "test",
+        ),
+      ]) {
+        const chatFrames = []
+        for await (const event of encodeChatStream(decoded)) {
+          if (event.data !== "[DONE]")
+            chatFrames.push(JSON.parse(event.data ?? "{}"))
+        }
+        expect(chatFrames.find((event) => event.usage)?.usage).toMatchObject(
+          usage,
+        )
+      }
+    })
+  }
+
+  test("shared translators retain metadata and absent extensions do not appear", () => {
+    const usage = {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      context_window: { used_tokens: 5000, max_tokens: 32000 },
+      usage_status: "pending" as const,
+    }
+    expect(anthropicUsageToOpenAI(openAIUsageToAnthropic(usage))).toEqual(usage)
+    const ordinary = buildChatCompletionResponse({
+      prompt_tokens: 12,
+      completion_tokens: 3,
+      total_tokens: 15,
+    })
+    const ir = decodeChatResponse(ordinary)
+    for (const result of [
+      encodeChatResponse(ir),
+      encodeMessagesResponse(ir),
+      encodeResponsesResult(ir),
+    ]) {
+      expect(result.usage).not.toHaveProperty("context_window")
+      expect(result.usage).not.toHaveProperty("usage_status")
+    }
+    expect(
+      geminiUsageMetadata(
+        geminiUsage({
+          promptTokenCount: 0,
+          candidatesTokenCount: 0,
+          context_window: usage.context_window,
+          usage_status: "pending",
+        }),
+      ),
+    ).toEqual({
+      promptTokenCount: 0,
+      candidatesTokenCount: 0,
+      context_window: usage.context_window,
+      usage_status: "pending",
+    })
+  })
+
+  test("snapshot merge replaces occupancy and clears pending when billing arrives", () => {
+    const initial = mergeUsage(undefined, {
+      source: "reported",
+      inputTokens: 0,
+      outputTokens: 0,
+      usagePending: true,
+      contextWindow: { used_tokens: 5000, max_tokens: 32000 },
+    })
+    const billed = mergeUsage(initial, {
+      source: "reported",
+      inputTokens: 123,
+      outputTokens: 7,
+      usagePending: false,
+      contextWindow: { used_tokens: 4000, max_tokens: 32000 },
+    })
+    expect(billed).toMatchObject({
+      inputTokens: 123,
+      outputTokens: 7,
+      usagePending: false,
+      contextWindow: { used_tokens: 4000, max_tokens: 32000 },
+    })
+    expect(mergeUsage(billed, { source: "reported", outputTokens: 0 })).toEqual(
+      billed,
+    )
+    const reported = mergeUsage(initial, {
+      source: "reported",
+      inputTokens: 0,
+      outputTokens: 0,
+    })
+    expect(reported).not.toHaveProperty("usagePending")
+    expect(reported.contextWindow).toEqual(initial.contextWindow)
+  })
+})
 
 describe("openAIUsageToAnthropic", () => {
   test("no cache details at all", () => {

@@ -1,4 +1,5 @@
 import { cacheCreationFor1h } from "~/lib/cache-usage"
+import { decodeUsageMetadata, encodeUsageMetadata } from "~/services/ir/usage"
 import type {
   ChatCompletionResponse,
   ContentPart,
@@ -183,6 +184,7 @@ export function decodeChatResponse(response: ChatCompletionResponse): ResultIR {
     ...(usage && {
       usage: {
         source: "reported",
+        ...decodeUsageMetadata(usage),
         inputTokens: usage.prompt_tokens,
         outputTokens: usage.completion_tokens,
         totalTokens: usage.total_tokens,
@@ -244,6 +246,7 @@ export function encodeMessagesResponse(ir: ResultIR): AnthropicResponse {
     }
   }
   const usage = openAIUsageToAnthropic({
+    ...encodeUsageMetadata(ir.usage),
     prompt_tokens: ir.usage?.inputTokens ?? 0,
     completion_tokens: ir.usage?.outputTokens ?? 0,
     prompt_tokens_details: {
@@ -316,6 +319,7 @@ export function decodeMessagesResponse(response: AnthropicResponse): ResultIR {
     stop: stopFromMessages(response.stop_reason),
     usage: {
       source: "reported",
+      ...decodeUsageMetadata(usage),
       inputTokens:
         usage.input_tokens
         + (usage.cache_read_input_tokens ?? 0)
@@ -357,6 +361,7 @@ export function encodeChatResponse(ir: ResultIR): ChatCompletionResponse {
     },
   )
   const usage = anthropicUsageToOpenAI({
+    ...encodeUsageMetadata(ir.usage),
     input_tokens: Math.max(
       0,
       (ir.usage?.inputTokens ?? 0)
@@ -412,6 +417,7 @@ export function encodeChatResponse(ir: ResultIR): ChatCompletionResponse {
       },
     ],
     usage: {
+      ...encodeUsageMetadata(ir.usage),
       prompt_tokens: usage.prompt_tokens,
       completion_tokens: usage.completion_tokens,
       total_tokens: usage.prompt_tokens + usage.completion_tokens,

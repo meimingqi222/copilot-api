@@ -1,4 +1,5 @@
 import type { LossReason } from "~/services/ir/loss-reasons"
+import type { UsageMetadata } from "~/lib/usage-translation"
 import type {
   AnthropicServiceTier,
   OpenAIServiceTier,
@@ -240,6 +241,8 @@ export interface DecodeLoss {
 
 export interface IRUsage {
   source: "reported" | "estimated" | "mixed"
+  contextWindow?: UsageMetadata["context_window"]
+  usagePending?: boolean
   inputTokens?: number
   outputTokens?: number
   cacheReadTokens?: number

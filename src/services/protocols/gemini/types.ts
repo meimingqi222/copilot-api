@@ -1,3 +1,5 @@
+import type { UsageMetadata } from "~/lib/usage-translation"
+
 /**
  * Gemini `generateContent` wire types.
  *
@@ -95,7 +97,7 @@ export interface GeminiGenerateContentRequest {
   stream?: boolean
 }
 
-export interface GeminiUsageMetadata {
+export interface GeminiUsageMetadata extends UsageMetadata {
   promptTokenCount?: number
   candidatesTokenCount?: number
   totalTokenCount?: number

@@ -10,10 +10,17 @@ import type {
 } from "~/services/ir/types"
 
 import { sanitizeId } from "~/lib/id-sanitizer"
-import { mergeUsage } from "~/services/ir/usage"
+import {
+  mergeUsage,
+  decodeUsageMetadata,
+  encodeUsageMetadata,
+} from "~/services/ir/usage"
 import { MESSAGES_IMAGE_OUTPUT_ERROR } from "~/services/ir/image-generation"
 import { webSearchResultBlock } from "~/services/ir/codecs/messages-chat/web-search"
-import { openAIUsageToAnthropic } from "~/lib/usage-translation"
+import {
+  openAIUsageToAnthropic,
+  type UsageMetadata,
+} from "~/lib/usage-translation"
 
 export { decodeChatStream, encodeChatStream } from "./chat-stream"
 
@@ -52,7 +59,7 @@ interface MessagesEventLike {
   message?: {
     id?: string
     model?: string
-    usage?: {
+    usage?: UsageMetadata & {
       input_tokens?: number
       output_tokens?: number
       cache_read_input_tokens?: number
@@ -76,7 +83,7 @@ interface MessagesEventLike {
     partial_json?: string
     stop_reason?: string | null
   }
-  usage?: {
+  usage?: UsageMetadata & {
     input_tokens?: number
     output_tokens?: number
     cache_read_input_tokens?: number
@@ -91,6 +98,7 @@ function messagesUsage(
 ): IRUsage {
   return {
     source: "reported",
+    ...decodeUsageMetadata(usage),
     cacheWrite1hTokens: usage.cache_creation?.ephemeral_1h_input_tokens,
     ...(usage.input_tokens !== undefined && {
       inputTokens: usage.input_tokens,
@@ -274,6 +282,7 @@ export async function* encodeMessagesStream(
     type: "message_delta",
     delta: {},
     usage: openAIUsageToAnthropic({
+      ...encodeUsageMetadata(usage),
       prompt_tokens: usage?.inputTokens ?? estimatedInputTokens,
       completion_tokens: usage?.outputTokens ?? 0,
       prompt_tokens_details: {
@@ -441,6 +450,7 @@ export async function* encodeMessagesStream(
           continue
         }
         const converted = openAIUsageToAnthropic({
+          ...encodeUsageMetadata(usage),
           prompt_tokens: usage?.inputTokens ?? estimatedInputTokens,
           completion_tokens: usage?.outputTokens ?? 0,
           prompt_tokens_details: {
@@ -459,6 +469,7 @@ export async function* encodeMessagesStream(
             stop_sequence: null,
           },
           usage: {
+            ...encodeUsageMetadata(usage),
             input_tokens: converted.input_tokens,
             output_tokens: converted.output_tokens,
             cache_read_input_tokens: converted.cache_read_input_tokens,

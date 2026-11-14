@@ -513,6 +513,112 @@ describe("antigravity acp admin account settings", () => {
 })
 
 describe("antigravity acp usage normalization", () => {
+  test("subtracts inclusive prompt caches but preserves uncached native input", () => {
+    for (const input of [
+      "inputTokens",
+      "input_tokens",
+      "prompt_tokens",
+      "promptTokenCount",
+    ]) {
+      expect(
+        normalizeAcpUsage({
+          [input]: 211,
+          cachedReadTokens: 37,
+          cachedWriteTokens: 19,
+        }),
+      ).toEqual({
+        inputTokens:
+          input === "inputTokens" || input === "input_tokens" ? 211 : 155,
+        cachedReadTokens: 37,
+        cachedWriteTokens: 19,
+      })
+    }
+    expect(
+      normalizeAcpUsage({
+        prompt_tokens: 23,
+        prompt_tokens_details: { cached_tokens: 31 },
+      }),
+    ).toEqual({ inputTokens: 0, cachedReadTokens: 31 })
+  })
+
+  test("includes Gemini thoughts in output without double-counting native output", () => {
+    for (const output of [
+      "outputTokens",
+      "output_tokens",
+      "completion_tokens",
+      "candidatesTokenCount",
+    ]) {
+      expect(
+        normalizeAcpUsage({ [output]: 47, thoughtsTokenCount: 13 }),
+      ).toEqual({
+        outputTokens: output === "candidatesTokenCount" ? 60 : 47,
+        thoughtTokens: 13,
+      })
+    }
+    expect(
+      normalizeAcpUsage({
+        prompt_tokens: 211,
+        prompt_tokens_details: { cached_tokens: 37 },
+        completion_tokens: 47,
+        completion_tokens_details: { reasoning_tokens: 13 },
+      }),
+    ).toEqual({
+      inputTokens: 174,
+      cachedReadTokens: 37,
+      outputTokens: 47,
+      thoughtTokens: 13,
+    })
+  })
+
+  test("keeps context occupancy separate from billable usage and validates both fields", async () => {
+    const { normalizeAcpContextUsage } = await import(
+      "~/services/antigravity/acp/client"
+    )
+    for (const [used, size] of [
+      [173, 8192],
+      [0, 8192],
+      [0, 0],
+    ]) {
+      const update = { sessionUpdate: "usage_update", used, size }
+      expect(normalizeAcpContextUsage(update)).toEqual({ used, size })
+      expect(normalizeAcpUsage(update)).toBeUndefined()
+    }
+    for (const invalid of [
+      undefined,
+      null,
+      "12",
+      -1,
+      NaN,
+      Infinity,
+      -Infinity,
+    ]) {
+      expect(
+        normalizeAcpContextUsage({
+          sessionUpdate: "usage_update",
+          used: invalid,
+          size: 8192,
+        }),
+      ).toBeUndefined()
+      expect(
+        normalizeAcpContextUsage({
+          sessionUpdate: "usage_update",
+          used: 173,
+          size: invalid,
+        }),
+      ).toBeUndefined()
+    }
+    for (const invalid of [
+      null,
+      [],
+      "usage_update",
+      {},
+      { used: 1, size: 2 },
+      { sessionUpdate: "agent_message_chunk", used: 1, size: 2 },
+    ]) {
+      expect(normalizeAcpContextUsage(invalid)).toBeUndefined()
+    }
+  })
+
   test("extracts camelCase, snake_case, and usage_update payloads", () => {
     expect(
       normalizeAcpUsage({
@@ -544,8 +650,8 @@ describe("antigravity acp usage normalization", () => {
         },
       }),
     ).toEqual({
-      inputTokens: 200,
-      outputTokens: 60,
+      inputTokens: 150,
+      outputTokens: 75,
       cachedReadTokens: 50,
       thoughtTokens: 15,
       totalTokens: 325,

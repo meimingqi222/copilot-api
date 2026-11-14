@@ -16,7 +16,13 @@ import type { CacheCreationUsage } from "~/lib/cache-usage"
  * background and the conservation invariant this preserves.
  */
 
-interface OpenAIUsageLike {
+/** Optional occupancy/availability extensions, never billable token counts. */
+export interface UsageMetadata {
+  context_window?: { used_tokens: number; max_tokens: number }
+  usage_status?: "pending"
+}
+
+interface OpenAIUsageLike extends UsageMetadata {
   prompt_tokens: number
   completion_tokens: number
   prompt_tokens_details?: {
@@ -26,7 +32,7 @@ interface OpenAIUsageLike {
   }
 }
 
-interface AnthropicUsageLike {
+interface AnthropicUsageLike extends UsageMetadata {
   input_tokens: number
   output_tokens: number
   cache_read_input_tokens?: number
@@ -43,6 +49,8 @@ export function openAIUsageToAnthropic(
     usage.prompt_tokens_details?.cache_creation_input_tokens
 
   return {
+    ...(usage.context_window && { context_window: usage.context_window }),
+    ...(usage.usage_status && { usage_status: usage.usage_status }),
     input_tokens: Math.max(
       0,
       usage.prompt_tokens - cachedTokens - (cacheCreationTokens ?? 0),
@@ -90,6 +98,8 @@ export function anthropicUsageToOpenAI(
     : undefined
 
   return {
+    ...(usage.context_window && { context_window: usage.context_window }),
+    ...(usage.usage_status && { usage_status: usage.usage_status }),
     prompt_tokens:
       usage.input_tokens + cacheReadTokens + (cacheCreationTokens ?? 0),
     completion_tokens: usage.output_tokens,

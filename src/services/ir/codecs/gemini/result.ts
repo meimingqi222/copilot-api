@@ -7,6 +7,7 @@ import type {
 import type { IRPart, IRStop, IRUsage, ResultIR } from "~/services/ir/types"
 
 import { sanitizeId } from "~/lib/id-sanitizer"
+import { decodeUsageMetadata, encodeUsageMetadata } from "~/services/ir/usage"
 
 import { decodeGeminiPart } from "./part"
 import { toBase64Image } from "~/services/ir/codecs/gemini/request"
@@ -48,6 +49,7 @@ export function geminiFinishReason(
 export function geminiUsage(usage: GeminiUsageMetadata): IRUsage {
   return {
     source: "reported",
+    ...decodeUsageMetadata(usage),
     ...(usage.promptTokenCount !== undefined && {
       inputTokens: usage.promptTokenCount,
     }),
@@ -70,6 +72,7 @@ export function geminiUsageMetadata(
   usage: IRUsage | undefined,
 ): GeminiUsageMetadata {
   return {
+    ...encodeUsageMetadata(usage),
     ...(usage?.inputTokens !== undefined && {
       promptTokenCount: usage.inputTokens,
     }),
