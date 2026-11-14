@@ -17,6 +17,7 @@ import {
   type ModelAliasRestriction,
 } from "~/lib/model-aliases"
 import { isProviderId, type ProviderId } from "~/lib/provider-config"
+import { logger } from "~/lib/logger"
 import {
   accountManagedModelPrefix,
   getProviderConnection,
@@ -146,6 +147,25 @@ export function parseModelReference(
   }
 }
 
+// 退役过渡(B2):provider 前缀路由(copilot/ 等)已废弃,首次命中时记一条警告。
+// 按 provider 进程内去重,避免高频请求刷屏;观察期结束后随该路由一起移除。
+const warnedLegacyProviderPrefixes = new Set<string>()
+
+/** Test-only:清空 provider 前缀 deprecation 警告的去重记忆。 */
+export function __resetLegacyProviderPrefixWarningsForTest(): void {
+  warnedLegacyProviderPrefixes.clear()
+}
+
+function warnLegacyProviderPrefix(provider: ProviderId, modelId: string): void {
+  if (warnedLegacyProviderPrefixes.has(provider)) return
+  warnedLegacyProviderPrefixes.add(provider)
+  logger.warn(
+    `Model "${modelId}" routes via the legacy "${provider}/" provider prefix. `
+      + "Prefer a connection-id prefix or the bare model id; provider-prefix "
+      + "routing is deprecated and will be removed in a future major version.",
+  )
+}
+
 export function resolveModelRouting(
   modelId: string,
   connections: Array<ProviderConnection> = listAccountManagedConnections(),
@@ -173,6 +193,9 @@ export function resolveModelRouting(
   }
   const alias = resolveModelAlias(aliasModelId, ref.connectionId)
   if (ref.connectionId || ref.legacyProvider) {
+    if (ref.legacyProvider) {
+      warnLegacyProviderPrefix(ref.legacyProvider, modelId)
+    }
     return {
       connectionId: ref.connectionId,
       legacyProvider: ref.legacyProvider,

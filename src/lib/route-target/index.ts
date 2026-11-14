@@ -30,7 +30,11 @@ export {
   verifyHeldError,
 } from "./rest-registry"
 export { heldErrorFor, isResting, restingReasonFor } from "./resting"
-export { parseModelRef, resolveModelRouting } from "./model-reference"
+export {
+  __resetLegacyProviderPrefixWarningsForTest,
+  parseModelRef,
+  resolveModelRouting,
+} from "./model-reference"
 export {
   resolveConnectionFromTarget,
   selectNextResponsesWsTarget,

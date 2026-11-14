@@ -3,7 +3,15 @@
  * route-target build + selection, model reference parsing.
  */
 
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  spyOn,
+  test,
+} from "bun:test"
 
 import {
   __resetProviderConnectionsForTest,
@@ -33,13 +41,16 @@ import {
   updateConnection,
 } from "~/lib/provider-connections"
 import { applyOAuthQuotaSnapshot } from "~/lib/quota"
+import { logger } from "~/lib/logger"
 import { clearAccountRateLimitState } from "~/lib/rate-limit"
 import { toModelMappings } from "~/services/providers/model-catalogs/mapping"
 import {
+  __resetLegacyProviderPrefixWarningsForTest,
   __resetRouteTargetRoundRobin,
   buildRouteTargets,
   listExposedPublicModels,
   parseModelRef,
+  resolveModelRouting,
   selectRouteTarget,
   targetKey,
 } from "~/lib/route-target"
@@ -1086,5 +1097,43 @@ describe("parseModelRef", () => {
     expect(r.connectionId).toBeUndefined()
     expect(r.legacyProvider).toBeUndefined()
     expect(r.modelId).toBe("anthropic/claude-3-sonnet")
+  })
+})
+
+describe("legacy provider prefix deprecation", () => {
+  beforeEach(async () => {
+    __resetProviderConnectionsForTest()
+    __resetLegacyProviderPrefixWarningsForTest()
+    await setupSimpleConnection({ id: "deepseek" })
+  })
+
+  test("warns once per provider when routing via a legacy prefix", () => {
+    const warn = spyOn(logger, "warn").mockImplementation(
+      Object.assign(() => {}, { raw: () => {} }),
+    )
+    try {
+      const routing = resolveModelRouting("copilot/gpt-4o")
+      expect(routing.legacyProvider).toBe("copilot")
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(warn.mock.calls[0][0]).toContain("copilot/")
+      // 同一 provider 再次命中不再刷屏
+      resolveModelRouting("copilot/gpt-4o-mini")
+      expect(warn).toHaveBeenCalledTimes(1)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test("does not warn for connection-id prefix or bare model", () => {
+    const warn = spyOn(logger, "warn").mockImplementation(
+      Object.assign(() => {}, { raw: () => {} }),
+    )
+    try {
+      resolveModelRouting("deepseek/deepseek-chat")
+      resolveModelRouting("gpt-4o-mini")
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
   })
 })
