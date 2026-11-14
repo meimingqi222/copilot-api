@@ -30,7 +30,7 @@ export interface AcpUsage {
   totalTokens?: number
 }
 
-export interface AcpPromptResult {
+interface AcpPromptResult {
   stopReason?: string
   usage?: AcpUsage
 }
@@ -51,7 +51,7 @@ interface PendingRpc {
   reject: (reason: Error) => void
 }
 
-export interface AcpSpawnOptions {
+interface AcpSpawnOptions {
   binaryPath: string
   geminiDir: string
   workspaceDir: string

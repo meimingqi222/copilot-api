@@ -12,6 +12,7 @@
   "entry": [
     "tests/**/*.test.ts",
     "src/services/claude/cli/tui-tap.js",
+    "src/services/antigravity/acp/mcp-helper.ts",
     "scripts/maintenance/recompute-historical-costs.ts",
     "scripts/maintenance/update-pricing-snapshot.ts"
   ],

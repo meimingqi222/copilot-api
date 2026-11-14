@@ -13,7 +13,7 @@ import path from "node:path"
 
 import type { ProviderConnection } from "~/lib/provider-connections"
 
-export type AntigravityTransport = "acp" | "http"
+type AntigravityTransport = "acp" | "http"
 
 const METADATA_KEY = "antigravityTransport"
 

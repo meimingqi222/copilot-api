@@ -15,7 +15,7 @@ export interface McpToolResult {
   is_error: boolean
 }
 
-export interface PendingToolCall {
+interface PendingToolCall {
   toolCallId: string
   name: string
   argsJson: string
@@ -30,7 +30,7 @@ export interface AnnouncedToolCall {
   argsJson: string
 }
 
-export type AgyTurnEvent =
+type AgyTurnEvent =
   | { type: "thinking"; text: string }
   | { type: "text"; text: string }
   | { type: "tool_call_ready"; call: AnnouncedToolCall }

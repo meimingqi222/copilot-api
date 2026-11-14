@@ -24,13 +24,11 @@ function sanitizeSegment(value: string | undefined): string {
   return cleaned || "default"
 }
 
-export function antigravityAcpRootDir(): string {
+function antigravityAcpRootDir(): string {
   return path.join(PATHS.APP_DIR, "antigravity-acp")
 }
 
-export function antigravityAcpAccountDir(
-  connectionId: string | undefined,
-): string {
+function antigravityAcpAccountDir(connectionId: string | undefined): string {
   return path.join(
     antigravityAcpRootDir(),
     "accounts",
@@ -38,7 +36,7 @@ export function antigravityAcpAccountDir(
   )
 }
 
-export function antigravityAcpWorkspaceDir(): string {
+function antigravityAcpWorkspaceDir(): string {
   return path.join(antigravityAcpRootDir(), "workspace")
 }
 

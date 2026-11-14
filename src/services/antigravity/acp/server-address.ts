@@ -18,8 +18,3 @@ export function antigravityCallbackBaseUrl(): string {
   const port = process.env.PORT?.trim() || "4141"
   return `http://127.0.0.1:${port}`
 }
-
-/** 测试用：复位。 */
-export function resetAntigravityCallbackBaseUrlForTest(): void {
-  callbackBaseUrl = undefined
-}

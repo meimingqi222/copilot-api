@@ -18,7 +18,7 @@ export interface McpToolDefinition {
   inputSchema: Record<string, unknown>
 }
 
-export interface TrailingToolResult {
+interface TrailingToolResult {
   toolCallId: string
   text: string
   isError: boolean
