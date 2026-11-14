@@ -1,0 +1,91 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/qoder-provider.test.ts:
+336 |       { role: "assistant", content: "", tool_calls: [{ id: "call_one", type: "function", function: { name: "read", arguments: "{}" } }] },
+337 |       { role: "tool", tool_call_id: "call_one", content: "result" },
+338 |     ]
+339 |     round[0] = { role: "system", content: "updated system" }
+340 |     const second = await call(round)
+341 |     expect(first.session_id).toMatch(/^[a-f0-9-]{36}$/)
+                                   ^
+error: Received value must be a string: undefined
+      at <anonymous> (tests/qoder-provider.test.ts:341:30)
+(fail) qoderNativeAdapter.createChatCompletions > keeps one Qoder task across tool rounds and isolates sessions and callers [6.89ms]
+376 |       })
+377 |       await qoderNativeAdapter.createChatCompletions?.({
+378 |         target: chatTarget("claude-sonnet-4-6"), connection, credential: makeCredential(),
+379 |         payload: { model: "claude-sonnet-4-6", reasoning_effort: effort, messages: [{ role: "user", content: "hi" }] },
+380 |       })
+381 |       expect(bodies.at(-1)!.model_config).toEqual({
+                                                ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "api_key": "",
++   "api_key": "must-not-send",
+    "display_name": "Claude Sonnet 4.6",
+-   "format": "openai",
+-   "is_reasoning": false,
++   "enable": true,
++   "is_reasoning": true,
+    "is_vl": true,
+    "key": "claude-sonnet-4-6",
+    "max_input_tokens": 200000,
+-   "model": "",
++   "minimal_version": {
++     "cli": "999.0.0",
++   },
+    "source": "anthropic",
+-   "url": "",
++   "strategies": [
++     "auto",
++   ],
++   "thinking_config": {
++     "enabled": {
++       "efforts": {
++         "high": {},
++         "low": {},
++         "medium": {
++           "is_default": true,
++         },
++       },
++     },
++   },
++   "url": "https://not-used.test",
+  }
+
+- Expected  - 5
++ Received  + 21
+
+      at <anonymous> (tests/qoder-provider.test.ts:381:43)
+(fail) qoderNativeAdapter.createChatCompletions > builds the client model_config instead of echoing model-list metadata [2.87ms]
+415 |     } else {
+416 |       const response = result!.response as import("~/services/protocols/chat/types").ChatCompletionResponse
+417 |       response.choices[0]!.message.tool_calls!.forEach((tc, i) => calls.set(i, { id: tc.id, name: tc.function.name, args: tc.function.arguments }))
+418 |     }
+419 |     const ordered = [...calls.values()]
+420 |     expect(ordered.map((tc) => [tc.name, JSON.parse(tc.args)])).toEqual([
+                                                    ^
+SyntaxError: JSON Parse error: Unable to parse JSON string
+      at <anonymous> (tests/qoder-provider.test.ts:420:47)
+      at map (1:11)
+      at <anonymous> (tests/qoder-provider.test.ts:420:20)
+(fail) qoderNativeAdapter.createChatCompletions > separates native calls sharing an index, including mixed XML tools (stream=%s) [0.47ms]
+415 |     } else {
+416 |       const response = result!.response as import("~/services/protocols/chat/types").ChatCompletionResponse
+417 |       response.choices[0]!.message.tool_calls!.forEach((tc, i) => calls.set(i, { id: tc.id, name: tc.function.name, args: tc.function.arguments }))
+418 |     }
+419 |     const ordered = [...calls.values()]
+420 |     expect(ordered.map((tc) => [tc.name, JSON.parse(tc.args)])).toEqual([
+                                                    ^
+SyntaxError: JSON Parse error: Unable to parse JSON string
+      at <anonymous> (tests/qoder-provider.test.ts:420:47)
+      at map (1:11)
+      at <anonymous> (tests/qoder-provider.test.ts:420:20)
+(fail) qoderNativeAdapter.createChatCompletions > separates native calls sharing an index, including mixed XML tools (stream=%s) [0.17ms]
+
+ 0 pass
+ 30 filtered out
+ 4 fail
+ 2 expect() calls
+Ran 4 tests across 1 file. [181.00ms]

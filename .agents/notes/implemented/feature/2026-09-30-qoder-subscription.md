@@ -64,14 +64,36 @@ adapter (mirroring how MiniMax Code got `minimax-native`):
 - **Model discovery is real, not a catalog.** `CATALOGS.qoder` is empty on purpose;
   `qoderProviderRuntime` overrides `refreshModels` to call the adapter's
   `discoverModels` (`GET /algo/api/v2/model/list?Encode=1`), and each mapping keeps
-  `{ qoderSource, qoderModelConfig }` in `metadata` because the chat request must echo
-  the model's config verbatim as `model_config` and send `X-Model-Key`/`X-Model-Source`.
+  `{ qoderSource, qoderModelConfig }` in `metadata` to build the client's
+  `model_config` and send `X-Model-Key`/`X-Model-Source`. The 2026-11-13 contract
+  update deliberately replaces verbatim listing replay: send only key, display
+  name, model/outer_provider, format, vision/reasoning flags, empty api_key/url,
+  source and input capacity. Listing-only version, strategy and pricing fields
+  are not inference configuration. `is_reasoning` follows the effective thinking
+  switch, and `business.model_key` names the actual selected key. This matches
+  Magpie's community Qoder plugin, not a verified claim about Qoder billing.
   Select the response's `app` list to match inference's product/session scene;
   fall back to `chat` only when `app` is absent or null, never when it is empty.
   QoDuck (`lmodel`) was returned only in `app` by a live account, including with
   client version 1.1.49; a version bump or a hardcoded model is not the fix.
   Aggregate entries (`auto`, `default`) are dropped — Qoder routes between models inside
   them, so they are not something an agent can pick.
+- **One conversation, one task per user prompt.** `src/services/qoder/session.ts`
+  hashes an explicit client session (including DSH's session header), then a body
+  prompt_cache_key, else the full system/first-user prefix. Include the caller's
+  `resolveTranscriptScopeId` and connection/site so shared client keys cannot
+  cross principals or upstream accounts. Do not use per-request trace ids.
+  A tool loop shares session_id, request_set_id/business.id and begin_at; each
+  request gets a new request_id/chat_record_id. A later user message starts a new
+  task even if its text repeats. Only a decoded upstream answer advances start
+  to processing, not an unsuccessful opening. Task records are process-local,
+  capped at 512, expire after two idle hours, and retain hashes/ids, not prompts.
+- **Native indices are not call identities.** Qoder has sent different call ids
+  at the same upstream index. The adapter allocates a fresh output index when
+  the id changes; same-id and id-less fragments continue the current call.
+  XML and native calls share that output counter. Never deduplicate prose or
+  merge arguments merely because Qoder reused an index. See Magpie's fixture
+  fix: https://github.com/magpie-community/plugins/commit/34786ed.
 
 ## Alternatives considered
 
@@ -122,6 +144,16 @@ If the real lifetime turns out to be shorter, that lead is the knob to turn down
 
 ## Verification
 
+- `tests/qoder-provider.test.ts::keeps one Qoder task across tool rounds and isolates sessions and callers`
+  covers prompt changes, fallback identity, caller/session isolation, failed
+  openings and sliding expiry through the real adapter's encoded requests.
+- `tests/qoder-provider.test.ts::preserves the incoming session header through dispatch and translation`
+  checks HTTP Chat, Messages and Responses with changing system instructions.
+- `tests/qoder-provider.test.ts::builds the client model_config instead of echoing model-list metadata`
+  checks the exact allowed configuration with thinking both enabled and disabled.
+- `tests/qoder-provider.test.ts::separates native calls sharing an index, including mixed XML tools`
+  checks stream and non-stream calls, repeated-id/id-less continuations and
+  XML/native interleaving with independently expected arguments.
 - `tests/qoder-provider.test.ts::replays readable assistant thinking once in the outgoing envelope`
   checks the actual encoded request, ordinary/tool-only assistant turns, aliases,
   detail/content fallbacks, duplicate representations, whitespace-only omissions
@@ -142,3 +174,9 @@ two text blocks, and Responses returned only reasoning/message/function_call.
 The natural red run is in `.agents/notes-evidence/qoder-thinking-order-red.log`.
 These are offline protocol/HTTP regressions with mock upstream transport, not
 proof of live Qoder acceptance of any particular model's historical thinking.
+
+Proved: Before the request-identity/model-config/index changes, the new tests
+failed on absent session_id, listing metadata in model_config and invalid merged
+tool arguments. The natural red run is in
+`.agents/notes-evidence/qoder-request-parity-red.log`. These checks do not prove
+that Qoder will stop generating repetitive wording or change billing attribution.

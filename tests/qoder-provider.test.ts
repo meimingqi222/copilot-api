@@ -29,7 +29,11 @@ import type {
   ApiCredential,
   ProviderConnection,
 } from "~/lib/provider-connections/types"
-import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
+import type {
+  ChatCompletionChunk,
+  ChatCompletionResponse,
+  ChatCompletionsPayload,
+} from "~/services/protocols/chat/types"
 import type { AnthropicResponse } from "~/services/protocols/anthropic"
 import type { ResponsesResponse } from "~/services/protocols/responses/types"
 
@@ -309,7 +313,305 @@ describe("qoderNativeAdapter.discoverModels", () => {
 
 // ── chat：出站编码 + COSY 头 ────────────────────────────────────────
 
+interface QoderEnvelope {
+  session_id: string
+  request_id: string
+  chat_record_id: string
+  request_set_id: string
+  business: { id: string; begin_at: number; stage: string; model_key: string }
+  model_config: Record<string, unknown>
+}
+
 describe("qoderNativeAdapter.createChatCompletions", () => {
+  test("keeps one Qoder task across tool rounds and isolates sessions and callers", async () => {
+    const bodies: Array<QoderEnvelope> = []
+    globalThis.fetch = mock(async (_url: unknown, init: { body: string }) => {
+      bodies.push(
+        JSON.parse(Buffer.from(decodeRequestBody(init.body)).toString("utf8")),
+      )
+      return sseResponse([
+        outerFrame({
+          choices: [{ delta: { content: "ok" }, finish_reason: "stop" }],
+        }),
+      ])
+    }) as unknown as typeof fetch
+    const messages: ChatCompletionsPayload["messages"] = [
+      { role: "system", content: "initial system" },
+      { role: "user", content: `task-${randomUUID()}` },
+    ]
+    const call = async (
+      history: ChatCompletionsPayload["messages"],
+      session = "session-a",
+      scope = "caller-a",
+      promptCacheKey?: string,
+    ) => {
+      await qoderNativeAdapter.createChatCompletions?.({
+        target: chatTarget("claude-sonnet-4-6"),
+        connection: makeConnection(),
+        credential: makeCredential(),
+        payload: {
+          model: "claude-sonnet-4-6",
+          messages: history,
+          prompt_cache_key: promptCacheKey,
+        },
+        ctx: {
+          forwardedHeaders: { "x-deepseek-harness-session-id": session },
+          transcriptScopeId: scope,
+        },
+      })
+      return bodies.at(-1)!
+    }
+    const first = await call(messages)
+    const round: ChatCompletionsPayload["messages"] = [
+      ...messages,
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          {
+            id: "call_one",
+            type: "function",
+            function: { name: "read", arguments: "{}" },
+          },
+        ],
+      },
+      { role: "tool", tool_call_id: "call_one", content: "result" },
+    ]
+    round[0] = { role: "system", content: "updated system" }
+    const second = await call(round)
+    expect(first.session_id).toMatch(/^[a-f0-9-]{36}$/)
+    expect(first.session_id).not.toBe("session-a")
+    expect(second.session_id).toBe(first.session_id)
+    expect(second.request_set_id).toBe(first.request_set_id)
+    expect(first.business.id).toBe(first.request_set_id)
+    expect(second.business).toMatchObject({
+      id: first.business.id,
+      begin_at: first.business.begin_at,
+      stage: "processing",
+    })
+    expect(first.business.stage).toBe("start")
+    expect(second.request_id).not.toBe(first.request_id)
+    expect(second.chat_record_id).toBe(second.request_id)
+    const next = await call([
+      ...round,
+      { role: "user", content: messages[1]!.content },
+    ])
+    expect(next.session_id).toBe(first.session_id)
+    expect(next.request_set_id).not.toBe(first.request_set_id)
+    expect(next.business.stage).toBe("start")
+    const otherSession = await call(messages, "session-b")
+    const otherCaller = await call(messages, "session-a", "caller-b")
+    for (const other of [otherSession, otherCaller]) {
+      expect(other.session_id).not.toBe(first.session_id)
+      expect(other.request_set_id).not.toBe(first.request_set_id)
+    }
+    const fallback = await call(messages, "")
+    const fallbackRound = await call([...messages, ...round.slice(2)], "")
+    expect(fallbackRound.session_id).toBe(fallback.session_id)
+    expect(fallbackRound.request_set_id).toBe(fallback.request_set_id)
+    const keyed = await call(messages, "", "caller-a", "cache-key-a")
+    const keyedRound = await call(round, "", "caller-a", "cache-key-a")
+    expect(keyedRound.session_id).toBe(keyed.session_id)
+    expect(keyedRound.request_set_id).toBe(keyed.request_set_id)
+    const otherKey = await call(messages, "", "caller-a", "cache-key-b")
+    expect(otherKey.session_id).not.toBe(keyed.session_id)
+
+    // A failed opening must not claim the task already answered a call.
+    globalThis.fetch = mock(async (_url: unknown, init: { body: string }) => {
+      bodies.push(
+        JSON.parse(Buffer.from(decodeRequestBody(init.body)).toString("utf8")),
+      )
+      return sseResponse([outerFrame("unavailable", 503)])
+    }) as unknown as typeof fetch
+    await expect(call(messages, "retry-session")).rejects.toMatchObject({
+      response: { status: 503 },
+    })
+    const retryOpening = bodies.at(-1)!
+    globalThis.fetch = mock(async (_url: unknown, init: { body: string }) => {
+      bodies.push(
+        JSON.parse(Buffer.from(decodeRequestBody(init.body)).toString("utf8")),
+      )
+      return sseResponse([
+        outerFrame({
+          choices: [{ delta: { content: "ok" }, finish_reason: "stop" }],
+        }),
+      ])
+    }) as unknown as typeof fetch
+    const retry = await call(messages, "retry-session")
+    expect(retry.request_set_id).toBe(retryOpening.request_set_id)
+    expect(retry.business.stage).toBe("start")
+    let now = Date.now()
+    const clock = spyOn(Date, "now").mockImplementation(() => now)
+    try {
+      const opening = await call(messages, "idle-session")
+      now += 2 * 60 * 60_000 - 1
+      const active = await call(round, "idle-session")
+      expect(active.request_set_id).toBe(opening.request_set_id)
+      now += 2 * 60 * 60_000
+      const expired = await call(round, "idle-session")
+      expect(expired.session_id).toBe(opening.session_id)
+      expect(expired.request_set_id).not.toBe(opening.request_set_id)
+      expect(expired.business.stage).toBe("start")
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  test("builds the client model_config instead of echoing model-list metadata", async () => {
+    const bodies: Array<QoderEnvelope> = []
+    globalThis.fetch = mock(async (_url: unknown, init: { body: string }) => {
+      bodies.push(
+        JSON.parse(Buffer.from(decodeRequestBody(init.body)).toString("utf8")),
+      )
+      return sseResponse([
+        outerFrame({
+          choices: [{ delta: { content: "ok" }, finish_reason: "stop" }],
+        }),
+      ])
+    }) as unknown as typeof fetch
+    for (const effort of ["none", "high"] as const) {
+      const connection = makeConnection()
+      const mapping = connection.models![0]!
+      mapping.metadata = {
+        ...mapping.metadata,
+        qoderModelConfig: {
+          ...MODEL_LIST.chat[0],
+          thinking_config: {
+            ...MODEL_LIST.chat[0]!.thinking_config,
+            disabled: {},
+          },
+          minimal_version: { cli: "999.0.0" },
+          strategies: ["auto"],
+          url: "https://not-used.test",
+        },
+      }
+      await qoderNativeAdapter.createChatCompletions?.({
+        target: chatTarget("claude-sonnet-4-6"),
+        connection,
+        credential: makeCredential(),
+        payload: {
+          model: "claude-sonnet-4-6",
+          reasoning_effort: effort,
+          messages: [{ role: "user", content: "hi" }],
+        },
+      })
+      expect(bodies.at(-1)!.model_config).toEqual({
+        key: "claude-sonnet-4-6",
+        display_name: "Claude Sonnet 4.6",
+        model: "",
+        format: "openai",
+        is_vl: true,
+        is_reasoning: effort !== "none",
+        api_key: "",
+        url: "",
+        source: "anthropic",
+        max_input_tokens: 200000,
+      })
+      expect(bodies.at(-1)!.business.model_key).toBe("claude-sonnet-4-6")
+    }
+  })
+
+  test.each([false, true])(
+    "separates native calls sharing an index, including mixed XML tools (stream=%s)",
+    async (stream) => {
+      const deltas = [
+        {
+          tool_calls: [
+            {
+              index: 0,
+              id: "first",
+              type: "function",
+              function: { name: "read", arguments: '{"p":' },
+            },
+          ],
+        },
+        {
+          tool_calls: [
+            { index: 0, id: "first", function: { arguments: '"a"}' } },
+          ],
+        },
+        { content: '<tool_call>{"name":"clock","arguments":{}}</tool_call>' },
+        {
+          tool_calls: [
+            {
+              index: 0,
+              id: "second",
+              type: "function",
+              function: { name: "write", arguments: '{"p":' },
+            },
+          ],
+        },
+        { tool_calls: [{ index: 0, function: { arguments: '"b"}' } }] },
+        {
+          tool_calls: [
+            {
+              index: 2,
+              id: "third",
+              type: "function",
+              function: { name: "remove", arguments: '{"p":"c"}' },
+            },
+          ],
+        },
+      ]
+      globalThis.fetch = mock(async () =>
+        sseResponse([
+          ...deltas.map((delta) =>
+            outerFrame({ choices: [{ delta, finish_reason: null }] }),
+          ),
+          outerFrame({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }),
+        ]),
+      ) as unknown as typeof fetch
+      const result = await qoderNativeAdapter.createChatCompletions?.({
+        target: chatTarget("claude-sonnet-4-6"),
+        connection: makeConnection(),
+        credential: makeCredential(),
+        payload: {
+          model: "claude-sonnet-4-6",
+          stream,
+          messages: [{ role: "user", content: "tools" }],
+        },
+      })
+      const calls = new Map<
+        number,
+        { id: string; name: string; args: string }
+      >()
+      if (stream) {
+        for (const frame of await collectFrames(
+          (result as { response: AsyncIterable<{ data?: string }> }).response,
+        )) {
+          const choices = frame.choices as ChatCompletionChunk["choices"]
+          for (const tc of choices[0]?.delta?.tool_calls ?? []) {
+            const old = calls.get(tc.index) ?? { id: "", name: "", args: "" }
+            calls.set(tc.index, {
+              id: tc.id ?? old.id,
+              name: old.name + (tc.function?.name ?? ""),
+              args: old.args + (tc.function?.arguments ?? ""),
+            })
+          }
+        }
+      } else {
+        const response = result!.response as ChatCompletionResponse
+        response.choices[0]!.message.tool_calls!.forEach((tc, i) =>
+          calls.set(i, {
+            id: tc.id,
+            name: tc.function.name,
+            args: tc.function.arguments,
+          }),
+        )
+      }
+      const ordered = [...calls.values()]
+      expect(ordered.map((tc) => [tc.name, JSON.parse(tc.args)])).toEqual([
+        ["read", { p: "a" }],
+        ["clock", {}],
+        ["write", { p: "b" }],
+        ["remove", { p: "c" }],
+      ])
+      expect(
+        ordered.map((tc) => tc.id).filter((id) => !id.startsWith("call_")),
+      ).toEqual(["first", "second", "third"])
+    },
+  )
+
   test("replays readable assistant thinking once in the outgoing envelope", async () => {
     const histories: Array<{
       reasoning: Partial<ChatCompletionsPayload["messages"][number]>
@@ -1162,6 +1464,62 @@ describe("Qoder end-to-end routing", () => {
       await fs.rm(tempAppDir, { recursive: true, force: true }).catch(() => {})
     }
   })
+
+  test.each(["chat/completions", "messages", "responses"])(
+    "%s preserves the incoming session header through dispatch and translation",
+    async (wire) => {
+      const bodies: Array<QoderEnvelope> = []
+      globalThis.fetch = mock(async (_url: unknown, init: { body: string }) => {
+        bodies.push(
+          JSON.parse(
+            Buffer.from(decodeRequestBody(init.body)).toString("utf8"),
+          ),
+        )
+        return sseResponse([
+          outerFrame({
+            choices: [{ delta: { content: "ok" }, finish_reason: "stop" }],
+          }),
+        ])
+      }) as unknown as typeof fetch
+      const session = randomUUID()
+      for (const system of ["first instructions", "updated instructions"]) {
+        const response = await server.fetch(
+          new Request(`http://localhost/v1/${wire}`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-deepseek-harness-session-id": session,
+            },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-6",
+              stream: false,
+              ...(wire === "responses" ?
+                { instructions: system, input: "same task" }
+              : wire === "messages" ?
+                {
+                  system,
+                  max_tokens: 1024,
+                  messages: [{ role: "user", content: "same task" }],
+                }
+              : {
+                  messages: [
+                    { role: "system", content: system },
+                    { role: "user", content: "same task" },
+                  ],
+                }),
+            }),
+          }),
+        )
+        expect(response.status).toBe(200)
+        await response.text()
+      }
+      expect(bodies).toHaveLength(2)
+      expect(bodies[1]!.session_id).toBe(bodies[0]!.session_id)
+      expect(bodies[1]!.request_set_id).toBe(bodies[0]!.request_set_id)
+      expect(bodies[1]!.business.stage).toBe("processing")
+      expect(bodies[1]!.session_id).not.toBe(session)
+    },
+  )
 
   test.each([
     { wire: "messages", stream: false },

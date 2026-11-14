@@ -9,7 +9,7 @@
  *     agent_id: "agent_common",
  *     task_id: "common",
  *     session_type: "app",
- *     model_config: <model/list 原始配置>,
+ *     model_config: <客户端模型配置>,
  *     system: [{ type: "text", text }],
  *     messages: [{ role: "system", content: [...] }, ...],
  *     tools?: [...]
@@ -18,9 +18,13 @@
  * 返回值是 JSON 字符串，交给 codec.encodeRequestBody 编码成 wire body。
  */
 
+import { randomUUID } from "node:crypto"
+
 import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
+import type { QoderTask } from "~/services/qoder/session"
 
 import { isEffortLevel, nearestEffort } from "~/lib/effort-levels"
+import { asRecord } from "~/lib/json-shape"
 import {
   extractReasoningBlockText,
   extractReasoningPartsText,
@@ -39,7 +43,7 @@ export interface QoderModelInfo {
   alwaysThinks: boolean
   defaultEffort: string
   efforts: Array<string>
-  /** model/list 中该条目的原始配置，作为 `model_config` 原样回传。 */
+  /** model/list 中该条目的原始配置，用于构造客户端的 `model_config`。 */
   config: unknown
 }
 
@@ -279,8 +283,15 @@ function qoderSysText(
 export function buildChatEnvelope(
   payload: ChatCompletionsPayload,
   model: QoderModelInfo,
+  task: QoderTask,
 ): string {
-  if (!model.key || model.config === undefined || model.config === null) {
+  const raw = asRecord(model.config)
+  if (
+    !model.key
+    || ["auto", "default"].includes(model.key)
+    || !raw
+    || raw.key !== model.key
+  ) {
     throw new Error("Qoder: missing model configuration")
   }
   const tools = payload.tools ?? []
@@ -311,21 +322,44 @@ export function buildChatEnvelope(
     parameters.context_length = model.maxInputTokens
   }
 
+  const requestId = randomUUID()
+  const lastUser = payload.messages.findLast((m) => m.role === "user")
   const body: Record<string, unknown> = {
+    request_id: requestId,
+    chat_record_id: requestId,
+    request_set_id: task.id,
+    session_id: task.sessionId,
     parameters,
     business: {
       product: "app",
       version: QODER_COSY_VERSION,
       type: "agent",
-      id: newQoderId(),
-      name: "copilot-api session",
-      begin_at: Date.now(),
-      stage: "start",
+      id: task.id,
+      name: textOf(lastUser?.content).slice(0, 10),
+      begin_at: task.beginAt,
+      stage: task.answered ? "processing" : "start",
+      model_key: model.key,
     },
     agent_id: "agent_common",
     task_id: "common",
     session_type: "app",
-    model_config: model.config,
+    // The discovery entry also contains routing/pricing/version metadata that
+    // the official worker does not send as model_config.
+    model_config: {
+      key: model.key,
+      display_name: raw.display_name || model.key,
+      ...(raw.outer_provider ?
+        { outer_provider: raw.outer_provider }
+      : { model: "" }),
+      format: raw.format ?? "openai",
+      is_vl: Boolean(raw.is_vl),
+      is_reasoning: Boolean(raw.is_reasoning) && thinking,
+      api_key: "",
+      url: "",
+      source: raw.source || model.source || "system",
+      max_input_tokens:
+        model.maxInputTokens > 0 ? model.maxInputTokens : 200000,
+    },
     system: [sys],
     messages: [
       { role: "system", content: [sys] },

@@ -37,6 +37,7 @@ import {
   qoderSiteForProvider,
 } from "~/services/qoder/endpoints"
 import { newQoderId } from "~/services/qoder/ids"
+import { getQoderTask, type QoderTask } from "~/services/qoder/session"
 import {
   parseQoderModelList,
   qoderModelInfoFromMapping,
@@ -197,10 +198,12 @@ function chunkFrame(chunk: Record<string, unknown>): CopilotStreamEvent {
 async function* decodeQoderStream(
   upstream: AsyncIterable<SimpleSseEventLike>,
   model: string,
+  task: QoderTask,
   c?: Context,
 ): AsyncGenerator<CopilotStreamEvent> {
   const splitter = new QoderToolCallSplitter()
-  let xmlCallIndex = 0
+  let nextToolIndex = 0
+  const nativeCalls = new Map<number, { id?: string; index: number }>()
   let sawNativeTool = false
   let sawFinish = false
   let usageSent = false
@@ -254,7 +257,7 @@ async function* decodeQoderStream(
               delta: {
                 tool_calls: [
                   {
-                    index: xmlCallIndex,
+                    index: nextToolIndex,
                     id: `call_${newQoderId()}`,
                     type: "function",
                     function: {
@@ -269,7 +272,7 @@ async function* decodeQoderStream(
           ],
         }),
       )
-      xmlCallIndex += 1
+      nextToolIndex += 1
     }
     return out
   }
@@ -277,6 +280,7 @@ async function* decodeQoderStream(
   for await (const event of upstream) {
     const chunk = parseQoderFrame(event.data)
     if (!chunk) continue
+    if (chunk.choices?.length) task.answered = true
     if (chunk.id) id = chunk.id
     if (typeof chunk.created === "number") created = chunk.created
 
@@ -312,12 +316,24 @@ async function* decodeQoderStream(
     if (delta?.tool_calls && delta.tool_calls.length > 0) {
       for (const frame of fragments(splitter.flush())) yield frame
       sawNativeTool = true
+      const calls = delta.tool_calls.map((call) => {
+        const upstreamIndex = call.index ?? 0
+        let open = nativeCalls.get(upstreamIndex)
+        // Qoder can reuse index 0 for another id. XML and native calls also
+        // need one shared output index space, or their arguments are merged.
+        if (!open || (call.id && open.id && call.id !== open.id)) {
+          open = { id: call.id, index: nextToolIndex++ }
+          nativeCalls.set(upstreamIndex, open)
+        }
+        if (call.id) open.id = call.id
+        return { ...call, index: open.index }
+      })
       yield chunkFrame({
         ...base(),
         choices: [
           {
             index: 0,
-            delta: { tool_calls: delta.tool_calls },
+            delta: { tool_calls: calls },
             finish_reason: null,
           },
         ],
@@ -445,7 +461,8 @@ export const qoderNativeAdapter: ProtocolAdapter = {
       )
     }
 
-    const plaintext = buildChatEnvelope(maskUpstream(payload), model)
+    const task = getQoderTask(payload, connection, ctx)
+    const plaintext = buildChatEnvelope(maskUpstream(payload), model, task)
     if (process.env.QODER_DUMP) {
       // 调试用：把发往 Qoder 的明文信封落盘，便于比对。
       try {
@@ -489,6 +506,7 @@ export const qoderNativeAdapter: ProtocolAdapter = {
     const stream = decodeQoderStream(
       upstream as unknown as AsyncIterable<SimpleSseEventLike>,
       target.upstreamModelId,
+      task,
       ctx?.c,
     )
 

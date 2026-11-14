@@ -8,8 +8,8 @@
  *                 <name>: { is_default } } }, disabled? } } ] }
  *
  * 聚合条目（"auto" / "default"）由 Qoder 自己在内部路由，不是 agent 能选的具体
- * 模型，直接丢掉。每个模型完整的原始配置要随 mapping 存下去：chat 请求必须把它
- * 原样回传为 `model_config`，并且需要 `source` 作为 `X-Model-Source` 头。
+ * 模型，直接丢掉。每个模型完整的原始配置要随 mapping 存下去：chat 请求从中
+ * 构造客户端的 `model_config`，并且需要 `source` 作为 `X-Model-Source` 头。
  */
 
 import { EFFORT_RANK, effortRank } from "~/lib/effort-levels"
@@ -39,7 +39,7 @@ interface QoderModelEntry {
   alwaysThinks: boolean
   defaultEffort: string
   efforts: Array<string>
-  /** model/list 中该条目的原始配置，原样回传为 `model_config`。 */
+  /** model/list 中该条目的原始配置，用于构造客户端的 `model_config`。 */
   config: Record<string, unknown>
 }
 function stringOr(value: unknown, fallback = ""): string {
