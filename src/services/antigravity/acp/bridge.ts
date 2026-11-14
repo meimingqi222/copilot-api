@@ -543,9 +543,17 @@ export async function createAntigravityAcpChatCompletionsOnce(
   },
   payload: ChatCompletionsPayload,
   signal?: AbortSignal,
+  requestModel?: string,
 ): Promise<AsyncIterable<CopilotStreamEvent> | ChatCompletionResponse> {
   const model = canonicalNativeModelId(payload.model)
-  const run = await resolveOrStartRun(connection, credential, payload, model)
+  // The run is keyed by the effort-selected upstream SKU; responses keep
+  // reporting the client-facing head id.
+  const run = await resolveOrStartRun(
+    connection,
+    credential,
+    payload,
+    requestModel ?? model,
+  )
   const stream = streamAcpEvents(run, model, signal)
   if (payload.stream === true) {
     return stream

@@ -1,6 +1,5 @@
 import { prepareOAuthRefresh } from "~/services/providers/auth-update"
 import { antigravityCallbackConfig } from "~/services/providers/callbacks/antigravity"
-import { accountModelsToMappings } from "~/lib/provider-connections"
 import { getAntigravityModelsForConnection } from "~/services/antigravity/get-models"
 import { getAntigravityFallbackModels } from "~/services/providers/model-catalogs/antigravity"
 import { fetchAntigravityQuota } from "~/lib/quota/fetchers/antigravity"
@@ -72,9 +71,7 @@ export function getAntigravityModule(): ProviderModule {
     fetchQuota: fetchAntigravityQuota,
     fallbackModels: getAntigravityFallbackModels,
     async discoverModels(connection, signal) {
-      return accountModelsToMappings(
-        await getAntigravityModelsForConnection(connection, signal),
-      )
+      return getAntigravityModelsForConnection(connection, signal)
     },
     adapter: antigravityNativeAdapter,
     oauth: antigravityStrategy,

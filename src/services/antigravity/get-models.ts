@@ -1,5 +1,7 @@
-import type { AccountModel } from "~/lib/provider-connections"
-import type { ProviderConnection } from "~/lib/provider-connections"
+import type {
+  ModelMapping,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { getConnectionProvider } from "~/lib/provider-connections"
@@ -11,6 +13,10 @@ import {
 } from "~/services/oauth/antigravity"
 
 import { buildAntigravityHeaders } from "./headers"
+import {
+  collapseAntigravityModelVariants,
+  type RawAntigravityCatalogEntry,
+} from "./variant-collapse"
 
 // Daily first, matching CPA (daily gets new models like gemini-3.8-flash
 // before the prod endpoint rolls them out).
@@ -34,7 +40,9 @@ interface AntigravityModelNode {
   maxOutputTokens?: number | string
 }
 
-function parseAntigravityModelsPayload(body: string): Array<AccountModel> {
+export function parseAntigravityModelsPayload(
+  body: string,
+): Array<ModelMapping> {
   let payload: { models?: Record<string, AntigravityModelNode> }
   try {
     payload = JSON.parse(body) as {
@@ -44,23 +52,22 @@ function parseAntigravityModelsPayload(body: string): Array<AccountModel> {
     throw new Error("Antigravity models response was not valid JSON")
   }
 
-  const models: Array<AccountModel> = []
+  const entries: Array<RawAntigravityCatalogEntry> = []
   for (const [rawId, node] of Object.entries(payload.models ?? {})) {
     const id = canonicalNativeModelId(rawId.trim())
     if (!id || SKIPPED_ANTIGRAVITY_MODELS.has(id)) {
       continue
     }
-    models.push({
-      id,
+    entries.push({
+      publicId: id,
       name: node.displayName?.trim() || id,
-      vendor: "antigravity",
-      pickerEnabled: true,
-      supportedEndpoints: ["/chat/completions", "/v1/messages"],
-      provider: "antigravity",
+      endpoints: ["chat", "messages"],
     })
   }
 
-  return models
+  // Effort-suffixed SKUs (gemini-4-hydrogen-low/…) fold into one family head;
+  // clients pick the tier with reasoning_effort at dispatch.
+  return collapseAntigravityModelVariants(entries)
 }
 
 /**
@@ -107,11 +114,12 @@ export async function requestAntigravityAvailableModels(
 
 /**
  * Connection 原生版本:直接从 ProviderConnection 发现 antigravity 模型。
+ * Effort variants are already collapsed into family heads + hidden pins.
  */
 export async function getAntigravityModelsForConnection(
   connection: ProviderConnection,
   signal?: AbortSignal,
-): Promise<Array<AccountModel>> {
+): Promise<Array<ModelMapping>> {
   if (getConnectionProvider(connection) !== "antigravity") return []
   const body = await requestAntigravityAvailableModels(connection, signal)
   return body ? parseAntigravityModelsPayload(body) : []

@@ -24,10 +24,15 @@ import { HTTPError } from "~/lib/error"
 import { iterateLines } from "~/lib/stream-lines"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import {
+  resolveEffortRequestModel,
+  type RequestedEffort,
+} from "~/lib/effort-variants"
+import {
   getCredentialContextString,
   getConnectionSettings,
 } from "~/lib/provider-connections"
 import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
+import { patchRequestLog } from "~/lib/request-log"
 import { generateAntigravityStableSessionId } from "~/lib/routing"
 import { isChatCompletionResponse } from "~/lib/utils"
 import {
@@ -50,11 +55,31 @@ import {
   convertAntigravityStreamChunk,
   createAntigravityStreamState,
 } from "./translate-response"
+import { readAntigravityVariants } from "./variant-collapse"
 
 const ANTIGRAVITY_BASE_URLS = [
   ANTIGRAVITY_DAILY_API_BASE_URL,
   ANTIGRAVITY_API_BASE_URL,
 ]
+
+// ── Model resolution ───────────────────────────────────────────────────────────
+
+/**
+ * Resolve the upstream SKU for a request: collapsed family heads select the
+ * tier with reasoning_effort, hidden pins keep their own upstreamId, and
+ * plain models pass through unchanged. Delegates to the shared resolver.
+ */
+export function resolveAntigravityRequestModel(
+  connection: ProviderConnection,
+  modelId: string,
+  effort?: RequestedEffort | null,
+): string {
+  return resolveEffortRequestModel(connection, modelId, effort, {
+    readVariants: readAntigravityVariants,
+    formatUpstreamId: canonicalNativeModelId,
+    logLabel: "antigravity",
+  })
+}
 
 function parseSseJson(line: string): Record<string, unknown> | undefined {
   const trimmed = line.trim()
@@ -191,11 +216,24 @@ export async function createAntigravityChatCompletionsOnce(
     throw new Error("Antigravity chat requires an Antigravity OAuth connection")
   }
 
+  const model = canonicalNativeModelId(payload.model)
+  const requestModel = resolveAntigravityRequestModel(
+    connection,
+    payload.model,
+    payload.reasoning_effort,
+  )
+  // Route-target logs the head default upstream; overwrite with the SKU
+  // actually selected by reasoning_effort so usage stats attribute correctly.
+  if (ctx?.c) {
+    patchRequestLog(ctx.c, { modelUpstream: requestModel })
+  }
+
   if (resolveAntigravityTransport(connection) === "acp") {
     return createAntigravityAcpChatCompletionsOnce(
       { connection, credential },
       payload,
       signal,
+      requestModel,
     )
   }
 
@@ -216,12 +254,11 @@ export async function createAntigravityChatCompletionsOnce(
     )
   }
 
-  const model = canonicalNativeModelId(payload.model)
   // Pre-resolve cached thoughtSignatures for assistant messages in history.
   const signatureRegistry = await preResolveSignatures(model, payload.messages)
   const upstreamBody = measureLocalWork("adapterPreparationMs", () =>
     translateOpenAiChatToAntigravity(
-      { ...payload, model },
+      { ...payload, model: requestModel },
       projectId,
       signatureRegistry,
     ),
