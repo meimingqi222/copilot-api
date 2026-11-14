@@ -95,6 +95,41 @@ describe("recordDirectStreamingUsage (Anthropic shape)", () => {
     expect(modelEntry()?.requests).toBe(1)
     expect(modelEntry()?.cost).toBe(0)
   })
+
+  test("pending terminal usage replaces the message-start estimate without charging it", () => {
+    const initial = updateLastUsage(
+      JSON.stringify({
+        type: "message_start",
+        message: { usage: { input_tokens: 600, output_tokens: 0 } },
+      }),
+      undefined,
+    )
+    const final = updateLastUsage(
+      JSON.stringify({
+        type: "message_delta",
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          usage_status: "pending",
+          context_window: { used_tokens: 12000, max_tokens: 128000 },
+        },
+      }),
+      initial,
+    )
+    recordDirectStreamingUsage(
+      fakeContext("test-model"),
+      "acc-1",
+      final,
+      undefined,
+      600,
+    )
+    expect(modelEntry()).toMatchObject({
+      requests: 1,
+      promptTokens: 0,
+      completionTokens: 0,
+      cost: 0,
+    })
+  })
 })
 
 describe("updateLastUsage", () => {

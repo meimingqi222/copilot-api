@@ -1,4 +1,3 @@
-import type { CacheCreationUsage } from "~/lib/cache-usage"
 import type { Context } from "hono"
 
 import type {
@@ -178,21 +177,17 @@ export function updateLastUsage(
     const parsed = JSON.parse(eventData) as {
       type?: string
       message?: {
-        usage?: {
-          input_tokens?: number
-          output_tokens?: number
-          cache_read_input_tokens?: number
-          cache_creation_input_tokens?: number
-          cache_creation?: CacheCreationUsage
-        }
+        usage?: Partial<AnthropicStreamingUsage>
       }
-      usage?: {
-        input_tokens?: number
-        output_tokens?: number
-        cache_read_input_tokens?: number
-        cache_creation_input_tokens?: number
-        cache_creation?: CacheCreationUsage
-      }
+      usage?: Partial<AnthropicStreamingUsage>
+    }
+    const currentUsage =
+      parsed.type === "message_start" ? parsed.message?.usage
+      : parsed.type === "message_delta" ? parsed.usage
+      : undefined
+    if (currentUsage?.usage_status === "pending") {
+      // Explicit pending zeros replace message_start estimates, not billed counts.
+      return { ...currentUsage, output_tokens: currentUsage.output_tokens ?? 0 }
     }
     if (parsed.type === "message_start" && parsed.message?.usage) {
       const msgUsage = parsed.message.usage

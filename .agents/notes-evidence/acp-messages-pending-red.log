@@ -1,0 +1,41 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/usage-recorder.test.ts:
+(pass) Trae's 0/0 cache answer is recorded as uncounted; another provider's is not [3.83ms]
+(pass) recordDirectStreamingUsage (Anthropic shape) > missing usage falls back to the local estimate [1.01ms]
+(pass) recordDirectStreamingUsage (Anthropic shape) > missing usage without estimate preserves one zero-token request [0.72ms]
+121 |       "acc-1",
+122 |       final,
+123 |       undefined,
+124 |       600,
+125 |     )
+126 |     expect(modelEntry()).toMatchObject({
+                               ^
+error: expect(received).toMatchObject(expected)
+
+  {
++   "cacheReadTokens": 0,
++   "cacheUnknownPromptTokens": 0,
++   "cacheWriteTokens": 0,
+    "completionTokens": 0,
+-   "cost": 0,
+-   "promptTokens": 0,
++   "cost": 0.006,
++   "promptTokens": 600,
+    "requests": 1,
++   "totalTokens": 600,
+  }
+
+- Expected  - 2
++ Received  + 6
+
+      at <anonymous> (<workspace>/tests/usage-recorder.test.ts:126:26)
+(fail) recordDirectStreamingUsage (Anthropic shape) > pending terminal usage replaces the message-start estimate without charging it [0.77ms]
+(pass) updateLastUsage > merges real input_tokens from final message_delta (Volcengine Ark glm-5.2) [0.02ms]
+(pass) updateLastUsage > keeps Anthropic-style message_start input when message_delta only has output
+(pass) updateLastUsage > does not let a later zero overwrite a known positive input count
+
+ 6 pass
+ 1 fail
+ 14 expect() calls
+Ran 7 tests across 1 file. [128.00ms]
