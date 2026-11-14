@@ -125,7 +125,11 @@ export class AgyRun {
       }
       return
     }
-    if (kind === "tool_call" && update.toolCallId && update.name) {
+    if (
+      kind === "tool_call"
+      && update.toolCallId
+      && update.name?.startsWith(MCP_TOOL_PREFIX)
+    ) {
       const originalName = stripBridgeToolPrefix(update.name)
       const rawArgs = update.rawInput ?? update.args ?? {}
       // 剔除 agy 自动附加的 toolSummary，保持与调用方 schema 一致
@@ -150,13 +154,12 @@ export class AgyRun {
     }
     this.touch()
 
-    let matchIdx = this.announcedQueue.findIndex(
+    const matchIdx = this.announcedQueue.findIndex(
       (item) => item.originalName === name || item.rawName === name,
     )
-    if (matchIdx === -1 && this.announcedQueue.length > 0) {
-      matchIdx = 0
-    }
 
+    // Lazy call_mcp_tool updates describe the wrapper, not the caller's tool.
+    // Only direct bridge announcements can supply an ID; the callback is authoritative.
     const announced: AnnouncedToolCall =
       matchIdx !== -1 ?
         this.announcedQueue.splice(matchIdx, 1)[0]

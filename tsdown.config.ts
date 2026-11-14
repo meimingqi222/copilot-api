@@ -4,6 +4,7 @@ export default defineConfig({
   entry: {
     main: "src/main.ts",
     "performance-worker": "src/lib/stats/performance-worker.ts",
+    "antigravity-mcp-helper": "src/services/antigravity/acp/mcp-helper.ts",
   },
 
   format: ["esm"],

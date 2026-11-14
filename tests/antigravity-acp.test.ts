@@ -25,6 +25,8 @@ import {
 } from "~/services/antigravity/acp/run-registry"
 import { resolveAntigravityTransport } from "~/services/antigravity/acp/transport"
 
+import { loopbackTest } from "./helpers/loopback-test"
+
 const ORIGINAL_APP_DIR = PATHS.APP_DIR
 const tempDirs: Array<string> = []
 
@@ -116,6 +118,144 @@ describe("antigravity acp auth-sync", () => {
 })
 
 describe("antigravity acp prompt & tools", () => {
+  test("provides schemas for lazy bridge calls without local file access", () => {
+    const blocks = buildAcpPromptBlocks({
+      model: "gemini-3.8-flash-low",
+      messages: [{ role: "user", content: "Check weather" }],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "get_weather",
+            parameters: {
+              type: "object",
+              properties: { city: { type: "string" } },
+            },
+          },
+        },
+      ],
+    })
+    expect(blocks[0].text).toContain("call_mcp_tool")
+    expect(blocks[0].text).toContain('ServerName="bridge"')
+    expect(blocks[0].text).toContain('"name":"get_weather"')
+    expect(blocks[0].text).toContain('"city":{"type":"string"}')
+    expect(blocks[0].text).toContain("Do NOT use local filesystem")
+  })
+
+  loopbackTest(
+    "bundled MCP helper lists tools and forwards calls",
+    async () => {
+      const outDir = makeTempDir("ag-acp-build-")
+      const root = path.resolve(import.meta.dir, "..")
+      const build = Bun.spawn(
+        [process.execPath, "run", "tsdown", "--out-dir", outDir],
+        {
+          cwd: root,
+          stdout: "ignore",
+          stderr: "pipe",
+        },
+      )
+      const buildErrors = await new Response(build.stderr).text()
+      expect(await build.exited, buildErrors).toBe(0)
+
+      const tools = [{ name: "get_weather", inputSchema: { type: "object" } }]
+      const calls: Array<unknown> = []
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        async fetch(request) {
+          calls.push(await request.json())
+          return Response.json({
+            content: [{ type: "text", text: "Sunny 22C" }],
+            is_error: false,
+          })
+        },
+      })
+      const bridgeFile = path.join(outDir, "bridge.json")
+      await Bun.write(
+        bridgeFile,
+        JSON.stringify({
+          callbackUrl: `http://127.0.0.1:${server.port}/callback`,
+          tools,
+        }),
+      )
+      const helper = Bun.spawn(
+        [
+          process.execPath,
+          "run",
+          path.join(outDir, "antigravity-mcp-helper.js"),
+          bridgeFile,
+        ],
+        {
+          cwd: outDir,
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      )
+      try {
+        helper.stdin.write(
+          [
+            {
+              jsonrpc: "2.0",
+              id: 1,
+              method: "initialize",
+              params: { protocolVersion: "2024-11-05" },
+            },
+            { jsonrpc: "2.0", method: "notifications/initialized" },
+            { jsonrpc: "2.0", id: 2, method: "tools/list" },
+            {
+              jsonrpc: "2.0",
+              id: 3,
+              method: "tools/call",
+              params: { name: "get_weather", arguments: { city: "Taipei" } },
+            },
+          ]
+            .map((message) => JSON.stringify(message))
+            .join("\n") + "\n",
+        )
+        helper.stdin.end()
+        const [output, errors, exitCode] = await Promise.all([
+          new Response(helper.stdout).text(),
+          new Response(helper.stderr).text(),
+          helper.exited,
+        ])
+        expect(exitCode, errors).toBe(0)
+        const replies = output
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line))
+        expect(replies).toEqual([
+          {
+            jsonrpc: "2.0",
+            id: 1,
+            result: {
+              protocolVersion: "2024-11-05",
+              capabilities: { tools: {} },
+              serverInfo: { name: "antigravity-bridge-mcp", version: "1.0.0" },
+            },
+          },
+          { jsonrpc: "2.0", id: 2, result: { tools } },
+          {
+            jsonrpc: "2.0",
+            id: 3,
+            result: {
+              content: [{ type: "text", text: "Sunny 22C" }],
+              isError: false,
+            },
+          },
+        ])
+        expect(calls).toEqual([
+          { name: "get_weather", arguments: { city: "Taipei" } },
+        ])
+      } finally {
+        helper.kill()
+        await server.stop(true)
+      }
+    },
+    20_000,
+  )
+
   test("extracts mcp tools and builds prompt blocks with image", () => {
     const tools = extractMcpTools([
       {
@@ -182,6 +322,49 @@ describe("antigravity acp prompt & tools", () => {
 })
 
 describe("antigravity acp run-registry & mcp-callback", () => {
+  test("lazy MCP callbacks expose the client tool, not the wrapper or local tools", async () => {
+    const run = new AgyRun({
+      token: "lazy",
+      connectionId: "c1",
+      model: "m1",
+      toolsSignature: "s1",
+      bridgeDir: makeTempDir("ag-lazy-"),
+    })
+    runRegistry.register(run)
+    run.handleUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "local-read",
+      name: "read_file",
+      rawInput: { path: "schema.json" },
+    })
+    run.handleUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "lazy-call",
+      name: "call_mcp_tool",
+      rawInput: {
+        ServerName: "bridge",
+        ToolName: "get_weather",
+        Arguments: { city: "Taipei" },
+      },
+    })
+    const callback = handleAntigravityMcpCallback("lazy", {
+      name: "get_weather",
+      arguments: { city: "Taipei" },
+    })
+    const event = await run.nextEvent()
+    expect(event?.type).toBe("tool_call_ready")
+    if (event?.type === "tool_call_ready") {
+      // Use the MCP callback as the authority; ACP wrapper IDs are not needed by the caller.
+      run.resolveParkedCall(event.call.toolCallId, {
+        content: [{ type: "text", text: "Sunny" }],
+        is_error: false,
+      })
+      await callback
+      expect(event.call.originalName).toBe("get_weather")
+      expect(JSON.parse(event.call.argsJson)).toEqual({ city: "Taipei" })
+    }
+  })
+
   test("strips mcp_bridge_ prefix and parks/resolves tool calls", async () => {
     expect(stripBridgeToolPrefix("mcp_bridge_get_weather")).toBe("get_weather")
     expect(stripBridgeToolPrefix("other")).toBe("other")

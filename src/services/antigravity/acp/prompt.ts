@@ -160,8 +160,15 @@ export function buildAcpPromptBlocks(
       sections.push(
         "[Bridge Mode] You are acting as a stateless API backend. "
           + "Do NOT use local filesystem, shell, or workspace tools. "
-          + "Only call the provided `mcp_bridge_*` tools when tools are needed, "
-          + "otherwise respond directly.",
+          + "Use the caller's tools through `mcp_bridge_<name>` if directly available, "
+          + 'or `call_mcp_tool` with ServerName="bridge", ToolName=<name>, '
+          + "and Arguments=<argument object> for lazy-loaded tools. "
+          + "The complete tool definitions follow; no local schema files need to be read. "
+          + "These tools execute on the caller's machine, not this backend. "
+          + "Otherwise respond directly.",
+      )
+      sections.push(
+        `[Bridge Tool Definitions]\n${JSON.stringify(extractMcpTools(payload.tools))}`,
       )
     } else {
       sections.push(

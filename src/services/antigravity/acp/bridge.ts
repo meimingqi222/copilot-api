@@ -8,6 +8,7 @@
  */
 
 import { randomUUID } from "node:crypto"
+import { existsSync } from "node:fs"
 import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -92,7 +93,10 @@ export function resolveAcpModelId(
 
 function resolveHelperPath(): string {
   const dir = path.dirname(fileURLToPath(import.meta.url))
-  return path.join(dir, "mcp-helper.ts")
+  const source = path.join(dir, "mcp-helper.ts")
+  return existsSync(source) ? source : (
+      path.join(dir, "antigravity-mcp-helper.js")
+    )
 }
 
 function makeChunk(
