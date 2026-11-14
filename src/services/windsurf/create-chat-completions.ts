@@ -20,11 +20,10 @@ import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 import { getRemainingCooldownSeconds } from "~/lib/rate-limit"
 import { patchRequestLog } from "~/lib/request-log"
 import { isAbortError, sleep } from "~/lib/utils"
-
-import type {
-  WindsurfModelVariants,
-  WindsurfRequestedEffort,
-} from "./variant-collapse"
+import {
+  resolveEffortRequestModel,
+  type RequestedEffort,
+} from "~/lib/effort-variants"
 
 import {
   createWindsurfAttempt,
@@ -69,74 +68,24 @@ import {
   WindsurfFirstFrameTimeoutError,
   withWindsurfStreamCleanup,
 } from "./stream-start"
-import {
-  pickWindsurfEffort,
-  readWindsurfVariants,
-  resolveWindsurfVariantUpstreamId,
-  windsurfEffortIsExact,
-} from "./variant-collapse"
+import { readWindsurfVariants } from "./variant-collapse"
 
 // ── Model resolution ───────────────────────────────────────────────────────────
 
+/**
+ * Windsurf has no request-level thinking parameter: an effort tier is expressed
+ * only by picking a variant's model id. The shared resolver handles head/pin
+ * selection and warns when a requested tier is not honored.
+ */
 export function resolveWindsurfRequestModel(
   connection: ProviderConnection,
   modelId: string,
-  effort?: WindsurfRequestedEffort | null,
+  effort?: RequestedEffort | null,
 ): string {
-  const normalizedModelId = canonicalNativeModelId(modelId)
-  const matchedModel = connection.models?.find((candidate) => {
-    if (canonicalNativeModelId(candidate.publicId) === normalizedModelId) {
-      return true
-    }
-    return (
-      candidate.aliases?.some(
-        (alias) => canonicalNativeModelId(alias) === normalizedModelId,
-      ) ?? false
-    )
-  })
-
-  if (!matchedModel) {
-    return formatWindsurfUpstreamId(modelId)
-  }
-
-  // Hidden variant mapping: publicId is already the pinned SKU. Do not
-  // re-select by effort — that would defeat an explicit pin.
-  if (matchedModel.hidden) {
-    return formatWindsurfUpstreamId(matchedModel.upstreamId)
-  }
-
-  const variants = readWindsurfVariants(matchedModel)
-  if (variants) {
-    warnOnUnsupportedEffort(connection, matchedModel.publicId, effort, variants)
-    return formatWindsurfUpstreamId(
-      resolveWindsurfVariantUpstreamId(variants, effort)
-        ?? matchedModel.upstreamId,
-    )
-  }
-
-  return formatWindsurfUpstreamId(matchedModel.upstreamId)
-}
-
-/**
- * Windsurf has no request-level thinking parameter: an effort tier is expressed
- * only by picking a variant's model id. When the client asks for a tier the
- * family does not have (e.g. `low`/`medium`/`xhigh` on GLM-5.2, which only has
- * none/high/max) the request still succeeds against the nearest available tier,
- * but the caller must be able to see that the tier it asked for was not honored.
- */
-function warnOnUnsupportedEffort(
-  connection: ProviderConnection,
-  modelId: string,
-  requested: WindsurfRequestedEffort | undefined | null,
-  variants: WindsurfModelVariants,
-): void {
-  if (windsurfEffortIsExact(requested, variants)) return
-  logger.warn("[windsurf] reasoning_effort not supported by this model", {
-    account: connection.name,
-    model: modelId,
-    requested,
-    applied: pickWindsurfEffort(requested, variants),
-    supported: Object.keys(variants.byEffort),
+  return resolveEffortRequestModel(connection, modelId, effort, {
+    readVariants: readWindsurfVariants,
+    formatUpstreamId: formatWindsurfUpstreamId,
+    logLabel: "windsurf",
   })
 }
 

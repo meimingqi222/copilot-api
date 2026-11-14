@@ -15,11 +15,10 @@ import {
   collapseWindsurfModelVariants,
   listWindsurfSupportedEfforts,
   parseWindsurfVariantTokens,
-  pickWindsurfEffort,
   readWindsurfVariants,
   windsurfContextWindow,
-  windsurfEffortIsExact,
 } from "~/services/windsurf/variant-collapse"
+import { effortVariantIsExact, pickEffortVariant } from "~/lib/effort-variants"
 
 function buildCatalogEntry(options: {
   displayName: string
@@ -449,7 +448,7 @@ test("windsurfContextWindow only advertises the 1m tier", () => {
   expect(windsurfContextWindow(undefined)).toBeUndefined()
 })
 
-test("windsurfEffortIsExact flags tiers the family does not have", () => {
+test("effortVariantIsExact flags tiers the family does not have", () => {
   const head = collapseWindsurfModelVariants([
     {
       publicId: "glm-5-2",
@@ -477,16 +476,16 @@ test("windsurfEffortIsExact flags tiers the family does not have", () => {
   expect(variants).toBeDefined()
   if (!variants) return
 
-  expect(windsurfEffortIsExact(undefined, variants)).toBe(true)
-  expect(windsurfEffortIsExact("auto", variants)).toBe(true)
-  expect(windsurfEffortIsExact("high", variants)).toBe(true)
-  expect(windsurfEffortIsExact("max", variants)).toBe(true)
-  expect(windsurfEffortIsExact("none", variants)).toBe(true)
+  expect(effortVariantIsExact(undefined, variants)).toBe(true)
+  expect(effortVariantIsExact("auto", variants)).toBe(true)
+  expect(effortVariantIsExact("high", variants)).toBe(true)
+  expect(effortVariantIsExact("max", variants)).toBe(true)
+  expect(effortVariantIsExact("none", variants)).toBe(true)
   // Absent tiers: the request is honored by a neighbour, not exactly.
-  expect(windsurfEffortIsExact("minimal", variants)).toBe(false)
-  expect(windsurfEffortIsExact("low", variants)).toBe(false)
-  expect(windsurfEffortIsExact("medium", variants)).toBe(false)
-  expect(windsurfEffortIsExact("xhigh", variants)).toBe(false)
+  expect(effortVariantIsExact("minimal", variants)).toBe(false)
+  expect(effortVariantIsExact("low", variants)).toBe(false)
+  expect(effortVariantIsExact("medium", variants)).toBe(false)
+  expect(effortVariantIsExact("xhigh", variants)).toBe(false)
 })
 
 test("collapseWindsurfModelVariants maps standard reasoning_effort onto GLM tiers", () => {
@@ -526,18 +525,18 @@ test("collapseWindsurfModelVariants maps standard reasoning_effort onto GLM tier
   expect(variants).toBeDefined()
   if (!variants) return
 
-  expect(pickWindsurfEffort(undefined, variants)).toBe("high")
-  expect(pickWindsurfEffort("auto", variants)).toBe("high")
-  expect(pickWindsurfEffort("none", variants)).toBe("none")
+  expect(pickEffortVariant(undefined, variants)).toBe("high")
+  expect(pickEffortVariant("auto", variants)).toBe("high")
+  expect(pickEffortVariant("none", variants)).toBe("none")
   // `minimal` asks for the lightest thinking tier, not for thinking off:
   // GLM has no minimal/low, so it lands on the lowest thinking tier (high).
-  expect(pickWindsurfEffort("minimal", variants)).toBe("high")
-  expect(pickWindsurfEffort("low", variants)).toBe("high")
-  expect(pickWindsurfEffort("medium", variants)).toBe("high")
-  expect(pickWindsurfEffort("high", variants)).toBe("high")
+  expect(pickEffortVariant("minimal", variants)).toBe("high")
+  expect(pickEffortVariant("low", variants)).toBe("high")
+  expect(pickEffortVariant("medium", variants)).toBe("high")
+  expect(pickEffortVariant("high", variants)).toBe("high")
   // max and xhigh are independent — never cross-map.
-  expect(pickWindsurfEffort("max", variants)).toBe("max")
-  expect(pickWindsurfEffort("xhigh", variants)).toBe("high")
+  expect(pickEffortVariant("max", variants)).toBe("max")
+  expect(pickEffortVariant("xhigh", variants)).toBe("high")
 })
 
 function buildCollapsedConnection(): ProviderConnection {

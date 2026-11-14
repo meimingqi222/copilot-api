@@ -20,35 +20,32 @@
  *   dimensions so pins keep their own upstreamId after dispatch overwrites
  *   payload.model.
  * - Non-head effort siblings become independent `hidden: true` mappings.
+ *
+ * The provider-neutral mechanics (effort vocabulary, tier picker, head + pin
+ * emission, dispatch resolution) live in `~/lib/effort-variants`; this file
+ * keeps only Windsurf's catalog parsing and context/lane collapse policy.
  */
 
 import type { ModelEndpoint, ModelMapping } from "~/lib/provider-connections"
-import type { ReasoningEffort } from "~/lib/thinking"
 
-/** Windsurf accepts `max` as a discrete request tier alongside OpenAI levels. */
-export type WindsurfRequestedEffort = ReasoningEffort | "max"
-
-type WindsurfEffortKey =
-  | "minimal"
-  | "low"
-  | "medium"
-  | "high"
-  | "xhigh"
-  | "none"
-  /** Windsurf/GLM spelling for the top discrete tier. */
-  | "max"
+import {
+  buildEffortVariantGroupMappings,
+  type EffortVariantKey,
+  type EffortVariants,
+  listEffortVariants,
+  preferDefaultEffort,
+  readEffortVariantsMetadata,
+} from "~/lib/effort-variants"
 
 type WindsurfContextTier = "standard" | "1m"
 
 /** Latency/product lane. `fast`/`priority` are not thinking efforts. */
 type WindsurfLane = "standard" | "fast" | "priority"
 
-export interface WindsurfModelVariants {
+/** Windsurf adds context/lane axes on top of the shared effort variants. */
+interface WindsurfModelVariants extends EffortVariants {
   contextTier: WindsurfContextTier
   lane: WindsurfLane
-  defaultEffort: WindsurfEffortKey
-  /** effort key → upstream model id */
-  byEffort: Partial<Record<WindsurfEffortKey, string>>
 }
 
 const WINDSURF_VARIANTS_METADATA_KEY = "windsurfVariants"
@@ -66,42 +63,6 @@ export interface RawWindsurfCatalogEntry {
   baseDisplayName?: string
 }
 
-const EFFORT_ORDER: Array<WindsurfEffortKey> = [
-  "high",
-  "max",
-  "xhigh",
-  "medium",
-  "low",
-  "minimal",
-  "none",
-]
-
-/** Ascending order for capabilities.supports.reasoning_effort. */
-const LIST_EFFORT_ORDER: Array<WindsurfEffortKey> = [
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-]
-
-/**
- * Thinking tiers ascending. `none` is deliberately absent: it turns thinking
- * off, so it is not a "lower" rung of the same ladder as minimal/low/.../max.
- * Used when a requested tier is missing and we must fall to the lowest tier
- * that still thinks, rather than to `none`.
- */
-const THINKING_TIERS_ASCENDING: Array<WindsurfEffortKey> = [
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-]
-
 /** Context window of the `1m` tier, as named by the upstream catalog. */
 export const WINDSURF_1M_CONTEXT_TOKENS = 1_000_000
 
@@ -110,7 +71,7 @@ const THINKING_SUFFIX = /(?:^|[-_\s])thinking$/i
 const REASONING_SUFFIX = /(?:^|[-_\s])reasoning$/i
 const EFFORT_TOKENS: Array<{
   token: RegExp
-  key: WindsurfEffortKey
+  key: EffortVariantKey
 }> = [
   { token: /(?:^|[-_\s])no[-_\s]?thinking$/i, key: "none" },
   { token: /(?:^|[-_\s])none$/i, key: "none" },
@@ -133,7 +94,7 @@ function trimTrailingSeparators(value: string): string {
   return value.replace(/[-_\s]+$/, "")
 }
 
-function detectEffortToken(value: string): WindsurfEffortKey | undefined {
+function detectEffortToken(value: string): EffortVariantKey | undefined {
   const trimmed = value.trim()
   for (const { token, key } of EFFORT_TOKENS) {
     if (token.test(trimmed)) return key
@@ -154,7 +115,7 @@ function stripEffortToken(value: string): string {
 
 interface ParsedVariantTokens {
   family: string
-  effort: WindsurfEffortKey | undefined
+  effort: EffortVariantKey | undefined
   contextTier: WindsurfContextTier
   lane: WindsurfLane
 }
@@ -214,7 +175,7 @@ export function parseWindsurfVariantTokens(
   }
 
   // `{effort}-thinking` / `{effort}-reasoning` / `no-thinking` → effort.
-  let effort: WindsurfEffortKey | undefined
+  let effort: EffortVariantKey | undefined
   for (const wrapper of THINKING_OR_REASONING_SUFFIXES) {
     if (!wrapper.test(work)) continue
     const stem = trimTrailingSeparators(work.replace(wrapper, ""))
@@ -240,15 +201,6 @@ export function parseWindsurfVariantTokens(
 
   const family = work || publicId.trim()
   return { family, effort, contextTier, lane }
-}
-
-function preferDefaultEffort(
-  available: Partial<Record<WindsurfEffortKey, string>>,
-): WindsurfEffortKey {
-  for (const candidate of EFFORT_ORDER) {
-    if (available[candidate]) return candidate
-  }
-  return "high"
 }
 
 function displayNameWithoutVariantTokens(
@@ -320,7 +272,7 @@ interface VariantGroup {
   lane: WindsurfLane
   entries: Array<{
     entry: RawWindsurfCatalogEntry
-    effort: WindsurfEffortKey
+    effort: EffortVariantKey
   }>
   vendor: string
   pickerEnabled: boolean
@@ -350,7 +302,7 @@ export function collapseWindsurfModelVariants(
   for (const entry of entries) {
     if (!entry.publicId) continue
     const parsed = parseWindsurfVariantTokens(entry.publicId, entry.name)
-    const resolvedEffort: WindsurfEffortKey = parsed.effort ?? "high"
+    const resolvedEffort: EffortVariantKey = parsed.effort ?? "high"
     const groupKey = `${parsed.family}::${parsed.contextTier}::${parsed.lane}`
 
     let group = groups.get(groupKey)
@@ -385,7 +337,7 @@ export function collapseWindsurfModelVariants(
   const mappings: Array<ModelMapping> = []
 
   for (const group of groups.values()) {
-    const byEffort: Partial<Record<WindsurfEffortKey, string>> = {}
+    const byEffort: Partial<Record<EffortVariantKey, string>> = {}
     const entriesByPublicId = new Map<string, RawWindsurfCatalogEntry>()
 
     for (const { entry, effort } of group.entries) {
@@ -410,39 +362,33 @@ export function collapseWindsurfModelVariants(
       byEffort,
     }
 
-    const collapsed: ModelMapping = {
-      publicId,
-      upstreamId,
-      name,
-      vendor: group.vendor,
-      enabled: true,
-      pickerEnabled: group.pickerEnabled,
-      pickerCategory: group.pickerCategory,
-      endpoints: group.endpoints,
-      metadata: {
-        [WINDSURF_VARIANTS_METADATA_KEY]: variants,
-      },
-    }
-    // 折叠后这一族能接受的档位就是变体键；写进 mapping，让档位元信息跟
-    // 其它 provider 走同一条投影/钳制路径。
-    const efforts = listWindsurfSupportedEfforts(collapsed)
-    if (efforts) collapsed.efforts = efforts
-    mappings.push(collapsed)
-
-    for (const [legacyPublicId, entry] of entriesByPublicId) {
-      if (legacyPublicId === publicId) continue
-      mappings.push({
-        publicId: legacyPublicId,
-        upstreamId: entry.upstreamId || legacyPublicId,
+    const pins = Array.from(entriesByPublicId.values())
+      .filter((entry) => entry.publicId !== publicId)
+      .map((entry) => ({
+        publicId: entry.publicId,
+        upstreamId: entry.upstreamId || entry.publicId,
         name: entry.name,
         vendor: entry.vendor,
-        enabled: true,
-        pickerEnabled: false,
         pickerCategory: entry.pickerCategory,
         endpoints: group.endpoints,
-        hidden: true,
-      })
-    }
+      }))
+
+    mappings.push(
+      ...buildEffortVariantGroupMappings(
+        WINDSURF_VARIANTS_METADATA_KEY,
+        {
+          publicId,
+          upstreamId,
+          name,
+          vendor: group.vendor,
+          pickerEnabled: group.pickerEnabled,
+          pickerCategory: group.pickerCategory,
+          endpoints: group.endpoints,
+          metadata: { [WINDSURF_VARIANTS_METADATA_KEY]: variants },
+        },
+        pins,
+      ),
+    )
   }
 
   mappings.sort((a, b) => a.publicId.localeCompare(b.publicId))
@@ -452,49 +398,29 @@ export function collapseWindsurfModelVariants(
 export function readWindsurfVariants(
   model: Pick<ModelMapping, "metadata"> | undefined,
 ): WindsurfModelVariants | undefined {
-  const raw = model?.metadata?.[WINDSURF_VARIANTS_METADATA_KEY]
-  if (!raw || typeof raw !== "object") return undefined
-  const record = raw as Partial<WindsurfModelVariants>
-  if (
-    !record.byEffort
-    || typeof record.byEffort !== "object"
-    || !record.defaultEffort
-    || !record.contextTier
-  ) {
-    return undefined
-  }
+  const base = readEffortVariantsMetadata(model, WINDSURF_VARIANTS_METADATA_KEY)
+  if (!base) return undefined
+  const raw = model?.metadata?.[WINDSURF_VARIANTS_METADATA_KEY] as
+    | Partial<WindsurfModelVariants>
+    | undefined
+  // Windsurf requires the context axis on top of the shared base record.
+  if (!raw?.contextTier) return undefined
   return {
-    contextTier: record.contextTier,
-    lane: record.lane ?? "standard",
-    defaultEffort: record.defaultEffort,
-    byEffort: record.byEffort,
+    ...base,
+    contextTier: raw.contextTier,
+    lane: raw.lane ?? "standard",
   }
 }
 
 /**
  * Client-facing `capabilities.supports.reasoning_effort` for a collapsed
- * head: exactly the effort keys this family actually has. GLM-5.2 →
- * `["high","none","max"]`. Clients that honor this list will not send
- * unsupported tiers like `low`/`medium`/`xhigh`.
- *
- * The family default is emitted **first**; remaining tiers follow ascending.
- * This ordering is part of the contract, not cosmetic: consumers that receive
- * only a list of value strings (grok-build's `/effort` menu) treat the first
- * entry as the default, so a plain ascending list would silently make a
- * `{"none","high","max"}` family default to "no thinking".
+ * head: exactly the effort keys this family actually has, default first
+ * (see `listEffortVariants` for why the ordering is load-bearing).
  */
 export function listWindsurfSupportedEfforts(
   model: Pick<ModelMapping, "metadata"> | undefined,
 ): Array<string> | undefined {
-  const variants = readWindsurfVariants(model)
-  if (!variants) return undefined
-  const present = LIST_EFFORT_ORDER.filter((key) => variants.byEffort[key])
-  if (present.length === 0) return undefined
-  if (!variants.byEffort[variants.defaultEffort]) return present
-  return [
-    variants.defaultEffort,
-    ...present.filter((key) => key !== variants.defaultEffort),
-  ]
+  return listEffortVariants(readWindsurfVariants(model))
 }
 
 /**
@@ -509,94 +435,4 @@ export function windsurfContextWindow(
   const variants = readWindsurfVariants(model)
   if (!variants) return undefined
   return variants.contextTier === "1m" ? WINDSURF_1M_CONTEXT_TOKENS : undefined
-}
-
-/**
- * True when `requested` is a tier this family actually has. `undefined`/`auto`
- * mean "server decides" and are always considered satisfiable.
- */
-export function windsurfEffortIsExact(
-  requested: WindsurfRequestedEffort | undefined | null,
-  variants: WindsurfModelVariants,
-): boolean {
-  if (!requested || requested === "auto") return true
-  return Boolean(variants.byEffort[requested])
-}
-
-/**
- * Map a client-facing reasoning_effort onto an available Windsurf effort key.
- *
- * `max` and `xhigh` are independent tiers — never cross-map them. A catalog
- * that only has `max` (no `xhigh`) must not answer an `xhigh` request with
- * `max`, and vice versa. Missing tiers fall back to the family default.
- */
-export function pickWindsurfEffort(
-  requested: WindsurfRequestedEffort | undefined | null,
-  variants: WindsurfModelVariants,
-): WindsurfEffortKey {
-  const available = variants.byEffort
-  const fallback = variants.defaultEffort
-
-  if (!requested || requested === "auto") {
-    return fallback
-  }
-
-  const has = (key: WindsurfEffortKey) => Boolean(available[key])
-
-  if (requested === "none") {
-    return has("none") ? "none" : fallback
-  }
-  if (requested === "minimal") {
-    // `minimal` asks for the lightest *thinking* tier, not for thinking to be
-    // switched off — the lowest available thinking tier, never `none` while a
-    // thinking tier exists.
-    if (has("minimal")) return "minimal"
-    for (const key of THINKING_TIERS_ASCENDING) {
-      if (has(key)) return key
-    }
-    return has("none") ? "none" : fallback
-  }
-  if (requested === "low") {
-    if (has("low")) return "low"
-    if (has("medium")) return "medium"
-    if (has("high")) return "high"
-    return fallback
-  }
-  if (requested === "medium") {
-    if (has("medium")) return "medium"
-    if (has("high")) return "high"
-    if (has("low")) return "low"
-    return fallback
-  }
-  if (requested === "high") {
-    // Stay within the standard low/medium/high ladder — never promote to
-    // Windsurf `max` (that is a distinct SKU, not a higher high).
-    if (has("high")) return "high"
-    if (has("medium")) return "medium"
-    if (has("low")) return "low"
-    return fallback
-  }
-  if (requested === "xhigh") {
-    return has("xhigh") ? "xhigh" : fallback
-  }
-  if (requested === "max") {
-    return has("max") ? "max" : fallback
-  }
-  return fallback
-}
-
-/**
- * Resolve the upstream model id for a collapsed Windsurf entry.
- * Returns undefined when the model has no variant metadata (uncollapsed).
- */
-export function resolveWindsurfVariantUpstreamId(
-  variants: WindsurfModelVariants,
-  requestedEffort: WindsurfRequestedEffort | undefined | null,
-): string | undefined {
-  const effortKey = pickWindsurfEffort(requestedEffort, variants)
-  return (
-    variants.byEffort[effortKey]
-    ?? variants.byEffort[variants.defaultEffort]
-    ?? Object.values(variants.byEffort)[0]
-  )
 }
