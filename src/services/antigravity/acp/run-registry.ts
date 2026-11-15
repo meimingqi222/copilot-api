@@ -140,6 +140,10 @@ export class AgyRun {
     return !this.activePromptInFlight && this.parkedCalls.size === 0
   }
 
+  get parkedCount(): number {
+    return this.parkedCalls.size
+  }
+
   pushEvent(event: AgyTurnEvent): void {
     this.turnEvents.push(event)
     this.notifyWaiter()

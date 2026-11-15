@@ -4,6 +4,7 @@
 
 import { createHash } from "node:crypto"
 
+import { HTTPError } from "~/lib/error"
 import type {
   ChatCompletionsPayload,
   Message,
@@ -12,6 +13,10 @@ import type {
 
 import type { AcpContentBlock } from "./client"
 import type { McpToolResult } from "~/services/antigravity/acp/run-registry"
+
+// agy 1.5.9 tail-truncates a native user input at 192,000 UTF-8 bytes.
+// Reserve framing space; this is a per-prompt transport limit, not model tokens.
+const MAX_ACP_PROMPT_BYTES = 190_000
 
 export interface McpToolDefinition {
   name: string
@@ -301,5 +306,30 @@ export function buildAcpPromptBlocks(
     blocks.push({ type: "text", text: combinedText })
   }
   blocks.push(...images)
+  const promptBytes = blocks.reduce(
+    (total, block) =>
+      total
+      + Buffer.byteLength(block.text ?? block.resource?.text ?? "", "utf8"),
+    0,
+  )
+  if (promptBytes > MAX_ACP_PROMPT_BYTES) {
+    const message =
+      `prompt is too long for Antigravity ACP: ${promptBytes} UTF-8 bytes `
+      + `exceed the safe single-prompt limit of ${MAX_ACP_PROMPT_BYTES} bytes. `
+      + "This transport limit is independent of the model context window. "
+      + "Compact or shorten the context before retrying; the native agent would otherwise silently truncate the input."
+    throw new HTTPError(
+      message,
+      new Response(null, { status: 400 }),
+      JSON.stringify({
+        error: {
+          message,
+          type: "invalid_request_error",
+          param: "messages",
+          code: "context_length_exceeded",
+        },
+      }),
+    )
+  }
   return blocks
 }

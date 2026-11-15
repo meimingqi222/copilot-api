@@ -33,11 +33,16 @@ arguments and gets a generated caller-visible ID. Never associate it with an
 arbitrary queued ACP announcement: those may describe `call_mcp_tool` or a local
 tool rather than the actual client tool.
 
-Reuse requires matching the full prior request and the assistant reply actually
-emitted, scoped to credential and API user. Canonical history ignores assistant
-display reasoning because the unchanged native session already retains it; do
-not fabricate signed reasoning. Ambiguous matches replay fresh instead of
-guessing which hidden reasoning belongs to the caller. Parked continuations
+Reuse is scoped to credential and API user and matches the full prior request
+prefix byte-for-byte. For a new user turn, a single idle candidate whose request
+prefix matches is reused without requiring the client to echo the assistant reply
+byte-for-byte: the native session already holds the real reply, and clients
+routinely normalize/trim the echo (a strict echo match forced lossy cold replays
+of long transcripts). The assistant echo is only used to disambiguate when several
+idle candidates share the same prefix; an ambiguous match still replays fresh
+rather than guessing which hidden reasoning belongs to the caller. Canonical
+history ignores assistant display reasoning because the unchanged native session
+already retains it; do not fabricate signed reasoning. Parked continuations
 require unchanged history/tools and exactly the exposed results; otherwise replay
 the complete transcript, including the caller's updated instructions.
 
@@ -52,6 +57,27 @@ System/developer instructions remain active outside the history section; this
 boundary does not remove old context, reset native sessions or alter billing.
 These boundaries do not guarantee that a model follows a change of task; live
 behavioral validation is separate from the prompt serialization regression.
+
+The native agy 1.5.9 converter also tail-truncates an individual user input at
+192,000 UTF-8 bytes, independently of the model's token context window. Prompt
+construction rejects more than 190,000 text/resource bytes before native dispatch,
+reserving space for native framing. OpenAI callers receive HTTP 400 with
+`context_length_exceeded`; Messages uses its standard invalid-request envelope
+and preserved overflow wording. Never reorder or discard history to pretend the
+full request fitted, or move caller history into higher-authority system text.
+The budget applies to the actual native prompt: cold replay includes all history
+and tool definitions, while safe warm reuse checks only the new prompt. Rejecting
+an oversized follow-up must not advance the live run's history baseline. Parked
+MCP results do not become a fresh flattened user prompt.
+
+Client-side compaction can recover from the error, but automatic recovery is a
+separate client contract.
+
+Rejected alternative: serving the oversized transcript over the native HTTP
+multi-turn API. That path replays Google's private Cloud Code endpoint outside
+the official `agy` client and risks account suspension, so the bridge must stay
+on ACP. A lossless long-replay fix has to keep the official client (bounded
+multi-turn ingestion or durable session reuse), not switch transports.
 
 Parked MCP results retain inline base64 images alongside text in caller order,
 matching the image support of full replay without fetching remote URLs. The
@@ -140,8 +166,51 @@ client usage and does not justify falling back to an accumulated context claim.
 Stripping pending metadata inside codecs instead of at egress would revive estimated intermediate
 charges. Fresh replay is deliberately preferred to unsafe native-session reuse
 when history changed or multiple native sessions have the same visible reply.
+The conservative per-prompt byte budget is based on agy 1.5.9, not a universal
+token conversion or a replacement model window. Remeasure it when native input
+serialization changes. Returning an explicit overflow is preferable to a successful
+response generated without the current question or recent history.
 
 ## Verification
+
+- `tests/antigravity-acp-bridge.test.ts::rejects oversized native input before opening`
+- `tests/antigravity-acp-bridge.test.ts::native prompt budget preserves long warm conversations and a rejected follow-up can recover`
+
+Proved: before the prompt budget guard, the focused command
+`bun test tests/antigravity-acp-bridge.test.ts --test-name-pattern 'rejects oversized native|native prompt budget'`
+failed three assertions: oversized requests resolved instead of rejecting with
+HTTPError, including a new prompt on an existing session. The guarded ACP suites
+pass. Tests cover UTF-8 bytes rather than characters, combined history and current
+input, streaming/non-streaming calls, both sides of the budget, long warm
+conversations and recovery without advancing the rejected turn's baseline.
+
+Isolated upstream interception of the real long replay confirmed that the
+tool-enabled model request contained only the input prefix and a literal native
+truncation marker. Reordering exposed the current question but omitted recent
+history and produced an incorrect recall, so it was rejected as a fix. A synthetic
+192,000-character padding probe independently lost its final instruction; this is
+input truncation, not semantic context compaction. Complete captured requests and
+real conversations remain in ignored scratch storage, not this note or its tests.
+
+The bundled public handlers returned pre-stream HTTP 400 for Chat, Messages and
+Responses with streaming both enabled and disabled. An isolated replay of the
+447-message failing request returned the standard overflow without starting a
+native run. Two authenticated three-turn recall sequences passed; the final run
+also verified that all three replies used one native session. This validates
+gateway errors and ordinary live continuation, not Maka's automatic compaction
+and recovery of the original long session. Production was not replaced or restarted.
+
+- `tests/antigravity-acp-bridge.test.ts::a single matching session is reused even when the client normalizes the assistant echo`
+
+Proved: before the relaxation, the focused command
+`bun test tests/antigravity-acp-bridge.test.ts --test-name-pattern 'single matching session is reused'`
+failed because a normalized assistant echo forced a cold replay instead of reusing
+the single idle session. After matching on the request prefix for a single
+candidate, it passes, and the multi-candidate disambiguation / owner-scoping /
+changed-instructions replay tests still pass. Live validation against the real
+`agy` client (gemini-4-hydrogen) ran three turns where the third echoed a
+normalized assistant reply: all three used one native session, zero cold replays,
+and the follow-up answered from session memory. Production was not touched.
 
 - `tests/antigravity-acp.test.ts::separates long replay history from the whole current user turn and tool results`
 
@@ -159,7 +228,7 @@ file edits with both incremental prompts and fresh-session replay: review-only
 left the file unchanged, the follow-up applied the fix, and another follow-up
 changed it again. However, the long diagnostic replay still returned a review
 without requesting edits. Its recorded-tool replay is not the caller's real
-workspace; the original behavioral issue remains unresolved, not proven fixed.
+workspace; that earlier run did not prove the long-replay issue fixed.
 
 - `tests/antigravity-acp.test.ts::antigravity acp client lifecycle`
 - `tests/antigravity-acp-bridge.test.ts::parked tool results preserve inline images and text in order`

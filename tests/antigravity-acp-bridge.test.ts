@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { Hono, type Context } from "hono"
 
+import { HTTPError } from "~/lib/error"
 import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import { managedConnectionFromInput } from "~/lib/provider-connections"
 import { statsStore } from "~/lib/stats-store"
@@ -11,7 +12,13 @@ import { startRequestPerformance } from "~/lib/request-performance"
 import { handleNonStreamingResponse } from "~/routes/chat-completions/non-streaming"
 import { recordDirectStreamingUsage } from "~/routes/messages/usage-recorder"
 import { antigravityMcpRoutes } from "~/routes/antigravity-mcp/route"
-import { createAntigravityAcpChatCompletionsOnce } from "~/services/antigravity/acp/bridge"
+import {
+  createAntigravityAcpChatCompletionsOnce,
+  matchRunHistory,
+  classifyColdReplay,
+  type ColdReplayCandidate,
+} from "~/services/antigravity/acp/bridge"
+import { hashMessages } from "~/services/antigravity/acp/prompt"
 import { runRegistry } from "~/services/antigravity/acp/run-registry"
 import {
   antigravityCallbackBaseUrl,
@@ -173,6 +180,88 @@ async function requestContext(userId?: string): Promise<Context> {
 }
 
 describe("ACP public bridge continuations", () => {
+  for (const stream of [false, true]) {
+    loopbackTest(
+      `rejects oversized native input before opening ${stream ? "streaming" : "non-streaming"} replies`,
+      async () => {
+        const cases: Array<Message[]> = [
+          [{ role: "user", content: "a".repeat(191000) }],
+          [{ role: "user", content: "汉".repeat(70000) }],
+          [
+            { role: "user", content: "a".repeat(100000) },
+            { role: "assistant", content: "Historical response" },
+            { role: "user", content: "b".repeat(100000) },
+          ],
+        ]
+        for (const messages of cases) {
+          const error: unknown = await complete(messages, false, stream).then(
+            () => undefined,
+            (failure: unknown) => failure,
+          )
+          expect(error).toBeInstanceOf(HTTPError)
+          if (!(error instanceof HTTPError))
+            throw new Error("Expected HTTPError")
+          expect(error.response.status).toBe(400)
+          expect(JSON.parse(error.responseBody).error).toMatchObject({
+            code: "context_length_exceeded",
+            type: "invalid_request_error",
+            param: "messages",
+          })
+          expect(
+            runRegistry.findCandidates(
+              connection.id,
+              "gemini-3.8-flash",
+              undefined,
+              JSON.stringify([connection.credentials.at(0)!.id, null]),
+            ),
+          ).toHaveLength(0)
+        }
+        const compacted = await complete(
+          [
+            {
+              role: "user",
+              content: "a".repeat(189000),
+            },
+          ],
+          false,
+          stream,
+        )
+        expect(compacted.choices[0].finish_reason).toBe("stop")
+      },
+    )
+  }
+
+  loopbackTest(
+    "native prompt budget preserves long warm conversations and a rejected follow-up can recover",
+    async () => {
+      const messages: Message[] = [
+        { role: "user", content: "a".repeat(100000) },
+      ]
+      const first = await complete(messages)
+      messages.push(assistant(first), {
+        role: "user",
+        content: "b".repeat(100000),
+      })
+      const second = await complete(messages)
+      const session = String(first.choices[0].message.content).split(":")[0]
+      expect(second.choices[0].message.content).toBe(`${session}:2`)
+      messages.push(assistant(second))
+      const error: unknown = await complete([
+        ...messages,
+        { role: "user", content: "c".repeat(200000) },
+      ]).then(
+        () => undefined,
+        (failure: unknown) => failure,
+      )
+      expect(error).toBeInstanceOf(HTTPError)
+      const recovered = await complete([
+        ...messages,
+        { role: "user", content: "A shorter current question." },
+      ])
+      expect(recovered.choices[0].message.content).toBe(`${session}:3`)
+    },
+  )
+
   loopbackTest(
     "cancelling before the tool terminal retains native billing without emitting usage",
     async () => {
@@ -373,6 +462,23 @@ describe("ACP public bridge continuations", () => {
         { role: "user", content: "Continue A only" },
       ])
       expect(next.choices[0].message.content).toBe(aText.replace(/:1$/, ":2"))
+    },
+  )
+
+  loopbackTest(
+    "a single matching session is reused even when the client normalizes the assistant echo",
+    async () => {
+      const initial: Message[] = [
+        { role: "user", content: "Warm reuse request" },
+      ]
+      const first = await complete(initial)
+      const session = String(first.choices[0].message.content).split(":")[0]
+      const next = await complete([
+        ...initial,
+        { role: "assistant", content: "client-normalized reply" },
+        { role: "user", content: "Continue the same conversation" },
+      ])
+      expect(next.choices[0].message.content).toBe(`${session}:2`)
     },
   )
 
@@ -624,4 +730,104 @@ describe("ACP public bridge continuations", () => {
       },
     )
   }
+})
+
+describe("antigravity acp cold-replay diagnostics", () => {
+  const history: Message[] = [
+    { role: "user", content: "review the change" },
+    { role: "assistant", content: "reviewed" },
+  ]
+  const followUp: Message[] = [...history, { role: "user", content: "fix it" }]
+  const candidate = (
+    overrides: Partial<ColdReplayCandidate> = {},
+  ): ColdReplayCandidate => ({
+    toolsSignature: "sig",
+    lastMessageCount: 1,
+    lastMessageHash: hashMessages(history.slice(0, 1)),
+    lastAssistantHash: hashMessages([history[1]]),
+    isIdle: true,
+    activePromptInFlight: false,
+    parkedCount: 0,
+    hasParkedCall: () => false,
+    ...overrides,
+  })
+  const payload = (messages: Message[]): ChatCompletionsPayload => ({
+    model: "test",
+    messages,
+  })
+
+  test("a fully matching idle candidate reports ok and a user-only delta", () => {
+    const match = matchRunHistory(candidate(), followUp, "sig")
+    expect(match.ok).toBe(true)
+    const diag = classifyColdReplay([candidate()], payload(followUp), "sig", [])
+    expect(diag.reason).toBe("no_reusable_candidate")
+    expect(diag.candidates[0]).toMatchObject({
+      idle: true,
+      deltaCount: 1,
+      deltaRolesOK: true,
+      history: { ok: true },
+    })
+  })
+
+  test("isolates each reuse-gate failure", () => {
+    const cases: Array<[string, Partial<ColdReplayCandidate>, string]> = [
+      ["tools signature", { toolsSignature: "other" }, "toolsMatch"],
+      ["prefix hash", { lastMessageHash: "stale" }, "prefixMatch"],
+      ["assistant echo", { lastAssistantHash: "stale" }, "assistantMatch"],
+      ["zero count", { lastMessageCount: 0 }, "countPositive"],
+    ]
+    for (const [, overrides, field] of cases) {
+      const match = matchRunHistory(candidate(overrides), followUp, "sig")
+      expect(match.ok).toBe(false)
+      expect(match[field as keyof typeof match]).toBe(false)
+    }
+    // previous message is not an assistant reply
+    const userTail = matchRunHistory(
+      candidate(),
+      [
+        { role: "user", content: "a" },
+        { role: "user", content: "b" },
+      ],
+      "sig",
+    )
+    expect(userTail.previousAssistant).toBe(false)
+    expect(userTail.ok).toBe(false)
+  })
+
+  test("flags a delta that carries assistant/tool messages", () => {
+    const toolDelta: Message[] = [
+      ...history,
+      { role: "assistant", content: null, tool_calls: [] },
+      { role: "tool", tool_call_id: "t", content: "result" },
+    ]
+    const diag = classifyColdReplay(
+      [candidate()],
+      payload(toolDelta),
+      "sig",
+      [],
+    )
+    expect(diag.candidates[0].deltaRolesOK).toBe(false)
+  })
+
+  test("classifies the fallback reason by candidate and tool-result presence", () => {
+    expect(classifyColdReplay([], payload(followUp), "sig", []).reason).toBe(
+      "no_candidate",
+    )
+    expect(
+      classifyColdReplay([], payload(followUp), "sig", [{ toolCallId: "t" }])
+        .reason,
+    ).toBe("no_candidate_for_tool_result")
+    expect(
+      classifyColdReplay([candidate()], payload(followUp), "sig", [
+        { toolCallId: "t" },
+      ]).reason,
+    ).toBe("tool_result_not_resumed")
+    const parked = classifyColdReplay(
+      [candidate({ hasParkedCall: (id) => id === "t" })],
+      payload(followUp),
+      "sig",
+      [{ toolCallId: "t" }],
+    )
+    expect(parked.candidates[0].parked).toBe(true)
+  })
 })

@@ -25,6 +25,7 @@ import {
   setDecodeTpsEligible,
 } from "~/lib/request-performance"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
+import { createLogger } from "~/lib/logger"
 import { addUsageAccounting } from "~/lib/usage"
 import {
   measureLocalWork,
@@ -63,6 +64,8 @@ import { AgyStepUsage } from "~/services/antigravity/acp/step-usage"
 import { findAgyBinary } from "./transport"
 
 const PARALLEL_TOOL_BATCH_MS = 40
+
+const log = createLogger("acp")
 
 /**
  * 将请求中的模型 ID 映射到 `agy acp` 实际支持列表中的 modelId。
@@ -354,6 +357,138 @@ function dispatchPrompt(run: AgyRun, blocks: Array<AcpContentBlock>): void {
     })
 }
 
+/** Structural subset of AgyRun needed to explain a cold-replay fallback. */
+export interface ColdReplayCandidate {
+  toolsSignature: string
+  lastMessageCount: number
+  lastMessageHash: string
+  lastAssistantHash: string
+  isIdle: boolean
+  activePromptInFlight: boolean
+  parkedCount: number
+  hasParkedCall(toolCallId: string): boolean
+}
+
+interface HistoryMatch {
+  ok: boolean
+  toolsMatch: boolean
+  countPositive: boolean
+  previousAssistant: boolean
+  prefixMatch: boolean
+  assistantMatch: boolean
+}
+
+/** Pure breakdown of the reuse history gate; `ok` is the routing decision. */
+export function matchRunHistory(
+  candidate: ColdReplayCandidate,
+  messages: Array<Message>,
+  toolsSignature: string,
+): HistoryMatch {
+  const previous = messages[candidate.lastMessageCount]
+  const toolsMatch = candidate.toolsSignature === toolsSignature
+  const countPositive = candidate.lastMessageCount > 0
+  const previousAssistant = previous?.role === "assistant"
+  const prefixMatch =
+    countPositive
+    && hashMessages(messages.slice(0, candidate.lastMessageCount))
+      === candidate.lastMessageHash
+  const assistantMatch =
+    previous?.role === "assistant"
+    && hashMessages([previous]) === candidate.lastAssistantHash
+  return {
+    ok:
+      toolsMatch
+      && countPositive
+      && previousAssistant
+      && prefixMatch
+      && assistantMatch,
+    toolsMatch,
+    countPositive,
+    previousAssistant,
+    prefixMatch,
+    assistantMatch,
+  }
+}
+
+interface ColdReplayDiagnostic {
+  reason: string
+  candidateCount: number
+  candidates: Array<{
+    idle: boolean
+    activePromptInFlight: boolean
+    parkedCount: number
+    lastMessageCount: number
+    deltaCount: number
+    deltaRolesOK: boolean
+    parked: boolean
+    history: HistoryMatch
+    echo: {
+      prevContentLen: number
+      prevHasToolCalls: boolean
+      recordedAssistantHash: string
+      incomingAssistantHash: string
+      recordedPrefixHash: string
+      incomingPrefixHash: string
+    }
+  }>
+}
+
+/**
+ * Explain why a request fell back to a full cold replay. Read-only: it never
+ * changes routing. Fields are structural (counts/booleans/hash prefixes), never
+ * message text.
+ */
+export function classifyColdReplay(
+  candidates: Array<ColdReplayCandidate>,
+  payload: ChatCompletionsPayload,
+  toolsSignature: string,
+  trailingTools: Array<{ toolCallId: string }>,
+): ColdReplayDiagnostic {
+  const firstToolId = trailingTools[0]?.toolCallId
+  const breakdown = candidates.map((candidate) => {
+    const delta = payload.messages.slice(candidate.lastMessageCount + 1)
+    const previous = payload.messages[candidate.lastMessageCount]
+    const prevContent = previous?.content
+    return {
+      idle: candidate.isIdle,
+      activePromptInFlight: candidate.activePromptInFlight,
+      parkedCount: candidate.parkedCount,
+      lastMessageCount: candidate.lastMessageCount,
+      deltaCount: delta.length,
+      deltaRolesOK:
+        delta.length > 0
+        && delta.every(
+          (msg) =>
+            msg.role === "user"
+            || msg.role === "system"
+            || msg.role === "developer",
+        ),
+      parked: firstToolId !== undefined && candidate.hasParkedCall(firstToolId),
+      history: matchRunHistory(candidate, payload.messages, toolsSignature),
+      echo: {
+        prevContentLen:
+          typeof prevContent === "string" ? prevContent.length : -1,
+        prevHasToolCalls: Boolean(previous?.tool_calls?.length),
+        recordedAssistantHash: candidate.lastAssistantHash.slice(0, 12),
+        incomingAssistantHash:
+          previous ? hashMessages([previous]).slice(0, 12) : "",
+        recordedPrefixHash: candidate.lastMessageHash.slice(0, 12),
+        incomingPrefixHash: hashMessages(
+          payload.messages.slice(0, candidate.lastMessageCount),
+        ).slice(0, 12),
+      },
+    }
+  })
+  const reason =
+    candidates.length === 0 ?
+      trailingTools.length > 0 ?
+        "no_candidate_for_tool_result"
+      : "no_candidate"
+    : trailingTools.length > 0 ? "tool_result_not_resumed"
+    : "no_reusable_candidate"
+  return { reason, candidateCount: candidates.length, candidates: breakdown }
+}
+
 async function resolveOrStartRun(
   connection: ProviderConnection,
   credential: ApiCredential,
@@ -381,17 +516,8 @@ async function resolveOrStartRun(
   )
 
   // Match what the caller actually saw, not just the request before our reply.
-  const matchesHistory = (candidate: AgyRun) => {
-    const previous = payload.messages[candidate.lastMessageCount]
-    return (
-      candidate.toolsSignature === toolsSignature
-      && candidate.lastMessageCount > 0
-      && previous?.role === "assistant"
-      && hashMessages(payload.messages.slice(0, candidate.lastMessageCount))
-        === candidate.lastMessageHash
-      && hashMessages([previous]) === candidate.lastAssistantHash
-    )
-  }
+  const matchesHistory = (candidate: AgyRun) =>
+    matchRunHistory(candidate, payload.messages, toolsSignature).ok
 
   // 1. 若末尾是 tool_result 且命中挂起中的 run，精准唤醒对应进程继续执行
   if (trailingTools.length > 0) {
@@ -431,23 +557,45 @@ async function resolveOrStartRun(
     if (parkedRun) runRegistry.dispose(parkedRun.token)
   }
 
-  // 2. 若是同一对话的新一轮 user 消息（上一轮非 tool 调用结束），精准匹配前缀哈希续接
-  const prefixRuns = candidates.filter(
-    (candidate) =>
-      candidate.isIdle
-      && matchesHistory(candidate)
-      && payload.messages.length > candidate.lastMessageCount + 1
-      && payload.messages
-        .slice(candidate.lastMessageCount + 1)
-        .every(
-          (message) =>
-            message.role === "user"
-            || message.role === "system"
-            || message.role === "developer",
-        ),
-  )
-  // Identical visible replies can still conceal different native reasoning.
-  const prefixRun = prefixRuns.length === 1 ? prefixRuns[0] : undefined
+  // 2. 若是同一对话的新一轮 user 消息（上一轮非 tool 调用结束），按请求前缀续接。
+  // 请求前缀逐字节匹配已足以认定同一对话；原生会话里就保存着真实的 assistant
+  // 回复，无需客户端逐字节回显（客户端常会规范化/裁剪回显）。仅当多个候选会话
+  // 前缀相同时，才用 assistant 回显消歧，避免复用错会话。
+  const prefixCandidates = candidates
+    .filter(
+      (candidate) =>
+        candidate.isIdle
+        && payload.messages.length > candidate.lastMessageCount + 1
+        && payload.messages
+          .slice(candidate.lastMessageCount + 1)
+          .every(
+            (message) =>
+              message.role === "user"
+              || message.role === "system"
+              || message.role === "developer",
+          ),
+    )
+    .map((candidate) => ({
+      candidate,
+      match: matchRunHistory(candidate, payload.messages, toolsSignature),
+    }))
+    .filter(
+      ({ match }) =>
+        match.toolsMatch
+        && match.countPositive
+        && match.previousAssistant
+        && match.prefixMatch,
+    )
+  let prefixRun: AgyRun | undefined
+  if (prefixCandidates.length === 1) {
+    prefixRun = prefixCandidates[0].candidate
+  } else if (prefixCandidates.length > 1) {
+    // Identical visible replies can still conceal different native reasoning.
+    const byAssistant = prefixCandidates.filter(
+      ({ match }) => match.assistantMatch,
+    )
+    prefixRun = byAssistant.length === 1 ? byAssistant[0].candidate : undefined
+  }
   if (prefixRun) {
     const startIdx = prefixRun.lastMessageCount + 1
     const deltaBlocks = measureLocalWork("adapterPreparationMs", () =>
@@ -472,6 +620,16 @@ async function resolveOrStartRun(
   }
 
   // 3. 否则启动全新隔离会话
+  const diagnostic = classifyColdReplay(
+    candidates,
+    payload,
+    toolsSignature,
+    trailingTools,
+  )
+  // No candidate is the normal first-turn/expiry case; a present-but-unmatched
+  // candidate is the actionable signal for why a follow-up was cold-replayed.
+  if (diagnostic.candidateCount === 0) log.debug("acp cold-replay", diagnostic)
+  else log.info("acp cold-replay", diagnostic)
   const promptBlocks = measureLocalWork("adapterPreparationMs", () =>
     buildAcpPromptBlocks(payload, 0),
   )
