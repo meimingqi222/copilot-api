@@ -10,6 +10,7 @@ import {
 import { statsStore } from "~/lib/stats-store"
 import { addUsageAccounting, recordUsage } from "~/lib/usage"
 import { createUsagePricingRecorder } from "~/lib/usage-pricing-rounds"
+import { handleStreamingResponse } from "~/routes/chat-completions/streaming"
 import {
   recordDirectStreamingUsage,
   updateLastUsage,
@@ -36,6 +37,111 @@ function rowCount(accountId = "acc-1"): number {
     .getUsageStats(accountId, date, date)
     .reduce((n, s) => n + Object.keys(s.models).length, 0)
 }
+
+test("quiet Chat cancellation records one request without inventing usage", async () => {
+  for (const mode of [
+    "missing",
+    "reported",
+    "native",
+    "throwing",
+    "incomplete",
+    "finished",
+  ]) {
+    statsStore.clearUsageStatsForTest()
+    statsStore.setModelPricing("test-model", {
+      promptPricePer1k: 1,
+      completionPricePer1k: 2,
+    })
+    const controller = new AbortController()
+    const trace = createDetachedRequestLog({ requestId: "chat-cancellation" })
+    const app = new Hono().get("/", (c) => {
+      c.set("model", "test-model")
+      c.set("accountId", "acc-1")
+      bindRequestLogContext(c, trace)
+      if (mode === "native") {
+        addUsageAccounting(c, {
+          accountId: "acc-1",
+          usage: {
+            promptTokens: 13,
+            completionTokens: 7,
+            totalTokens: 20,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+          },
+        })
+      }
+      return handleStreamingResponse({
+        c,
+        estimatedInputTokens: 600,
+        memoryTraceId: "chat-cancellation",
+        response: (async function* () {
+          if (mode === "reported" || mode === "finished") {
+            yield {
+              data: JSON.stringify({
+                id: "test-chunk",
+                object: "chat.completion.chunk",
+                created: 1,
+                model: "test-model",
+                choices:
+                  mode === "finished" ?
+                    [{ index: 0, delta: {}, finish_reason: "stop" }]
+                  : [],
+                usage: {
+                  prompt_tokens: 17,
+                  completion_tokens: 3,
+                  total_tokens: 20,
+                  prompt_tokens_details: { cached_tokens: 5 },
+                },
+              }),
+            }
+          }
+          // ACP's aborted nextEvent resolves undefined and the source returns
+          // normally, rather than throwing an AbortError into the SSE pump.
+          if (mode !== "incomplete") controller.abort()
+          if (mode === "throwing") {
+            throw new DOMException("Request cancelled", "AbortError")
+          }
+        })(),
+      })
+    })
+    const response = await app.request("/", { signal: controller.signal })
+    await response.text()
+    expect(response.status).toBe(200)
+    expect(trace.entry).toMatchObject({
+      outcome:
+        mode === "finished" ? "success"
+        : mode === "incomplete" ? "incomplete"
+        : "cancelled",
+      protocolTerminal:
+        mode === "finished" ? "finish_reason"
+        : mode === "incomplete" ? "missing"
+        : "client_abort",
+      outputObserved: false,
+      finishReason:
+        mode === "finished" ? "stop"
+        : mode === "incomplete" ? undefined
+        : "aborted",
+    })
+    expect(modelEntry()).toMatchObject({
+      requests: 1,
+      promptTokens:
+        mode === "reported" || mode === "finished" ? 12
+        : mode === "native" ? 13
+        : mode === "incomplete" ? 600
+        : 0,
+      completionTokens:
+        mode === "reported" || mode === "finished" ? 3
+        : mode === "native" ? 7
+        : 0,
+      totalTokens:
+        mode === "incomplete" ? 600
+        : mode === "missing" || mode === "throwing" ? 0
+        : 20,
+    })
+    if (mode === "missing") expect(modelEntry()?.cost).toBe(0)
+  }
+  statsStore.clearUsageStatsForTest()
+})
 
 test("native accounting is consumed once and scoped to the account and request", async () => {
   for (const match of ["both", "wrong-account", "wrong-request"]) {

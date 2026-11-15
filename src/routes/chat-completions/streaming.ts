@@ -197,10 +197,18 @@ function runChatSsePump(options: ChatSsePumpOptions) {
         }
         throw error
       } finally {
+        // ACP can end iteration normally on cancellation, without AbortError.
+        // A received finish reason still wins over a subsequent disconnect.
+        const aborted = signal?.aborted && !lastFinishReason
+        if (aborted) outcome = "aborted"
         markStreamTerminal(
           c,
-          lastFinishReason ? "finish_reason" : "missing",
-          lastFinishReason ? "success" : "incomplete",
+          aborted ? "client_abort"
+          : lastFinishReason ? "finish_reason"
+          : "missing",
+          aborted ? "cancelled"
+          : lastFinishReason ? "success"
+          : "incomplete",
           outputObserved,
         )
         if (!usageRecorded) {
@@ -209,13 +217,15 @@ function runChatSsePump(options: ChatSsePumpOptions) {
             accountId,
             model,
             lastUsage,
-            estimatedInputTokens,
+            // Keep reported/native billing, but do not charge an estimate
+            // for a cancelled request whose upstream usage is unavailable.
+            estimatedInputTokens: aborted ? 0 : estimatedInputTokens,
             timing: computeStreamingTiming(
               streamStart,
               firstChunkTs,
               lastUsage?.completion_tokens ?? 0,
             ),
-            finishReason: lastFinishReason,
+            finishReason: lastFinishReason ?? (aborted ? "aborted" : undefined),
           })
         }
         endMemoryTrace(memoryTraceId, outcome)
@@ -235,7 +245,7 @@ function runChatSsePump(options: ChatSsePumpOptions) {
           accountId,
           model,
           lastUsage,
-          estimatedInputTokens,
+          estimatedInputTokens: 0,
           timing: computeStreamingTiming(
             streamStart,
             firstChunkTs,

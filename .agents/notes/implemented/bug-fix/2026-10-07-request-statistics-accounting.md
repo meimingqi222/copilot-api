@@ -26,6 +26,14 @@ pricing use those billing rounds; client usage rounds must not replace them.
 `tests/usage-recorder.test.ts::native accounting is consumed once and scoped to the account and request`
 checks accumulation, cache buckets, cost and stale/mismatched override rejection.
 
+In `src/routes/chat-completions/streaming.ts`, check the client signal in the
+shared SSE pump's finalizer: ACP may end its iterable normally on cancellation,
+so the AbortError handler alone is insufficient. Before a finish reason, an
+aborted request records `client_abort` / `cancelled`, keeps one usage row and
+retains reported usage or a native billing override, but never charges the
+missing-usage local estimate. A received finish reason still wins over a later
+disconnect; a non-aborted missing terminal retains its existing behavior.
+
 Count a finalized protocol failure as a daily error even if its HTTP response was 200. Confirmed client cancellations count as requests without increasing server-error counters. Explicit ClientAbortError and native AbortError on an aborted client signal return an empty 499 before error-level logging in `src/lib/error.ts`; internal timeout aborts remain failures. `src/lib/client-abort.ts` holds the shared identity without route/provider dependencies, and `src/lib/request-lifecycle.ts` preserves its existing re-export. Request logs normalize a pre-stream cancelled error to 499/info, while an already-open SSE response keeps its actual wire status. Merge defined usage snapshot fields within each search round and add the final snapshots across distinct rounds. Use the same connection-plus-credential ID set for account filters across usage query variants.
 
 ## Alternatives considered
@@ -59,3 +67,11 @@ pending zero terminal snapshot. The failing public accounting assertion is saved
 in `.agents/notes-evidence/acp-messages-pending-red.log`; the same test passed
 after the pending-snapshot exception, alongside the ordinary zero-placeholder
 and output-only-delta controls.
+
+- `tests/usage-recorder.test.ts::quiet Chat cancellation records one request without inventing usage`
+
+Proved: on revision 40622a98, `bun test tests/usage-recorder.test.ts --test-name-pattern 'quiet Chat cancellation'`
+failed: expected `cancelled` / `client_abort`, received `incomplete` / `missing`;
+the observed row also contained 600 estimated input tokens. The fixed test
+passes across quiet cancellation, AbortError, reported cache usage, native
+billing, non-aborted incomplete streams and completion before disconnect.
