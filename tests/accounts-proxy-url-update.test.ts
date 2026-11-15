@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 
 import {
+  accountManagedModelPrefix,
   getConnectionProxyUrl,
   getConnectionSettings,
   managedConnectionFromInput,
@@ -130,5 +131,30 @@ describe("account proxy updates", () => {
     )
     expect(getConnectionProxyUrl(connection)).toBe(OLD_PROXY)
     expect(getConnectionSettings(connection)?.modelPrefix).toBe("new/")
+  })
+
+  test("editing and clearing a model prefix removes its legacy fallback", () => {
+    const connection = managedConnectionFromInput({
+      id: "legacy-prefix",
+      name: "Synthetic prefix",
+      provider: "codex",
+      credentials: {},
+    })
+    connection.metadata!.modelPrefix = "legacy/"
+    const update = (settings: Record<string, string>) =>
+      applyConnectionPatchToConnection(
+        connection,
+        parseBodyToPatch(connection, { settings }),
+      )
+    update({ proxyUrl: NEW_PROXY })
+    expect(accountManagedModelPrefix(connection)).toBe("legacy/")
+    update({ modelPrefix: "  edited/  " })
+    expect(accountManagedModelPrefix(connection)).toBe("edited/")
+    expect(connection.metadata?.modelPrefix).toBeUndefined()
+    // A live legacy object must also be clearable without a preceding edit.
+    connection.metadata!.modelPrefix = "legacy/"
+    update({ modelPrefix: "   " })
+    expect(accountManagedModelPrefix(connection)).toBe("codex")
+    expect(getConnectionSettings(connection)?.modelPrefix).toBeUndefined()
   })
 })

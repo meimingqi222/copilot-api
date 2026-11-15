@@ -19,6 +19,7 @@ import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import {
   beginStreamLog,
   finishRequestLog,
+  getRequestLogContext,
   markStreamTerminal,
   markTraceFirstOutput,
   patchRequestLog,
@@ -163,6 +164,12 @@ export async function handleAnthropicViaConnection(
     c,
     async (stream) => {
       let lastUsage: AnthropicStreamingUsage | undefined
+      let reportedUsage: AnthropicStreamingUsage | undefined
+      // The selected attempt (including failover) identifies the translator's
+      // synthetic opening estimate. Native input-only starts are real usage.
+      const translated =
+        getRequestLogContext(c)?.entry.isTranslated
+        ?? admission.target.isTranslated
       // 非流式回包早返分支已记过一行，finally 必须跳过，否则同一请求记两行。
       let usageRecorded = false
       let firstChunkTs: number | undefined
@@ -186,6 +193,8 @@ export async function handleAnthropicViaConnection(
             recordAnthropicUsage(c, result.accountId, response, tps)
             usageRecorded = true
           }
+          messageStop = true
+          outputObserved = true
           await writeSseEvent(stream, JSON.stringify(result.response))
           markStreamTerminal(c, "message_stop", "success", true)
           return
@@ -194,13 +203,17 @@ export async function handleAnthropicViaConnection(
           data?: string
           event?: string
         }>) {
+          if (signal.aborted) break
           if (!event.data) continue
-          lastUsage = updateLastUsage(event.data, lastUsage)
+          lastUsage = updateLastUsage(event.data, lastUsage, translated)
           try {
             const parsed = JSON.parse(event.data) as {
               type?: string
               delta?: unknown
               content_block?: unknown
+            }
+            if (!translated || parsed.type !== "message_start") {
+              reportedUsage = updateLastUsage(event.data, reportedUsage)
             }
             messageStop ||= parsed.type === "message_stop"
             const isOutput = isMessagesOutputEvent(parsed)
@@ -215,6 +228,7 @@ export async function handleAnthropicViaConnection(
           await forwardSseEvent(stream, event)
         }
       } catch (error) {
+        if (isAbortError(error) && signal.aborted) return
         recordTraceError(c, error)
         const knownError = getKnownRouteErrorDetails(error, "rate_limit_error")
         if (knownError) {
@@ -238,16 +252,27 @@ export async function handleAnthropicViaConnection(
         await writeSseEvent(stream, JSON.stringify(errEvent), errEvent.type)
         return
       } finally {
+        const cancelled = signal.aborted && !messageStop
+        if (cancelled) {
+          lastUsage = reportedUsage
+          patchRequestLog(c, { finishReason: "aborted" })
+        }
         markStreamTerminal(
           c,
-          messageStop ? "message_stop" : "missing",
-          messageStop ? "success" : "incomplete",
+          messageStop ? "message_stop"
+          : cancelled ? "client_abort"
+          : "missing",
+          messageStop ? "success"
+          : cancelled ? "cancelled"
+          : "incomplete",
           outputObserved,
         )
         if (result.accountId && !usageRecorded) {
           // 常见情况有 usage;无 usage 时才做本地估算(惰性,零开销)。
           const estimatedInputTokens =
-            lastUsage ? 0 : await estimateAnthropicInputTokens(anthropicPayload)
+            lastUsage || cancelled ? 0 : (
+              await estimateAnthropicInputTokens(anthropicPayload)
+            )
           recordDirectStreamingUsage(
             c,
             result.accountId,

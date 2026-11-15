@@ -11,6 +11,7 @@ import type {
 } from "~/services/protocols/chat/types"
 
 import type { AcpContentBlock } from "./client"
+import type { McpToolResult } from "~/services/antigravity/acp/run-registry"
 
 export interface McpToolDefinition {
   name: string
@@ -20,7 +21,7 @@ export interface McpToolDefinition {
 
 interface TrailingToolResult {
   toolCallId: string
-  text: string
+  content: McpToolResult["content"]
   isError: boolean
 }
 
@@ -43,9 +44,11 @@ function extractTextFromContent(content: Message["content"]): string {
 
 function extractImageBlocks(
   content: Message["content"],
-): Array<AcpContentBlock> {
+): Array<Extract<McpToolResult["content"][number], { type: "image" }>> {
   if (!Array.isArray(content)) return []
-  const blocks: Array<AcpContentBlock> = []
+  const blocks: Array<
+    Extract<McpToolResult["content"][number], { type: "image" }>
+  > = []
   for (const part of content) {
     if (
       part
@@ -162,10 +165,19 @@ export function extractTrailingToolResults(
     const msg = messages[i]
     if (msg.role !== "tool") break
     if (!msg.tool_call_id) continue
-    const text = extractTextFromContent(msg.content)
+    const content: McpToolResult["content"] = []
+    if (typeof msg.content === "string") {
+      content.push({ type: "text", text: msg.content })
+    } else {
+      for (const part of msg.content ?? []) {
+        if (part.type === "text")
+          content.push({ type: "text", text: part.text })
+        else content.push(...extractImageBlocks([part]))
+      }
+    }
     results.unshift({
       toolCallId: msg.tool_call_id,
-      text,
+      content,
       isError: false,
     })
   }

@@ -246,21 +246,40 @@ export class AgyAcpClient {
       }
     })
 
+    let exitNotified = false
+    const notifyExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      if (exitNotified) return
+      exitNotified = true
+      options.onExit(code, signal)
+    }
+    const onError = (error: Error) => {
+      if (this.closed) return
+      this.rejectPending(error)
+      this.close()
+      notifyExit(null, null)
+    }
+    this.proc.on("error", onError)
+    this.proc.stdin.on("error", onError)
     this.proc.on("exit", (code, signal) => {
       this.closed = true
-      const err = new Error(
-        `agy acp exited (code=${code ?? "null"}, signal=${signal ?? "null"})`,
+      this.rejectPending(
+        new Error(
+          `agy acp exited (code=${code ?? "null"}, signal=${signal ?? "null"})`,
+        ),
       )
-      for (const entry of this.pending.values()) {
-        entry.reject(err)
-      }
-      this.pending.clear()
-      options.onExit(code, signal)
+      notifyExit(code, signal)
     })
   }
 
   get isClosed(): boolean {
     return this.closed
+  }
+
+  private rejectPending(error: Error): void {
+    for (const entry of this.pending.values()) {
+      entry.reject(error)
+    }
+    this.pending.clear()
   }
 
   private handleLine(rawLine: string): void {
@@ -398,6 +417,7 @@ export class AgyAcpClient {
   close(): void {
     if (this.closed) return
     this.closed = true
+    this.rejectPending(new Error("agy acp process is already closed"))
     try {
       this.proc.kill("SIGTERM")
     } catch {

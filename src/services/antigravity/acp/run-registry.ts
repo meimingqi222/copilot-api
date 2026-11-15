@@ -20,7 +20,10 @@ import {
 } from "./client"
 
 export interface McpToolResult {
-  content: Array<{ type: "text"; text: string }>
+  content: Array<
+    | { type: "text"; text: string }
+    | { type: "image"; mimeType: string; data: string }
+  >
   is_error: boolean
 }
 

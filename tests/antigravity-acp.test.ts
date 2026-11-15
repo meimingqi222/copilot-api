@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
@@ -45,6 +51,121 @@ afterEach(() => {
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+describe("antigravity acp client lifecycle", () => {
+  // A broken spawn/error listener must only crash this subprocess, not Bun's suite.
+  for (const scenario of ["missing", "stdin", "exit", "close", "normal"]) {
+    test.skipIf(process.platform === "win32")(
+      `settles RPCs and notifies once on ${scenario}`,
+      async () => {
+        const dir = makeTempDir("ag-acp-client-")
+        const binary = path.join(dir, "synthetic-agy")
+        if (scenario !== "missing") {
+          writeFileSync(
+            binary,
+            `#!${process.execPath}
+import { closeSync, writeFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+writeFileSync(${JSON.stringify(path.join(dir, "fixture.pid"))}, String(process.pid));
+setTimeout(() => process.exit(91), 15000).unref();
+const scenario = ${JSON.stringify(scenario)};
+if (scenario === "close") process.on("SIGTERM", () => {});
+createInterface({ input: process.stdin }).on("line", line => {
+  const msg = JSON.parse(line);
+  if (msg.method === "initialize") {
+    process.stdout.write(JSON.stringify({ id: msg.id, result: {} }) + "\\n");
+    if (scenario === "stdin") {
+      closeSync(0);
+      process.stdin.destroy();
+      setInterval(() => {}, 1000);
+      process.stdout.write(JSON.stringify({ method: "session/update", params: { update: { sessionUpdate: "stdin_closed" } } }) + "\\n");
+    }
+  } else if (scenario === "exit") process.exit(7);
+  else if (scenario === "normal") process.stdout.write(JSON.stringify({ id: msg.id, result: { stopReason: "end_turn" } }) + "\\n");
+});
+`,
+            { mode: 0o755 },
+          )
+        }
+        const script = `
+import { strict as assert } from "node:assert";
+import { AgyAcpClient } from ${JSON.stringify(path.resolve(import.meta.dir, "../src/services/antigravity/acp/client.ts"))};
+const scenario = ${JSON.stringify(scenario)};
+let notifications = [];
+let ready;
+const stdinClosed = new Promise(resolve => { ready = resolve; });
+const client = new AgyAcpClient({
+  binaryPath: ${JSON.stringify(binary)},
+  geminiDir: ${JSON.stringify(dir)}, workspaceDir: ${JSON.stringify(dir)},
+  connectionId: "synthetic-connection", onUpdate: () => ready(),
+  onExit: (code, signal) => notifications.push({ code, signal }),
+});
+const deadline = setTimeout(() => { console.error("RPC remained pending"); process.exit(90); }, 5000);
+try {
+  if (scenario === "missing") {
+    const results = await Promise.allSettled([client.initialize(), client.initialize()]);
+    assert(results.every(r => r.status === "rejected"));
+    assert.match(results[0].reason.message, /ENOENT/);
+  } else {
+    await client.initialize();
+    assert.equal(client.isClosed, false);
+    if (scenario === "stdin") await stdinClosed;
+    const pending = client.prompt("synthetic-session", [{ type: "text", text: "x".repeat(scenario === "stdin" ? 1024 * 1024 : 1) }]);
+    if (scenario === "close") {
+      client.close();
+      client.close();
+    }
+    if (scenario === "normal") {
+      assert.equal((await pending).stopReason, "end_turn");
+      assert.equal(client.isClosed, false);
+      client.close();
+    } else {
+      await assert.rejects(pending, scenario === "exit" ? /code=7/ : scenario === "close" ? /closed/ : /EPIPE|closed|write/i);
+    }
+  }
+  assert.equal(client.isClosed, true);
+  await assert.rejects(client.initialize(), /closed/);
+  client.cancel("synthetic-session");
+  client.close();
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(notifications.length, scenario === "close" ? 0 : 1);
+  if (scenario === "stdin" || scenario === "missing") assert.deepEqual(notifications, [{ code: null, signal: null }]);
+  if (scenario === "exit") assert.deepEqual(notifications, [{ code: 7, signal: null }]);
+  // The explicit-close fixture deliberately ignores SIGTERM; settling cannot depend on exit.
+} finally {
+  clearTimeout(deadline);
+  client.close();
+}
+process.exit(0);
+`
+        const child = Bun.spawn([process.execPath, "--eval", script], {
+          cwd: path.resolve(import.meta.dir, ".."),
+          stdout: "pipe",
+          stderr: "pipe",
+        })
+        try {
+          const [exitCode, errors] = await Promise.all([
+            child.exited,
+            new Response(child.stderr).text(),
+          ])
+          expect(exitCode, errors).toBe(0)
+        } finally {
+          if (existsSync(path.join(dir, "fixture.pid"))) {
+            const pid = Number(
+              readFileSync(path.join(dir, "fixture.pid"), "utf8"),
+            )
+            try {
+              process.kill(pid, "SIGKILL")
+            } catch (error) {
+              expect((error as NodeJS.ErrnoException).code).toBe("ESRCH")
+            }
+          }
+        }
+      },
+      10_000,
+    )
   }
 })
 
@@ -317,7 +438,11 @@ describe("antigravity acp prompt & tools", () => {
       { role: "tool", tool_call_id: "call_1", content: "result_1" },
     ])
     expect(results).toEqual([
-      { toolCallId: "call_1", text: "result_1", isError: false },
+      {
+        toolCallId: "call_1",
+        content: [{ type: "text", text: "result_1" }],
+        isError: false,
+      },
     ])
   })
 })

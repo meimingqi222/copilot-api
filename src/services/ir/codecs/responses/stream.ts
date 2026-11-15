@@ -926,8 +926,9 @@ export async function* encodeResponsesStream(
           status: current.status,
           createdAt,
         }
-        yield event("response.completed", {
-          response: encodeResponsesResult(result, request),
+        const response = encodeResponsesResult(result, request)
+        yield event(`response.${response.status ?? "completed"}`, {
+          response,
         })
         return
       }
@@ -952,7 +953,7 @@ export async function* encodeResponsesStream(
       status: "incomplete",
       createdAt,
     }
-    yield event("response.completed", {
+    yield event("response.incomplete", {
       response: encodeResponsesResult(result, request),
     })
   }

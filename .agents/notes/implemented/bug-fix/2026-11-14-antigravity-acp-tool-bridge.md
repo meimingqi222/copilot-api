@@ -41,6 +41,19 @@ guessing which hidden reasoning belongs to the caller. Parked continuations
 require unchanged history/tools and exactly the exposed results; otherwise replay
 the complete transcript, including the caller's updated instructions.
 
+Parked MCP results retain inline base64 images alongside text in caller order,
+matching the image support of full replay without fetching remote URLs. The
+40ms parallel-tool batch checks cancellation and queued errors before emitting
+success; its first text/thinking chunk owns the assistant role just like the
+ordinary path. Cancellation between yielded chunks must not emit a tool terminal
+or usage frame, but completed native generations are read for internal billing
+before disposal. An already-settled terminal must not bill them again.
+
+The ACP client handles both child-process and stdin errors, rejects pending RPCs
+and closes the process, notifying the owner once across error/exit events.
+Explicit close settles pending RPCs immediately, even if the child ignores
+SIGTERM. Do not rely on an exit event after a failed spawn or a broken stdin.
+
 `src/services/antigravity/acp/client.ts` normalizes billable input to uncached
 tokens: OpenAI/Gemini inclusive prompt totals subtract cache reads/writes;
 ACP/Anthropic input already excludes them. Gemini output includes thought tokens.
@@ -117,6 +130,20 @@ charges. Fresh replay is deliberately preferred to unsafe native-session reuse
 when history changed or multiple native sessions have the same visible reply.
 
 ## Verification
+
+- `tests/antigravity-acp.test.ts::antigravity acp client lifecycle`
+- `tests/antigravity-acp-bridge.test.ts::parked tool results preserve inline images and text in order`
+- `tests/antigravity-acp-bridge.test.ts::tool batch handles`
+- `tests/antigravity-acp-bridge.test.ts::cancelling before the tool terminal retains native billing without emitting usage`
+
+Proved: on parent 910a9590, the focused bridge tests failed: the image was absent
+and surrounding text merged, batch text/thinking had no assistant role, a queued
+error resolved successfully, and cancellation returned another chunk instead of
+ending. The client lifecycle regressions observed uncaught ENOENT/EPIPE and
+pending-RPC watchdogs; explicit close also left its RPC pending. The focused
+bridge/client suites pass after the fixes. With only the abort-time billing read
+disabled, the cancellation regression expected 137 native billed tokens but
+received 0; restoring the read passes without emitting client usage.
 
 - `tests/antigravity-acp.test.ts::bundled MCP helper lists tools and forwards calls`
 - `tests/antigravity-acp.test.ts::lazy MCP callbacks expose the client tool, not the wrapper or local tools`

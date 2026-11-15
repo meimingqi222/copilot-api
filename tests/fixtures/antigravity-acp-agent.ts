@@ -54,7 +54,7 @@ function update(value: Record<string, unknown>) {
 function context(used: number) {
   update({ sessionUpdate: "usage_update", used, size: 200000 })
 }
-async function callTool(value: string) {
+async function callTool(value: string, echoContent = false) {
   const response = await fetch(callbackUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -62,7 +62,9 @@ async function callTool(value: string) {
   })
   if (!response.ok) throw new Error(`Callback failed: ${response.status}`)
   const result = (await response.json()) as { content: Array<{ text: string }> }
-  return result.content.map((block) => block.text).join("\n")
+  return echoContent ?
+      JSON.stringify(result.content)
+    : result.content.map((block) => block.text).join("\n")
 }
 async function handle(raw: string) {
   const request = JSON.parse(raw) as {
@@ -89,6 +91,8 @@ async function handle(raw: string) {
     turn++
     const text =
       request.params?.prompt?.map((block) => block.text ?? "").join("\n") ?? ""
+    // Race tests control the MCP/event queue while this real peer stays alive.
+    if (text.includes("BATCH_HOLD")) await new Promise(() => {})
     nativeSteps ||= text.includes("NATIVE_STEPS")
     let answer = `${sessionId}:${turn}`
     let usage: Record<string, number> = {
@@ -122,7 +126,7 @@ async function handle(raw: string) {
             totalTokens: 105,
           },
         })
-      const first = await callTool("first")
+      const first = await callTool("first", text.includes("IMAGE_RESULT"))
       if (nativeSteps) nativeGeneration(50, 60, 7)
       if (text.includes("TIMING")) await Bun.sleep(150)
       context(54000)
@@ -141,7 +145,7 @@ async function handle(raw: string) {
           sessionUpdate: "usage_update",
           usage: { cachedReadTokens: 880 },
         })
-      const second = await callTool("second")
+      const second = await callTool("second", text.includes("IMAGE_RESULT"))
       if (nativeSteps) nativeGeneration(40, 690, 8)
       if (text.includes("TIMING")) await Bun.sleep(150)
       context(55000)

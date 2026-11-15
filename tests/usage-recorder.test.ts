@@ -1,7 +1,15 @@
 import type { Context } from "hono"
 import { Hono } from "hono"
 
-import { beforeEach, describe, expect, test } from "bun:test"
+import { beforeEach, describe, expect, spyOn, test } from "bun:test"
+
+import type { RequestAdmission } from "~/lib/request-admission"
+import * as admissionModule from "~/lib/request-admission"
+import * as messagesDispatch from "~/services/dispatch/messages"
+import * as responsesDispatch from "~/services/dispatch/responses"
+import { handleAnthropicViaConnection } from "~/routes/messages/connection-handler"
+import { handleResponses } from "~/routes/responses/handler"
+import * as usageRecorder from "~/routes/messages/usage-recorder"
 
 import {
   bindRequestLogContext,
@@ -37,6 +45,233 @@ function rowCount(accountId = "acc-1"): number {
     .getUsageStats(accountId, date, date)
     .reduce((n, s) => n + Object.keys(s.models).length, 0)
 }
+
+test("native input-only opening remains billable after a pending snapshot", () => {
+  const initial = updateLastUsage(
+    JSON.stringify({
+      type: "message_start",
+      message: { usage: { input_tokens: 600, output_tokens: 0 } },
+    }),
+    undefined,
+  )
+  const final = updateLastUsage(
+    JSON.stringify({
+      type: "message_delta",
+      usage: { input_tokens: 0, output_tokens: 0, usage_status: "pending" },
+    }),
+    initial,
+  )
+  expect(final?.input_tokens).toBe(600)
+})
+
+test("Messages and Responses quiet cancellation preserves only reported billing and genuine terminals", async () => {
+  for (const wire of ["messages", "responses"] as const) {
+    for (const content of [false, true]) {
+      for (const mode of [
+        "missing",
+        "translated",
+        "translated-reported",
+        "reported",
+        "pending",
+        "native",
+        "finished",
+        "incomplete",
+        "bad-completed",
+        "throwing",
+      ]) {
+        statsStore.clearUsageStatsForTest()
+        const controller = new AbortController()
+        const trace = createDetachedRequestLog({
+          requestId: "quiet-cancellation",
+        })
+        trace.entry.isTranslated = mode.startsWith("translated")
+        const identity = {
+          ownerId: "acc-1",
+          connectionId: "acc-1",
+          credentialId: "cred",
+          provider: "test",
+        }
+        const admission = {
+          // A failover can select a translated attempt after native admission.
+          target: { isTranslated: false },
+        } as RequestAdmission
+        const events = (async function* () {
+          const frame = (value: unknown) => ({ data: JSON.stringify(value) })
+          if (
+            mode.startsWith("translated")
+            || mode === "reported"
+            || mode === "pending"
+          ) {
+            yield frame(
+              wire === "messages" ?
+                {
+                  type: "message_start",
+                  message: { usage: { input_tokens: 600, output_tokens: 0 } },
+                }
+              : {
+                  type: "response.created",
+                  response: {
+                    id: "test",
+                    model: "test-model",
+                    output: [],
+                    usage: {
+                      input_tokens: 600,
+                      output_tokens: 0,
+                      total_tokens: 600,
+                    },
+                  },
+                },
+            )
+          }
+          if (
+            wire === "messages"
+            && (mode === "translated-reported" || mode === "pending")
+          )
+            yield frame({
+              type: "message_delta",
+              usage:
+                mode === "pending" ?
+                  { input_tokens: 0, output_tokens: 0, usage_status: "pending" }
+                : { input_tokens: 17, output_tokens: 3 },
+            })
+          if (content)
+            yield frame(
+              wire === "messages" ?
+                {
+                  type: "content_block_delta",
+                  delta: { type: "text_delta", text: "hello" },
+                }
+              : { type: "response.output_text.delta", delta: "hello" },
+            )
+          if (mode === "finished" || mode === "bad-completed")
+            yield frame(
+              wire === "messages" ?
+                {
+                  type: "message_stop",
+                }
+              : {
+                  type: "response.completed",
+                  response: {
+                    id: "test",
+                    model: "test-model",
+                    output: [],
+                    status: mode === "finished" ? "completed" : "incomplete",
+                  },
+                },
+            )
+          if (mode !== "incomplete" && mode !== "bad-completed")
+            controller.abort()
+          if (mode === "throwing")
+            throw new DOMException("cancelled", "AbortError")
+        })()
+        const dispatch =
+          wire === "messages" ?
+            spyOn(messagesDispatch, "dispatchMessages").mockResolvedValue({
+              accountId: "acc-1",
+              identity,
+              response: events,
+            })
+          : spyOn(responsesDispatch, "dispatchResponses").mockResolvedValue({
+              accountId: "acc-1",
+              identity,
+              response: events,
+            })
+        const prepare = spyOn(
+          admissionModule,
+          "prepareRequestAdmission",
+        ).mockResolvedValue(admission)
+        const estimate = spyOn(
+          usageRecorder,
+          "estimateAnthropicInputTokens",
+        ).mockResolvedValue(600)
+        try {
+          const app = new Hono().post("/", (c) => {
+            c.set("model", "test-model")
+            bindRequestLogContext(c, trace)
+            if (mode === "native")
+              addUsageAccounting(c, {
+                accountId: "acc-1",
+                usage: {
+                  promptTokens: 13,
+                  completionTokens: 7,
+                  totalTokens: 20,
+                  cacheReadTokens: 0,
+                  cacheWriteTokens: 0,
+                },
+              })
+            return wire === "responses" ?
+                handleResponses(c)
+              : handleAnthropicViaConnection({
+                  c,
+                  admission,
+                  signal: controller.signal,
+                  anthropicPayload: {
+                    model: "test-model",
+                    messages: [{ role: "user", content: "hello" }],
+                    max_tokens: 20,
+                    stream: true,
+                  },
+                  anthropicBeta: undefined,
+                  anthropicVersion: undefined,
+                })
+          })
+          const response = await app.request("/", {
+            method: "POST",
+            signal: controller.signal,
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              model: "test-model",
+              input: "hello",
+              stream: true,
+            }),
+          })
+          const text = await response.text()
+          const success =
+            mode === "finished"
+            || (wire === "messages" && mode === "bad-completed")
+          const incomplete =
+            mode === "incomplete"
+            || (wire === "responses" && mode === "bad-completed")
+          expect(trace.entry.outcome).toBe(
+            success ? "success"
+            : incomplete ? "incomplete"
+            : "cancelled",
+          )
+          if (!success && !incomplete) {
+            expect(trace.entry.protocolTerminal).toBe("client_abort")
+            expect(text).not.toContain('"type":"error"')
+          }
+          expect(trace.entry.outputObserved).toBe(content)
+          expect(modelEntry()).toMatchObject({
+            requests: 1,
+            promptTokens:
+              (
+                mode === "reported"
+                || mode === "pending"
+                || (wire === "responses" && mode.startsWith("translated"))
+                || (wire === "messages" && (success || incomplete))
+              ) ?
+                600
+              : mode === "native" ? 13
+              : mode === "translated-reported" ? 17
+              : 0,
+            completionTokens:
+              mode === "native" ? 7
+              : wire === "messages" && mode === "translated-reported" ? 3
+              : 0,
+          })
+          if (wire === "messages" && !success && !incomplete)
+            expect(estimate).not.toHaveBeenCalled()
+        } finally {
+          dispatch.mockRestore()
+          prepare.mockRestore()
+          estimate.mockRestore()
+        }
+      }
+    }
+  }
+  statsStore.clearUsageStatsForTest()
+})
 
 test("quiet Chat cancellation records one request without inventing usage", async () => {
   for (const mode of [
@@ -302,6 +537,7 @@ describe("recordDirectStreamingUsage (Anthropic shape)", () => {
         message: { usage: { input_tokens: 600, output_tokens: 0 } },
       }),
       undefined,
+      true,
     )
     const final = updateLastUsage(
       JSON.stringify({
@@ -521,6 +757,7 @@ describe("updateLastUsage", () => {
         message: { usage: { input_tokens: 600, output_tokens: 0 } },
       }),
       undefined,
+      true,
     )
     last = updateLastUsage(
       JSON.stringify({

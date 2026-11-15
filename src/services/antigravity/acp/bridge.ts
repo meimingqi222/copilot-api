@@ -418,7 +418,7 @@ async function resolveOrStartRun(
       markUpstreamSent(performanceContext(), sentAt)
       for (const tr of trailingTools) {
         parkedRun.resolveParkedCall(tr.toolCallId, {
-          content: [{ type: "text", text: tr.text }],
+          content: tr.content,
           is_error: tr.isError,
         })
       }
@@ -497,9 +497,15 @@ async function* streamAcpEvents(
   const responseId = `chatcmpl-${randomUUID()}`
   const created = Math.floor(Date.now() / 1000)
   let sentRole = false
+  let usageSettled = false
   const assistant: Message = { role: "assistant", content: "" }
 
   const onAbort = () => {
+    // Read completed native generations before disposal removes their directory.
+    if (!usageSettled) {
+      toOpenAiUsage(run, c)
+      usageSettled = true
+    }
     run.tainted = true
     run.client.cancel(run.sessionId)
     runRegistry.dispose(run.token)
@@ -507,9 +513,13 @@ async function* streamAcpEvents(
   signal?.addEventListener("abort", onAbort, { once: true })
 
   try {
+    if (signal?.aborted) {
+      onAbort()
+      return
+    }
     while (true) {
       const event = await run.nextEvent(signal)
-      if (!event) break
+      if (!event || signal?.aborted) break
 
       if (event.type === "error") {
         run.tainted = true
@@ -543,26 +553,40 @@ async function* streamAcpEvents(
       if (event.type === "tool_call_ready") {
         // 短暂等待同一批次的并行工具调用一起到达
         await new Promise((r) => setTimeout(r, PARALLEL_TOOL_BATCH_MS))
+        if (signal?.aborted) return
         const batched: Array<AnnouncedToolCall> = [event.call]
         const extra = run.drainPendingEvents()
+        // A dead peer cannot accept results, even if a callback was already parked.
+        const failure = extra.find((item) => item.type === "error")
+        if (failure || run.client.isClosed) {
+          run.tainted = true
+          runRegistry.dispose(run.token)
+          throw new Error(failure?.message ?? "Antigravity ACP session closed")
+        }
         for (const item of extra) {
+          if (signal?.aborted) return
           if (item.type === "tool_call_ready") {
             batched.push(item.call)
           } else if (item.type === "text") {
             assistant.content += item.text
-            yield encodeSseChunk(
-              makeChunk(responseId, created, model, { content: item.text }),
-            )
+            const delta =
+              sentRole ?
+                { content: item.text }
+              : { role: "assistant" as const, content: item.text }
+            sentRole = true
+            yield encodeSseChunk(makeChunk(responseId, created, model, delta))
           } else if (item.type === "thinking") {
-            yield encodeSseChunk(
-              makeChunk(responseId, created, model, {
-                reasoning_content: item.text,
-              }),
-            )
+            const delta =
+              sentRole ?
+                { reasoning_content: item.text }
+              : { role: "assistant" as const, reasoning_content: item.text }
+            sentRole = true
+            yield encodeSseChunk(makeChunk(responseId, created, model, delta))
           } else {
             run.pushEvent(item)
           }
         }
+        if (signal?.aborted) return
 
         const toolCallsDelta = batched.map((call, idx) => ({
           index: idx,
@@ -584,6 +608,7 @@ async function* streamAcpEvents(
           : { role: "assistant" as const, tool_calls: toolCallsDelta }
         sentRole = true
         yield encodeSseChunk(makeChunk(responseId, created, model, delta))
+        if (signal?.aborted) return
         const finishChunk = makeChunk(
           responseId,
           created,
@@ -592,6 +617,7 @@ async function* streamAcpEvents(
           "tool_calls",
         )
         finishChunk.usage = toOpenAiUsage(run, c)
+        usageSettled = true
         yield encodeSseChunk(finishChunk)
         yield { data: "[DONE]" }
         return
@@ -603,6 +629,7 @@ async function* streamAcpEvents(
           event.stopReason === "max_tokens" ? "length" : "stop"
         const endChunk = makeChunk(responseId, created, model, {}, finishReason)
         endChunk.usage = toOpenAiUsage(run, c)
+        usageSettled = true
         yield encodeSseChunk(endChunk)
         yield { data: "[DONE]" }
         return

@@ -9,6 +9,7 @@ import { managedConnectionFromInput } from "~/lib/provider-connections"
 import { statsStore } from "~/lib/stats-store"
 import { startRequestPerformance } from "~/lib/request-performance"
 import { handleNonStreamingResponse } from "~/routes/chat-completions/non-streaming"
+import { recordDirectStreamingUsage } from "~/routes/messages/usage-recorder"
 import { antigravityMcpRoutes } from "~/routes/antigravity-mcp/route"
 import { createAntigravityAcpChatCompletionsOnce } from "~/services/antigravity/acp/bridge"
 import { runRegistry } from "~/services/antigravity/acp/run-registry"
@@ -172,6 +173,185 @@ async function requestContext(userId?: string): Promise<Context> {
 }
 
 describe("ACP public bridge continuations", () => {
+  loopbackTest(
+    "cancelling before the tool terminal retains native billing without emitting usage",
+    async () => {
+      statsStore.clearUsageStatsForTest()
+      try {
+        const c = await requestContext()
+        c.set("model", "gemini-3.8-flash")
+        const controller = new AbortController()
+        const response = (await createAntigravityAcpChatCompletionsOnce(
+          { connection, credential: connection.credentials.at(0)!, c },
+          {
+            model: "gemini-3.8-flash",
+            messages: [{ role: "user", content: "TOOL_LOOP NATIVE_STEPS" }],
+            tools,
+            stream: true,
+          },
+          controller.signal,
+        )) as AsyncIterable<{ data?: string }>
+        const iterator = response[Symbol.asyncIterator]()
+        const first = JSON.parse(
+          (await iterator.next()).value!.data!,
+        ) as ChatCompletionChunk
+        expect(first.choices[0].delta.reasoning_content).toBeTruthy()
+        const second = JSON.parse(
+          (await iterator.next()).value!.data!,
+        ) as ChatCompletionChunk
+        expect(second.choices[0].delta.tool_calls).toHaveLength(1)
+        expect(second.usage).toBeUndefined()
+        controller.abort()
+        expect((await iterator.next()).done).toBe(true)
+        recordDirectStreamingUsage(c, connection.id, undefined)
+        expect(statsStore.getUsageStats(connection.id)[0]).toMatchObject({
+          requests: 1,
+          promptTokens: 40,
+          cacheReadTokens: 90,
+          completionTokens: 7,
+          totalTokens: 137,
+        })
+      } finally {
+        statsStore.clearUsageStatsForTest()
+      }
+    },
+  )
+
+  loopbackTest(
+    "parked tool results preserve inline images and text in order",
+    async () => {
+      const messages: Message[] = [
+        { role: "user", content: "TOOL_LOOP IMAGE_RESULT" },
+      ]
+      const first = await complete(messages, true)
+      const prefix = String(first.choices[0].message.reasoning_content)
+      const resultContent = [
+        { type: "text" as const, text: "before" },
+        {
+          type: "image_url" as const,
+          image_url: { url: "data:image/png;base64,AAAA" },
+        },
+        { type: "text" as const, text: "after" },
+      ]
+      for (let step = 0, response = first; step < 2; step++) {
+        const call = response.choices[0].message.tool_calls![0]
+        messages.push(assistant(response), {
+          role: "tool",
+          tool_call_id: call.id,
+          content: step === 0 ? resultContent : "second-result",
+        })
+        response = await complete(messages, true)
+        if (step === 1) {
+          expect(response.choices[0].message.content).toContain(
+            JSON.stringify([
+              { type: "text", text: "before" },
+              { type: "image", mimeType: "image/png", data: "AAAA" },
+              { type: "text", text: "after" },
+            ]),
+          )
+          expect(response.choices[0].message.content).not.toContain("replayed:")
+          expect(response.choices[0].message.content).toContain("second-result")
+          // Both continuations kept the native session that produced the first thought.
+          expect(response.choices[0].message.content).toContain(
+            prefix.replace("native-reasoning-", ""),
+          )
+        }
+      }
+    },
+  )
+
+  for (const scenario of [
+    "content",
+    "thinking",
+    "error",
+    "abort",
+    "abort-after-text",
+  ] as const) {
+    loopbackTest(
+      `tool batch handles ${scenario} before its terminal`,
+      async () => {
+        const controller = new AbortController()
+        const result = (await createAntigravityAcpChatCompletionsOnce(
+          { connection, credential: connection.credentials[0] },
+          {
+            model: "gemini-3.8-flash",
+            messages: [{ role: "user", content: "BATCH_HOLD" }],
+            tools,
+            stream: true,
+          },
+          controller.signal,
+        )) as AsyncIterable<{ data?: string }>
+        const ownerKey = JSON.stringify([connection.credentials[0].id, null])
+        const run = runRegistry.findCandidates(
+          connection.id,
+          "gemini-3.8-flash",
+          undefined,
+          ownerKey,
+        )[0]!
+        // Queue a real parked callback before advancing the public stream.
+        void run
+          .parkMcpToolCall("lookup_probe", { value: "first" })
+          .catch(() => {})
+        const iterator = result[Symbol.asyncIterator]()
+        const pending = iterator.next()
+        await Promise.resolve() // stream has entered the 40ms batch wait
+        if (scenario === "error") {
+          run.pushEvent({ type: "text", text: "must not mask the failure" })
+          run.pushEvent({ type: "error", message: "Synthetic peer failure" })
+          runRegistry.dispose(run.token)
+          await expect(pending).rejects.toThrow("Synthetic peer failure")
+          return
+        }
+        if (scenario === "abort") {
+          controller.abort()
+          expect((await pending).done).toBe(true)
+          return
+        }
+        void run
+          .parkMcpToolCall("lookup_probe", { value: "second" })
+          .catch(() => {})
+        run.pushEvent(
+          scenario === "thinking" ?
+            { type: "thinking", text: "batch-thought" }
+          : { type: "text", text: "batch-text" },
+        )
+        const first = await pending
+        const chunk = JSON.parse(first.value!.data!) as ChatCompletionChunk
+        expect(chunk.choices[0].delta.role).toBe("assistant")
+        if (scenario === "thinking")
+          expect(chunk.choices[0].delta.reasoning_content).toBe("batch-thought")
+        else expect(chunk.choices[0].delta.content).toBe("batch-text")
+        if (scenario === "abort-after-text") {
+          controller.abort()
+          expect((await iterator.next()).done).toBe(true)
+          return
+        }
+        const chunks: ChatCompletionChunk[] = []
+        for (
+          let next = await iterator.next();
+          !next.done;
+          next = await iterator.next()
+        ) {
+          if (next.value.data !== "[DONE]")
+            chunks.push(JSON.parse(next.value.data!))
+        }
+        expect(
+          chunks
+            .flatMap((item) => item.choices)
+            .filter((choice) => choice.delta.role),
+        ).toHaveLength(0)
+        const calls = chunks
+          .flatMap((item) => item.choices)
+          .flatMap((choice) => choice.delta.tool_calls ?? [])
+        expect(calls.map((call) => call.function)).toEqual([
+          { name: "lookup_probe", arguments: '{"value":"first"}' },
+          { name: "lookup_probe", arguments: '{"value":"second"}' },
+        ])
+        expect(chunks.at(-1)?.choices[0].finish_reason).toBe("tool_calls")
+      },
+    )
+  }
+
   loopbackTest(
     "same-prefix conversations resume their own completed assistant history",
     async () => {

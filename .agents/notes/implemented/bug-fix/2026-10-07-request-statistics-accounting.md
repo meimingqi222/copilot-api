@@ -34,6 +34,19 @@ retains reported usage or a native billing override, but never charges the
 missing-usage local estimate. A received finish reason still wins over a later
 disconnect; a non-aborted missing terminal retains its existing behavior.
 
+The same quiet-cancellation contract applies to
+`src/routes/messages/connection-handler.ts` and
+`src/routes/responses/handler.ts`. Messages distinguishes a translated opening
+estimate from real input-only usage using the selected attempt's translation
+flag (including failover), not the shape or size of its token counters. Only
+reported counters survive cancellation; missing usage never invokes the local
+estimator. Native billing overrides still settle once. Responses retains interim
+reported usage without requiring a terminal. Cancellation never invents an error
+frame, and a genuine terminal received before disconnect retains its outcome.
+`src/services/ir/codecs/responses/stream.ts` emits the terminal matching the
+encoded status: a truncated or max-token result is `response.incomplete`, not a
+successful `response.completed`.
+
 Count a finalized protocol failure as a daily error even if its HTTP response was 200. Confirmed client cancellations count as requests without increasing server-error counters. Explicit ClientAbortError and native AbortError on an aborted client signal return an empty 499 before error-level logging in `src/lib/error.ts`; internal timeout aborts remain failures. `src/lib/client-abort.ts` holds the shared identity without route/provider dependencies, and `src/lib/request-lifecycle.ts` preserves its existing re-export. Request logs normalize a pre-stream cancelled error to 499/info, while an already-open SSE response keeps its actual wire status. Merge defined usage snapshot fields within each search round and add the final snapshots across distinct rounds. Use the same connection-plus-credential ID set for account filters across usage query variants.
 
 ## Alternatives considered
@@ -47,6 +60,18 @@ Count a finalized protocol failure as a daily error even if its HTTP response wa
 Requests with unavailable usage remain visible. Their zero cost is not a reconstructed historical charge. Failed streams contribute to errors without changing the HTTP status already sent. Search totals include each target round once. Current credential mappings recover legacy account usage; deleted credential mappings cannot reconstruct ownership of old rows that lack a connection ID.
 
 ## Verification
+
+- `tests/usage-recorder.test.ts::Messages and Responses quiet cancellation preserves only reported billing and genuine terminals`
+- `tests/usage-recorder.test.ts::native input-only opening remains billable after a pending snapshot`
+- `tests/ir-responses.test.ts::Responses encoded terminal type agrees with status, including quiet truncation`
+
+Proved: on parent 910a9590, the focused quiet-cancellation and terminal-type run
+failed twice: expected cancelled but received incomplete, and expected
+response.incomplete but received response.completed. Before explicit estimate
+provenance, the native input-only pending-snapshot control expected 600 input
+tokens but received 0. All pass after the fixes, with before/after-content,
+AbortError, native billing, reported/missing usage, failover provenance,
+completion-before-disconnect and ordinary truncation controls.
 
 - `tests/usage-recorder.test.ts`
 - `tests/log-middleware.test.ts`

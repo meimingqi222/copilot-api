@@ -43,6 +43,52 @@ function payload(
   return { model: "test-model", input, ...extra } as ResponsesPayload
 }
 
+test("Responses encoded terminal type agrees with status, including quiet truncation", async () => {
+  for (const ending of [
+    "eof",
+    "incomplete",
+    "failed",
+    "completed",
+    "max_tokens",
+  ] as const) {
+    const events: StreamEvent[] = [
+      {
+        type: "message_start",
+        id: "terminal-test",
+        model: "test-model",
+        source: { wire: "chat" },
+      },
+    ]
+    if (ending !== "eof")
+      events.push({
+        type: "message_end",
+        status: ending === "max_tokens" ? undefined : ending,
+        stop: {
+          reason:
+            ending === "max_tokens" ? "max_tokens"
+            : ending === "completed" ? "complete"
+            : "incomplete",
+        },
+      })
+    const encoded = []
+    for await (const frame of encodeResponsesStream(
+      (async function* () {
+        yield* events
+      })(),
+    ))
+      encoded.push(
+        JSON.parse(String(frame.data)) as {
+          type: string
+          response?: { status: string }
+        },
+      )
+    const status =
+      ending === "eof" || ending === "max_tokens" ? "incomplete" : ending
+    expect(encoded.at(-1)?.response?.status).toBe(status)
+    expect(encoded.at(-1)?.type).toBe(`response.${status}`)
+  }
+})
+
 describe("Responses IR request codec", () => {
   test("consecutive reasoning blocks survive DeepSeek Messages replay without crossing boundaries", () => {
     const thought = (text: string) => ({

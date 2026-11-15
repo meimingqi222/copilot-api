@@ -323,6 +323,7 @@ function applySettingsPatchToConnection(
         switch (key) {
           case "modelPrefix": {
             conn.modelPrefix = value
+            delete meta.modelPrefix
             break
           }
           case "tokenEndpoint": {

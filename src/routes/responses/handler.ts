@@ -166,10 +166,12 @@ export async function handleResponses(c: Context) {
       await writeSseComment(stream)
       const pingInterval = createSsePingInterval(stream)
       let completedResponse: ResponsesResponse | undefined
+      let reportedUsage: ResponsesResponse["usage"]
       // 非流式回包早返分支已记过一行，finally 必须跳过，否则同一请求记两行。
       let usageRecorded = false
       let firstChunkTs: number | undefined
       let outputObserved = false
+      let sawTerminal = false
       // TTFT starts before the upstream dispatch (see chat
       // handleStreamingCompletion): the SSE callback opens only after
       // dispatch resolved, so a clock captured here would be near-zero.
@@ -199,18 +201,19 @@ export async function handleResponses(c: Context) {
             streaming: false,
           })
           usageRecorded = true
+          sawTerminal = true
           await writeSseEvent(stream, JSON.stringify(result.response))
           markStreamTerminal(
             c,
-            "response.completed",
-            "success",
+            `response.${result.response.status ?? "completed"}`,
+            getResponsesStatusOutcome(result.response.status),
             hasResponsesOutput(result.response),
           )
           return
         }
 
-        let sawTerminal = false
         for await (const event of result.response) {
+          if (signal.aborted) break
           if (event.data === "[DONE]") {
             break
           }
@@ -219,6 +222,10 @@ export async function handleResponses(c: Context) {
           }
 
           const parsed = JSON.parse(event.data) as Record<string, unknown>
+          if (parsed.response && typeof parsed.response === "object") {
+            const snapshot = parsed.response as ResponsesResponse
+            if (snapshot.usage) reportedUsage = snapshot.usage
+          }
           if (isResponsesOutputEvent(parsed)) {
             markOutputObserved()
           }
@@ -233,8 +240,8 @@ export async function handleResponses(c: Context) {
             markStreamTerminal(
               c,
               "response.completed",
-              "success",
-              hasResponsesOutput(completedResponse),
+              getResponsesStatusOutcome(completedResponse.status),
+              outputObserved,
             )
           } else if (
             typeof parsed.type === "string"
@@ -260,7 +267,7 @@ export async function handleResponses(c: Context) {
           await forwardSseEvent(stream, event)
         }
 
-        if (!completedResponse && !sawTerminal) {
+        if (!sawTerminal && !signal.aborted) {
           markStreamTerminal(c, "missing", "incomplete", outputObserved)
           await writeResponsesErrorEvent(
             stream,
@@ -269,7 +276,6 @@ export async function handleResponses(c: Context) {
         }
       } catch (error) {
         if (isAbortError(error) && signal.aborted) {
-          markStreamTerminal(c, "client_abort", "cancelled", outputObserved)
           return
         }
 
@@ -278,18 +284,25 @@ export async function handleResponses(c: Context) {
         await writeResponsesErrorEvent(stream, error)
       } finally {
         clearInterval(pingInterval)
+        if (signal.aborted && !sawTerminal) {
+          markStreamTerminal(c, "client_abort", "cancelled", outputObserved)
+        }
         if (accountId && !usageRecorded) {
           const elapsed = Date.now() - streamStartTs
-          const completionTokens = completedResponse?.usage?.output_tokens ?? 0
+          const usage = completedResponse?.usage ?? reportedUsage
+          const completionTokens = usage?.output_tokens ?? 0
           const tps = elapsed > 0 ? completionTokens / (elapsed / 1000) : 0
           const ttftMs = firstChunkTs ? firstChunkTs - streamStartTs : undefined
           recordResponsesUsage({
             c,
             accountId,
-            response: completedResponse ?? {
-              id: "",
-              model: payload.model,
-              output: [],
+            response: {
+              ...(completedResponse ?? {
+                id: "",
+                model: payload.model,
+                output: [],
+              }),
+              usage,
             },
             tps,
             streaming: true,

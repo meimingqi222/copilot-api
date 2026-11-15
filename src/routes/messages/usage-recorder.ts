@@ -166,13 +166,14 @@ export async function estimateAnthropicInputTokens(
   }
 }
 
-// Tracks message_start snapshots that only carried estimated input (no output or cache counts)
+// Tracks explicitly translated message_start estimates, never native input-only usage,
 // so a later pending frame can clear them without clobbering billed message_delta counts.
 const estimatedMessageStarts = new WeakSet<AnthropicStreamingUsage>()
 
 export function updateLastUsage(
   eventData: string,
   lastUsage: AnthropicStreamingUsage | undefined,
+  estimatedMessageStart = false,
 ): AnthropicStreamingUsage | undefined {
   if (!eventData.includes('"usage"')) {
     return lastUsage
@@ -224,7 +225,8 @@ export function updateLastUsage(
         ),
       }
       if (
-        (!lastUsage || estimatedMessageStarts.has(lastUsage))
+        estimatedMessageStart
+        && (!lastUsage || estimatedMessageStarts.has(lastUsage))
         && next.output_tokens === 0
         && (next.cache_read_input_tokens ?? 0) === 0
         && (next.cache_creation_input_tokens ?? 0) === 0
