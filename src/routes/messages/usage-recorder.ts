@@ -187,6 +187,13 @@ export function updateLastUsage(
       : undefined
     if (currentUsage?.usage_status === "pending") {
       // Explicit pending zeros replace message_start estimates, not billed counts.
+      if (
+        lastUsage
+        && lastUsage.usage_status !== "pending"
+        && lastUsage.output_tokens > 0
+      ) {
+        return lastUsage
+      }
       return { ...currentUsage, output_tokens: currentUsage.output_tokens ?? 0 }
     }
     if (parsed.type === "message_start" && parsed.message?.usage) {

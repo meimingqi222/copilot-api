@@ -218,6 +218,67 @@ describe("context occupancy is separate from billed usage", () => {
     })
     expect(reported).not.toHaveProperty("usagePending")
     expect(reported.contextWindow).toEqual(initial.contextWindow)
+    const latePending = mergeUsage(billed, {
+      source: "reported",
+      inputTokens: 0,
+      outputTokens: 0,
+      usagePending: true,
+    })
+    expect(latePending).toMatchObject({
+      inputTokens: 123,
+      outputTokens: 7,
+      usagePending: false,
+    })
+  })
+
+  test("encodeMessagesStream preserves pending usage without estimated input when ending before message_end", async () => {
+    const events: Array<
+      | {
+          type: "message_start"
+          id: string
+          model: string
+          source: { wire: "chat" }
+        }
+      | {
+          type: "usage"
+          usage: {
+            source: "reported"
+            inputTokens?: number
+            outputTokens?: number
+            usagePending: boolean
+          }
+        }
+    > = [
+      {
+        type: "message_start",
+        id: "msg_1",
+        model: "test",
+        source: { wire: "chat" },
+      },
+      {
+        type: "usage",
+        usage: {
+          source: "reported",
+          outputTokens: 0,
+          usagePending: true,
+        },
+      },
+    ]
+    const output = []
+    for await (const frame of encodeMessagesStream(
+      (async function* () {
+        for (const event of events) yield event
+      })(),
+      999,
+    )) {
+      output.push(frame)
+    }
+    const delta = output.find((frame) => frame.type === "message_delta")
+    expect(delta?.usage).toMatchObject({
+      input_tokens: 0,
+      output_tokens: 0,
+      usage_status: "pending",
+    })
   })
 })
 

@@ -266,6 +266,153 @@ test("a Gemini client falls back to a chat-only connection via the shared codec 
   expect(body.candidates[0].content.parts).toEqual([{ text: "translated" }])
 })
 
+test("Gemini non-streaming and streaming routes strip internal usageMetadata fields", async () => {
+  await createConnection({
+    id: "openai-conn",
+    name: "openai",
+    protocol: "openai-compatible",
+    baseUrl: "https://openai.test/v1",
+    credentials: [{ id: "cred-1", value: "sk-test", authMode: "bearer" }],
+    models: [
+      {
+        publicId: "shared-model",
+        upstreamId: "shared-model",
+        endpoints: ["chat"],
+        enabled: true,
+      },
+    ],
+  })
+
+  const internalUsage = {
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    total_tokens: 0,
+    context_window: { used_tokens: 12000, max_tokens: 128000 },
+    usage_status: "pending",
+  }
+
+  globalThis.fetch = mock((url: string) => ({
+    ok: true,
+    json: () => ({
+      id: "chatcmpl_1",
+      object: "chat.completion",
+      created: 1,
+      model: "shared-model",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content: "translated" },
+          finish_reason: "stop",
+          logprobs: null,
+        },
+      ],
+      usage: internalUsage,
+    }),
+    text: () => Promise.resolve(""),
+    status: 200,
+    url,
+    headers: {},
+  })) as unknown as typeof fetch
+
+  const nonStream = await server.fetch(
+    new Request("http://localhost/v1beta/models/shared-model:generateContent", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: "hi" }] }],
+      }),
+    }),
+  )
+  expect(nonStream.status).toBe(200)
+  const nonStreamBody = (await nonStream.json()) as {
+    usageMetadata?: Record<string, unknown>
+  }
+  expect(nonStreamBody.usageMetadata).toEqual({
+    promptTokenCount: 0,
+    candidatesTokenCount: 0,
+    totalTokenCount: 0,
+  })
+
+  globalThis.fetch = mock((url: string) => ({
+    ok: true,
+    status: 200,
+    url,
+    headers: {},
+    body: new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder()
+        const frames = [
+          {
+            id: "chatcmpl_2",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "shared-model",
+            choices: [
+              {
+                index: 0,
+                delta: { content: "hi" },
+                finish_reason: null,
+                logprobs: null,
+              },
+            ],
+          },
+          {
+            id: "chatcmpl_2",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "shared-model",
+            choices: [
+              {
+                index: 0,
+                delta: {},
+                finish_reason: "stop",
+                logprobs: null,
+              },
+            ],
+            usage: internalUsage,
+          },
+        ]
+        for (const frame of frames) {
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(frame)}\n\n`),
+          )
+        }
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"))
+        controller.close()
+      },
+    }),
+  })) as unknown as typeof fetch
+
+  const streamResp = await server.fetch(
+    new Request(
+      "http://localhost/v1beta/models/shared-model:streamGenerateContent",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: "hi" }] }],
+        }),
+      },
+    ),
+  )
+  expect(streamResp.status).toBe(200)
+  const text = await streamResp.text()
+  const usageFrames = text
+    .split("\n\n")
+    .map((line) => line.replace(/^data: /, "").trim())
+    .filter((line) => line.startsWith("{"))
+    .map(
+      (line) => JSON.parse(line) as { usageMetadata?: Record<string, unknown> },
+    )
+    .filter((frame) => frame.usageMetadata)
+  expect(usageFrames).toHaveLength(1)
+  expect(usageFrames[0].usageMetadata).toEqual({
+    promptTokenCount: 0,
+    candidatesTokenCount: 0,
+    totalTokenCount: 0,
+  })
+})
+
 test("rejects an unknown Gemini action with 404", async () => {
   const response = await server.fetch(
     new Request("http://localhost/v1beta/models/gemini-3-pro:countTokens", {

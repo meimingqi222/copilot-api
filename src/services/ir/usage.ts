@@ -26,6 +26,9 @@ export function mergeUsage(
   const merged = { ...previous, source: next.source }
   if (next.contextWindow !== undefined)
     merged.contextWindow = next.contextWindow
+  if (previous?.usagePending === false && next.usagePending) {
+    return merged
+  }
   if (next.usagePending !== undefined) merged.usagePending = next.usagePending
   else if (
     merged.usagePending

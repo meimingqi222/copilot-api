@@ -278,12 +278,11 @@ export async function* encodeMessagesStream(
   let started = false
   let ended = false
   const messagesThinking = new Set<string>()
-  const usageDelta = (): AnthropicStreamEventData => ({
-    type: "message_delta",
-    delta: {},
-    usage: openAIUsageToAnthropic({
+  const buildDeltaUsage = () =>
+    openAIUsageToAnthropic({
       ...encodeUsageMetadata(usage),
-      prompt_tokens: usage?.inputTokens ?? estimatedInputTokens,
+      prompt_tokens:
+        usage?.inputTokens ?? (usage?.usagePending ? 0 : estimatedInputTokens),
       completion_tokens: usage?.outputTokens ?? 0,
       prompt_tokens_details: {
         cached_tokens: usage?.cacheReadTokens,
@@ -293,7 +292,11 @@ export async function* encodeMessagesStream(
           usage?.cacheWrite1hTokens,
         ),
       },
-    }),
+    })
+  const usageDelta = (): AnthropicStreamEventData => ({
+    type: "message_delta",
+    delta: {},
+    usage: buildDeltaUsage(),
   })
   try {
     for await (const event of sequentialMessagesParts(stream)) {
@@ -451,7 +454,9 @@ export async function* encodeMessagesStream(
         }
         const converted = openAIUsageToAnthropic({
           ...encodeUsageMetadata(usage),
-          prompt_tokens: usage?.inputTokens ?? estimatedInputTokens,
+          prompt_tokens:
+            usage?.inputTokens
+            ?? (usage?.usagePending ? 0 : estimatedInputTokens),
           completion_tokens: usage?.outputTokens ?? 0,
           prompt_tokens_details: {
             cached_tokens: usage?.cacheReadTokens,
@@ -501,7 +506,7 @@ export async function* encodeMessagesStream(
     yield {
       type: "message_delta",
       delta: { stop_reason: "end_turn", stop_sequence: null },
-      usage: { output_tokens: usage?.outputTokens ?? 0 },
+      usage: usage ? buildDeltaUsage() : { output_tokens: 0 },
     }
     yield { type: "message_stop" }
   }

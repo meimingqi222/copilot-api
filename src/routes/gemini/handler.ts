@@ -4,6 +4,7 @@ import { streamSSE } from "hono/streaming"
 
 import { HTTPError } from "~/lib/error"
 import { logger } from "~/lib/logger"
+import { publicUsageResponse } from "~/lib/public-usage"
 import {
   beginStreamLog,
   finishRequestLog,
@@ -89,7 +90,7 @@ export async function handleGenerateContent(c: Context) {
       usage: response.usageMetadata,
       streaming: false,
     })
-    return c.json(response)
+    return c.json(publicUsageResponse(response))
   }
 
   beginStreamLog(c)

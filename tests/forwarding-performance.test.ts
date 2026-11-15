@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
+import { publicUsageResponse } from "~/lib/public-usage"
 import { writeSseEvent, writeSseEvents, type SSEStream } from "~/lib/sse"
 
 function createCapturingStream(): SSEStream & {
@@ -69,6 +70,13 @@ describe("forwarding performance helpers", () => {
         input_tokens_details: { cached_tokens: 600 },
         output_tokens_details: { reasoning_tokens: 43 },
       }
+      const geminiUsage = {
+        promptTokenCount: 1000,
+        candidatesTokenCount: 70,
+        totalTokenCount: 1070,
+        cachedContentTokenCount: 600,
+        thoughtsTokenCount: 43,
+      }
       const payloads = [
         {
           usage: {
@@ -101,6 +109,12 @@ describe("forwarding performance helpers", () => {
             },
           },
         },
+        {
+          usageMetadata: {
+            ...geminiUsage,
+            ...metadata,
+          },
+        },
       ]
       const events = payloads.map((payload) => ({
         data: JSON.stringify(payload),
@@ -118,8 +132,14 @@ describe("forwarding performance helpers", () => {
         { type: "message_start", message: { usage: messages } },
         { type: "message_delta", usage: { input_tokens: 0, output_tokens: 0 } },
         { type: "response.completed", response: { usage: responses } },
+        { usageMetadata: geminiUsage },
       ])
       expect(payloads[0].usage?.usage_status).toBe("pending")
+      expect(
+        publicUsageResponse(payloads[4] as Record<string, unknown>),
+      ).toEqual({
+        usageMetadata: geminiUsage,
+      })
     })
   }
 

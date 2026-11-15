@@ -5,16 +5,26 @@ export function publicUsageResponse<T>(value: T): T {
   const body = asRecord(value)
   if (!body) return value
   const result = { ...body }
-  const usage = asRecord(body.usage)
-  if (usage) result.usage = publicUsage(usage)
+  for (const field of ["usage", "usageMetadata"] as const) {
+    const usage = asRecord(body[field])
+    if (usage) result[field] = publicUsage(usage)
+  }
 
-  // Messages message_start and Responses lifecycle events wrap the response.
-  // Do not recurse through content or tool arguments that happen to use these names.
+  // Messages message_start, Responses lifecycle events, and wrapped Gemini
+  // payloads nest the response object without requiring deep recursion.
   for (const key of ["message", "response"]) {
     const nested = asRecord(body[key])
-    const nestedUsage = asRecord(nested?.usage)
-    if (nestedUsage) {
-      result[key] = { ...nested, usage: publicUsage(nestedUsage) }
+    if (!nested) continue
+    const nestedUsage = asRecord(nested.usage)
+    const nestedUsageMetadata = asRecord(nested.usageMetadata)
+    if (nestedUsage || nestedUsageMetadata) {
+      result[key] = {
+        ...nested,
+        ...(nestedUsage && { usage: publicUsage(nestedUsage) }),
+        ...(nestedUsageMetadata && {
+          usageMetadata: publicUsage(nestedUsageMetadata),
+        }),
+      }
     }
   }
   return result as T

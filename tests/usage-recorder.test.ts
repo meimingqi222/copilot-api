@@ -331,4 +331,25 @@ describe("updateLastUsage", () => {
     expect(last?.input_tokens).toBe(99)
     expect(last?.output_tokens).toBe(7)
   })
+
+  test("pending frame does not overwrite already-billed positive output counts", () => {
+    let last = updateLastUsage(
+      JSON.stringify({
+        type: "message_delta",
+        usage: { input_tokens: 120, output_tokens: 18 },
+      }),
+      undefined,
+    )
+    last = updateLastUsage(
+      JSON.stringify({
+        type: "message_delta",
+        usage: { input_tokens: 0, output_tokens: 0, usage_status: "pending" },
+      }),
+      last,
+    )
+    expect(last).toMatchObject({
+      input_tokens: 120,
+      output_tokens: 18,
+    })
+  })
 })
