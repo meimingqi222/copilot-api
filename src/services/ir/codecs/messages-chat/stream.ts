@@ -95,9 +95,10 @@ interface MessagesEventLike {
 
 function messagesUsage(
   usage: NonNullable<MessagesEventLike["usage"]>,
+  source: IRUsage["source"] = "reported",
 ): IRUsage {
   return {
-    source: "reported",
+    source,
     ...decodeUsageMetadata(usage),
     cacheWrite1hTokens: usage.cache_creation?.ephemeral_1h_input_tokens,
     ...(usage.input_tokens !== undefined && {
@@ -144,8 +145,9 @@ export async function* decodeMessagesStream(
   let netUsage: IRUsage | undefined
   const updateUsage = (
     next: NonNullable<MessagesEventLike["usage"]>,
+    source: IRUsage["source"] = "reported",
   ): IRUsage => {
-    netUsage = mergeUsage(netUsage, messagesUsage(next))
+    netUsage = mergeUsage(netUsage, messagesUsage(next, source))
     const inputTokens =
       (netUsage.inputTokens ?? 0)
       + (netUsage.cacheReadTokens ?? 0)
@@ -186,8 +188,18 @@ export async function* decodeMessagesStream(
         model: event.message?.model ?? "",
         source: { wire: "messages" },
       }
-      if (event.message?.usage)
-        yield { type: "usage", usage: updateUsage(event.message.usage) }
+      if (event.message?.usage) {
+        const msgUsage = event.message.usage
+        const isEstimate =
+          msgUsage.usage_status !== "pending"
+          && (msgUsage.output_tokens ?? 0) === 0
+          && (msgUsage.cache_read_input_tokens ?? 0) === 0
+          && (msgUsage.cache_creation_input_tokens ?? 0) === 0
+        yield {
+          type: "usage",
+          usage: updateUsage(msgUsage, isEstimate ? "estimated" : "reported"),
+        }
+      }
     } else if (event.type === "content_block_start") {
       const index = event.index ?? blocks.size
       const block = event.content_block

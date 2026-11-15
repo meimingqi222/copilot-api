@@ -190,7 +190,9 @@ export function updateLastUsage(
       if (
         lastUsage
         && lastUsage.usage_status !== "pending"
-        && lastUsage.output_tokens > 0
+        && (lastUsage.output_tokens > 0
+          || (lastUsage.cache_read_input_tokens ?? 0) > 0
+          || (lastUsage.cache_creation_input_tokens ?? 0) > 0)
       ) {
         return lastUsage
       }

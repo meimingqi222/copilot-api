@@ -218,17 +218,157 @@ describe("context occupancy is separate from billed usage", () => {
     })
     expect(reported).not.toHaveProperty("usagePending")
     expect(reported.contextWindow).toEqual(initial.contextWindow)
-    const latePending = mergeUsage(billed, {
+    const latePending = mergeUsage(reported, {
       source: "reported",
       inputTokens: 0,
       outputTokens: 0,
       usagePending: true,
     })
+    expect(latePending).not.toHaveProperty("usagePending")
     expect(latePending).toMatchObject({
+      inputTokens: 0,
+      outputTokens: 0,
+    })
+  })
+
+  test("decoded Messages stream lets pending supersede message_start estimate, not real billed usage", async () => {
+    const estimateThenPending = [
+      {
+        data: JSON.stringify({
+          type: "message_start",
+          message: {
+            id: "msg_est",
+            model: "test",
+            usage: { input_tokens: 999, output_tokens: 0 },
+          },
+        }),
+      },
+      {
+        data: JSON.stringify({
+          type: "message_delta",
+          delta: { stop_reason: "end_turn" },
+          usage: {
+            input_tokens: 0,
+            output_tokens: 0,
+            usage_status: "pending",
+            context_window: { used_tokens: 5000, max_tokens: 32000 },
+          },
+        }),
+      },
+      { data: JSON.stringify({ type: "message_stop" }) },
+    ]
+    const estUsages = []
+    for await (const ev of decodeMessagesStream(
+      (async function* () {
+        for (const frame of estimateThenPending) yield frame
+      })(),
+    )) {
+      if (ev.type === "usage") estUsages.push(ev.usage)
+    }
+    expect(estUsages.at(-1)).toMatchObject({
+      inputTokens: 0,
+      outputTokens: 0,
+      usagePending: true,
+      contextWindow: { used_tokens: 5000, max_tokens: 32000 },
+    })
+
+    const billedThenPending = [
+      {
+        data: JSON.stringify({
+          type: "message_start",
+          message: {
+            id: "msg_billed",
+            model: "test",
+            usage: { input_tokens: 120, output_tokens: 0 },
+          },
+        }),
+      },
+      {
+        data: JSON.stringify({
+          type: "message_delta",
+          delta: {},
+          usage: { input_tokens: 120, output_tokens: 18 },
+        }),
+      },
+      {
+        data: JSON.stringify({
+          type: "message_delta",
+          delta: { stop_reason: "end_turn" },
+          usage: {
+            input_tokens: 0,
+            output_tokens: 0,
+            usage_status: "pending",
+            context_window: { used_tokens: 5000, max_tokens: 32000 },
+          },
+        }),
+      },
+      { data: JSON.stringify({ type: "message_stop" }) },
+    ]
+    const billedUsages = []
+    for await (const ev of decodeMessagesStream(
+      (async function* () {
+        for (const frame of billedThenPending) yield frame
+      })(),
+    )) {
+      if (ev.type === "usage") billedUsages.push(ev.usage)
+    }
+    expect(billedUsages.at(-1)).toMatchObject({
+      inputTokens: 120,
+      outputTokens: 18,
+    })
+    expect(billedUsages.at(-1)).not.toHaveProperty("usagePending")
+
+    const chatBilledThenPending = [
+      {
+        data: JSON.stringify({
+          id: "chat_1",
+          model: "test",
+          created: 1,
+          object: "chat.completion.chunk",
+          choices: [
+            { index: 0, delta: { content: "ok" }, finish_reason: null },
+          ],
+          usage: {
+            prompt_tokens: 123,
+            completion_tokens: 7,
+            total_tokens: 130,
+          },
+        }),
+      },
+      {
+        data: JSON.stringify({
+          id: "chat_1",
+          model: "test",
+          created: 1,
+          object: "chat.completion.chunk",
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+          usage: {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            usage_status: "pending",
+          },
+        }),
+      },
+      { data: "[DONE]" },
+    ]
+    const chatUsages = []
+    let mergedChat: ReturnType<typeof mergeUsage> | undefined
+    for await (const ev of decodeChatStream(
+      (async function* () {
+        for (const frame of chatBilledThenPending) yield frame
+      })(),
+    )) {
+      if (ev.type === "usage") {
+        chatUsages.push(ev.usage)
+        mergedChat = mergeUsage(mergedChat, ev.usage)
+      }
+    }
+    expect(mergedChat).toMatchObject({
       inputTokens: 123,
       outputTokens: 7,
-      usagePending: false,
     })
+    expect(mergedChat).not.toHaveProperty("usagePending")
   })
 
   test("encodeMessagesStream preserves pending usage without estimated input when ending before message_end", async () => {
