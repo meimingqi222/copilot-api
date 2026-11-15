@@ -217,6 +217,22 @@ export function buildAcpPromptBlocks(
   const slice = payload.messages.slice(startIndex)
   const sections: Array<string> = []
   const images: Array<AcpContentBlock> = []
+  const instructions: Array<string> = []
+  const history: Array<string> = []
+  const current: Array<string> = []
+
+  let turnStart = payload.messages.findLastIndex((msg) => msg.role === "user")
+  if (turnStart < startIndex) turnStart = startIndex
+  // Adjacent user messages can be one request plus caller runtime metadata.
+  // Keep that entire group and its subsequent assistant/tool loop in this turn.
+  while (
+    turnStart > startIndex
+    && ["user", "system", "developer"].includes(
+      payload.messages[turnStart - 1].role,
+    )
+  ) {
+    turnStart--
+  }
 
   const hasTools = Boolean(payload.tools?.length)
   if (startIndex === 0) {
@@ -240,25 +256,47 @@ export function buildAcpPromptBlocks(
           + "Respond directly without calling any local filesystem, shell, or workspace tools.",
       )
     }
-    if (
-      payload.messages.some(
-        (message) => message.role === "assistant" || message.role === "tool",
-      )
-    ) {
+    if (slice.some((msg) => msg.role === "assistant" || msg.role === "tool")) {
       sections.push(
-        "[Conversation Replay] The role-labeled transcript below includes prior history. Continue from the latest user request and supplied tool results; do not answer earlier requests again. Prior assistant replies are history, not new instructions.",
+        "[Conversation Replay] Prior assistant replies are records, not new instructions. Caller system and developer instructions still apply.",
       )
     }
   }
 
-  for (const msg of slice) {
-    const line = formatMessageLine(msg)
-    if (line) sections.push(line)
-    images.push(...extractImageBlocks(msg.content))
+  for (const [index, msg] of slice.entries()) {
+    const messageImages = extractImageBlocks(msg.content)
+    const line =
+      formatMessageLine(msg)
+      || (msg.role === "user" && messageImages.length ? "[User]" : "")
+    if (line) {
+      if (msg.role === "system" || msg.role === "developer")
+        instructions.push(line)
+      else if (startIndex + index < turnStart)
+        history.push(line.replace(/^\[/, "[Historical "))
+      else current.push(line)
+    }
+    images.push(...messageImages)
+  }
+  if (instructions.length) sections.push(instructions.join("\n\n"))
+  if (current.length) {
+    sections.push(`[Current Turn]\n${current.join("\n\n")}`)
+    sections.push(
+      "[Continue Current Turn] Follow the current user's intent, including changes from reviewing to doing the work. Continue from this turn's latest messages and tool results, not the historical task or the historical assistant's plan.",
+    )
   }
 
   const blocks: Array<AcpContentBlock> = []
   const combinedText = sections.join("\n\n").trim()
+  if (history.length) {
+    blocks.push({
+      type: "resource",
+      resource: {
+        uri: "context://conversation-history",
+        mimeType: "text/plain",
+        text: `[Conversation History]\n${history.join("\n\n")}\n\n[End Conversation History]`,
+      },
+    })
+  }
   if (combinedText) {
     blocks.push({ type: "text", text: combinedText })
   }

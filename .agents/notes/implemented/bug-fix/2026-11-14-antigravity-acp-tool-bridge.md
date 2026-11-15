@@ -41,6 +41,18 @@ guessing which hidden reasoning belongs to the caller. Parked continuations
 require unchanged history/tools and exactly the exposed results; otherwise replay
 the complete transcript, including the caller's updated instructions.
 
+Full replays and incremental prompts separate caller instructions, conversation
+history and the current user turn. Adjacent user messages (including caller
+runtime metadata) stay together, as do that turn's later assistant/tool messages.
+History is an ACP embedded text resource before the active prompt when the agent
+advertises embeddedContext; otherwise it becomes a separate preceding text block.
+Historical role labels and an explicit history end distinguish old requests from
+current user messages. The continuation instruction follows the current turn.
+System/developer instructions remain active outside the history section; this
+boundary does not remove old context, reset native sessions or alter billing.
+These boundaries do not guarantee that a model follows a change of task; live
+behavioral validation is separate from the prompt serialization regression.
+
 Parked MCP results retain inline base64 images alongside text in caller order,
 matching the image support of full replay without fetching remote URLs. The
 40ms parallel-tool batch checks cancellation and queued errors before emitting
@@ -130,6 +142,24 @@ charges. Fresh replay is deliberately preferred to unsafe native-session reuse
 when history changed or multiple native sessions have the same visible reply.
 
 ## Verification
+
+- `tests/antigravity-acp.test.ts::separates long replay history from the whole current user turn and tool results`
+
+Proved: parent a210dccc; focused command `bun test tests/antigravity-acp.test.ts --test-name-pattern 'separates long replay'`
+failed because the current-turn section was absent. After grouping the 487-message
+synthetic transcript, both full replay and incremental assertions preserve the
+request, adjacent runtime metadata, tool results and active caller instructions;
+the ACP client/bridge suites pass. The resource regression also failed naturally
+before embedded context and its unsupported-capability fallback were implemented;
+the lifecycle fixture now checks both wire representations. Real diagnostic
+bodies and complete validation logs stay outside the committed note and tests.
+
+Live component validation with gemini-4-hydrogen-high passed three-turn isolated
+file edits with both incremental prompts and fresh-session replay: review-only
+left the file unchanged, the follow-up applied the fix, and another follow-up
+changed it again. However, the long diagnostic replay still returned a review
+without requesting edits. Its recorded-tool replay is not the caller's real
+workspace; the original behavioral issue remains unresolved, not proven fixed.
 
 - `tests/antigravity-acp.test.ts::antigravity acp client lifecycle`
 - `tests/antigravity-acp-bridge.test.ts::parked tool results preserve inline images and text in order`

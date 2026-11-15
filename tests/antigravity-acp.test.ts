@@ -56,7 +56,14 @@ afterEach(() => {
 
 describe("antigravity acp client lifecycle", () => {
   // A broken spawn/error listener must only crash this subprocess, not Bun's suite.
-  for (const scenario of ["missing", "stdin", "exit", "close", "normal"]) {
+  for (const scenario of [
+    "missing",
+    "stdin",
+    "exit",
+    "close",
+    "normal",
+    "embedded",
+  ]) {
     test.skipIf(process.platform === "win32")(
       `settles RPCs and notifies once on ${scenario}`,
       async () => {
@@ -75,7 +82,7 @@ if (scenario === "close") process.on("SIGTERM", () => {});
 createInterface({ input: process.stdin }).on("line", line => {
   const msg = JSON.parse(line);
   if (msg.method === "initialize") {
-    process.stdout.write(JSON.stringify({ id: msg.id, result: {} }) + "\\n");
+    process.stdout.write(JSON.stringify({ id: msg.id, result: { agentCapabilities: { promptCapabilities: { embeddedContext: scenario === "embedded" } } } }) + "\\n");
     if (scenario === "stdin") {
       closeSync(0);
       process.stdin.destroy();
@@ -83,7 +90,13 @@ createInterface({ input: process.stdin }).on("line", line => {
       process.stdout.write(JSON.stringify({ method: "session/update", params: { update: { sessionUpdate: "stdin_closed" } } }) + "\\n");
     }
   } else if (scenario === "exit") process.exit(7);
-  else if (scenario === "normal") process.stdout.write(JSON.stringify({ id: msg.id, result: { stopReason: "end_turn" } }) + "\\n");
+  else if (scenario === "normal" || scenario === "embedded") {
+    const first = msg.params.prompt[scenario === "embedded" ? 1 : 0];
+    if (first.type !== (scenario === "embedded" ? "resource" : "text")) process.exit(92);
+    if ((first.resource?.text ?? first.text) !== "Historical context") process.exit(93);
+    if (msg.params.prompt[scenario === "embedded" ? 0 : 1].text !== "x") process.exit(94);
+    process.stdout.write(JSON.stringify({ id: msg.id, result: { stopReason: "end_turn" } }) + "\\n");
+  }
 });
 `,
             { mode: 0o755 },
@@ -112,12 +125,14 @@ try {
     await client.initialize();
     assert.equal(client.isClosed, false);
     if (scenario === "stdin") await stdinClosed;
-    const pending = client.prompt("synthetic-session", [{ type: "text", text: "x".repeat(scenario === "stdin" ? 1024 * 1024 : 1) }]);
+    const blocks = [{ type: "text", text: "x".repeat(scenario === "stdin" ? 1024 * 1024 : 1) }];
+    if (scenario === "normal" || scenario === "embedded") blocks.push({ type: "resource", resource: { uri: "context://history", text: "Historical context" } });
+    const pending = client.prompt("synthetic-session", blocks);
     if (scenario === "close") {
       client.close();
       client.close();
     }
-    if (scenario === "normal") {
+    if (scenario === "normal" || scenario === "embedded") {
       assert.equal((await pending).stopReason, "end_turn");
       assert.equal(client.isClosed, false);
       client.close();
@@ -240,6 +255,90 @@ describe("antigravity acp auth-sync", () => {
 })
 
 describe("antigravity acp prompt & tools", () => {
+  test("separates long replay history from the whole current user turn and tool results", () => {
+    const messages: Parameters<typeof buildAcpPromptBlocks>[0]["messages"] = [
+      { role: "system", content: "Caller policy: use the supplied tools." },
+      { role: "user", content: "Review the sample changes." },
+    ]
+    for (let i = 0; i < 240; i++) {
+      messages.push(
+        { role: "assistant", content: `Historical review finding ${i}.` },
+        {
+          role: "tool",
+          tool_call_id: `old_${i}`,
+          content: `Historical source ${i}.`,
+        },
+      )
+    }
+    const turnStart = messages.length
+    messages.push(
+      { role: "user", content: "Apply the reported fix." },
+      {
+        role: "user",
+        content: "Runtime context: platform=test; metadata, not a task.",
+      },
+      {
+        role: "developer",
+        content: "Caller update: preserve unrelated changes.",
+      },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "current_read",
+            type: "function",
+            function: { name: "Read", arguments: "{}" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        tool_call_id: "current_read",
+        content: "Current source awaiting the fix.",
+      },
+    )
+    for (const startIndex of [0, turnStart]) {
+      const blocks = buildAcpPromptBlocks(
+        { model: "test", messages },
+        startIndex,
+      )
+      const text = blocks.find((block) => block.type === "text")!.text!
+      const current = text
+        .split("[Current Turn]\n")[1]
+        ?.split("[Continue Current Turn]")[0]
+      expect(current).toBeDefined()
+      expect(current).toContain("Apply the reported fix.")
+      expect(current).toContain("Runtime context: platform=test")
+      expect(current).toContain("Current source awaiting the fix.")
+      expect(current).not.toContain("Historical review finding")
+      expect(text.indexOf("Caller update:")).toBeLessThan(
+        text.indexOf("[Current Turn]"),
+      )
+      expect(text.lastIndexOf("[Continue Current Turn]")).toBeGreaterThan(
+        text.indexOf("Current source awaiting the fix."),
+      )
+      if (startIndex === 0) {
+        expect(blocks[0].type).toBe("resource")
+        const history = blocks.find((block) => block.type === "resource")
+          ?.resource?.text
+        expect(history).toContain("Historical review finding 239.")
+        expect(history).toContain(
+          "[Historical User]\nReview the sample changes.",
+        )
+        expect(history).not.toContain("[User]")
+        expect(history).toContain("[End Conversation History]")
+        expect(history).not.toContain("Apply the reported fix.")
+        expect(history).not.toContain("Caller policy:")
+        expect(text).not.toContain("Historical review finding")
+      } else {
+        expect(blocks.some((block) => block.type === "resource")).toBe(false)
+        expect(text).not.toContain("Historical review finding")
+        expect(text).not.toContain("Caller policy:")
+      }
+    }
+  })
+
   test("provides schemas for lazy bridge calls without local file access", () => {
     const blocks = buildAcpPromptBlocks({
       model: "gemini-3.8-flash-low",
@@ -419,6 +518,28 @@ describe("antigravity acp prompt & tools", () => {
       mimeType: "image/png",
       data: "AAAA",
     })
+    const imageOnly = buildAcpPromptBlocks({
+      model: "test",
+      messages: [
+        { role: "user", content: "Review the earlier image." },
+        { role: "assistant", content: "Earlier image reviewed." },
+        {
+          role: "user",
+          content: [
+            {
+              type: "image_url",
+              image_url: { url: "data:image/png;base64,AAAA" },
+            },
+          ],
+        },
+      ],
+    })
+    const currentText = imageOnly.find((block) => block.type === "text")?.text
+    expect(currentText?.split("[Current Turn]\n")[1]).toContain("[User]")
+    expect(currentText?.split("[Current Turn]\n")[1]).not.toContain(
+      "Earlier image reviewed.",
+    )
+    expect(imageOnly.at(-1)).toEqual(blocks[1])
   })
 
   test("extracts trailing tool results", () => {

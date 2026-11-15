@@ -16,10 +16,11 @@ export interface AcpMcpServerSpec {
 }
 
 export interface AcpContentBlock {
-  type: "text" | "image"
+  type: "text" | "image" | "resource"
   text?: string
   data?: string
   mimeType?: string
+  resource?: { uri: string; text: string; mimeType?: string }
 }
 
 export interface AcpUsage {
@@ -208,6 +209,7 @@ export class AgyAcpClient {
   private readonly onUpdate: (update: AcpSessionUpdate) => void
   private nextId = 1
   private closed = false
+  private embeddedContext = false
 
   constructor(options: AcpSpawnOptions) {
     this.onUpdate = options.onUpdate
@@ -353,7 +355,9 @@ export class AgyAcpClient {
   }
 
   async initialize(): Promise<void> {
-    await this.request("initialize", {
+    const result = await this.request<{
+      agentCapabilities?: { promptCapabilities?: { embeddedContext?: boolean } }
+    }>("initialize", {
       protocolVersion: 1,
       clientCapabilities: {
         fs: { readTextFile: false, writeTextFile: false },
@@ -361,6 +365,8 @@ export class AgyAcpClient {
       },
       clientInfo: { name: "copilot-api", version: "1.0.0" },
     })
+    this.embeddedContext =
+      result.agentCapabilities?.promptCapabilities?.embeddedContext === true
   }
 
   async newSession(
@@ -390,7 +396,15 @@ export class AgyAcpClient {
   ): Promise<AcpPromptResult> {
     const raw = await this.request<Record<string, unknown>>("session/prompt", {
       sessionId,
-      prompt,
+      prompt:
+        this.embeddedContext ? prompt : (
+          [
+            ...prompt
+              .filter((block) => block.type === "resource")
+              .map((block) => ({ type: "text", text: block.resource?.text })),
+            ...prompt.filter((block) => block.type !== "resource"),
+          ]
+        ),
     })
     const stopReason =
       typeof raw?.stopReason === "string" ? raw.stopReason : undefined
