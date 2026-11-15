@@ -169,7 +169,14 @@ export class AgyRun {
     >) {
       const next = this.lastTurnUsage[key]
       if (next === undefined) continue
-      const previous = this.reportedTurnUsage?.[key]
+      const previous =
+        key === "totalTokens" && this.reportedTurnUsage ?
+          (this.reportedTurnUsage.totalTokens
+          ?? (this.reportedTurnUsage.inputTokens ?? 0)
+            + (this.reportedTurnUsage.cachedReadTokens ?? 0)
+            + (this.reportedTurnUsage.cachedWriteTokens ?? 0)
+            + (this.reportedTurnUsage.outputTokens ?? 0))
+        : this.reportedTurnUsage?.[key]
       if (previous === undefined || next > previous)
         delta[key] = Math.max(0, next - (previous ?? 0))
     }

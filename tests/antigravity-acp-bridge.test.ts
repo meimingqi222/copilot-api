@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { Hono, type Context } from "hono"
@@ -54,10 +54,20 @@ const tools: ChatCompletionsPayload["tools"] = [
 beforeEach(() => {
   dataDir = mkdtempSync(path.join(os.tmpdir(), "acp-bridge-"))
   redirectPathsToDir(dataDir)
-  process.env.AGY_CLI_PATH = path.join(
+  const agentScript = path.join(
     import.meta.dir,
     "fixtures/antigravity-acp-agent.ts",
   )
+  if (process.platform === "win32") {
+    const launcher = path.join(dataDir, "agy.cmd")
+    writeFileSync(
+      launcher,
+      `@echo off\r\n"${process.execPath}" "${agentScript}" %*\r\n`,
+    )
+    process.env.AGY_CLI_PATH = launcher
+  } else {
+    process.env.AGY_CLI_PATH = agentScript
+  }
   const app = new Hono().route(
     "/_internal/antigravity-mcp",
     antigravityMcpRoutes,
@@ -65,14 +75,30 @@ beforeEach(() => {
   server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: app.fetch })
   setAntigravityCallbackBaseUrl(`http://127.0.0.1:${server.port}`)
 })
-afterEach(() => {
+async function removeTempDir(dir: string): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    try {
+      rmSync(dir, { recursive: true, force: true })
+      return
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if ((code === "EBUSY" || code === "EPERM") && attempt < 19) {
+        await Bun.sleep(25)
+        continue
+      }
+      throw error
+    }
+  }
+}
+
+afterEach(async () => {
   runRegistry.disposeAll()
   server?.stop(true)
   redirectPathsToDir(originalDir)
   setAntigravityCallbackBaseUrl(originalCallback)
   if (originalBinary === undefined) delete process.env.AGY_CLI_PATH
   else process.env.AGY_CLI_PATH = originalBinary
-  if (dataDir) rmSync(dataDir, { recursive: true, force: true })
+  if (dataDir) await removeTempDir(dataDir)
 })
 async function complete(
   messages: Message[],
@@ -280,7 +306,7 @@ describe("ACP public bridge continuations", () => {
     },
   )
 
-  for (const mode of ["", "SNAPSHOT", "PARTIAL"]) {
+  for (const mode of ["", "SNAPSHOT", "SNAPSHOT_GAP", "PARTIAL"]) {
     loopbackTest(
       `tool loop bills once and exposes context occupancy: ${mode || "final-only"}`,
       async () => {
@@ -324,6 +350,11 @@ describe("ACP public bridge continuations", () => {
         })
         if (!mode)
           expect(responses[0].usage).toMatchObject({
+            prompt_tokens: 0,
+            usage_status: "pending",
+          })
+        if (mode === "SNAPSHOT_GAP")
+          expect(responses[1].usage).toMatchObject({
             prompt_tokens: 0,
             usage_status: "pending",
           })

@@ -71,6 +71,7 @@ async function handle(raw: string) {
     } else if (text.includes("TOOL_LOOP") && turn === 1) {
       if (text.includes("TIMING")) await Bun.sleep(150)
       const snapshots = text.includes("SNAPSHOT")
+      const skipSecondSnapshot = text.includes("SNAPSHOT_GAP")
       if (snapshots)
         update({
           sessionUpdate: "usage_update",
@@ -84,7 +85,7 @@ async function handle(raw: string) {
       const first = await callTool("first")
       if (text.includes("TIMING")) await Bun.sleep(150)
       context(54000)
-      if (snapshots)
+      if (snapshots && !skipSecondSnapshot)
         update({
           sessionUpdate: "usage_update",
           usage: {

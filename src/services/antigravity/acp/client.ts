@@ -6,6 +6,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import { createInterface } from "node:readline"
 
 import { logger } from "~/lib/logger"
+import { claudeLaunchCommand } from "~/services/claude/cli/binary"
 
 export interface AcpMcpServerSpec {
   name: string
@@ -222,10 +223,14 @@ export class AgyAcpClient {
       "--dangerously-skip-permissions",
       "--disable-telemetry",
     ]
-    this.proc = spawn(options.binaryPath, args, {
+    const [command, ...prefixArgs] = claudeLaunchCommand(options.binaryPath)
+    this.proc = spawn(command, [...prefixArgs, ...args], {
       cwd: options.workspaceDir,
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env },
+      ...(process.platform === "win32" && /\.(?:cmd|bat)$/i.test(command) ?
+        { shell: true }
+      : {}),
     })
 
     const rl = createInterface({

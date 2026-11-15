@@ -678,5 +678,21 @@ describe("antigravity acp usage normalization", () => {
       cachedReadTokens: 12,
     })
     expect(run.consumeTurnUsage()).toBeUndefined()
+
+    run.handleUpdate({
+      sessionUpdate: "usage_update",
+      usage: {
+        inputTokens: 120,
+        outputTokens: 20,
+        cachedReadTokens: 880,
+        totalTokens: 1020,
+      },
+    })
+    expect(run.consumeTurnUsage()).toEqual({
+      inputTokens: 90,
+      outputTokens: 2,
+      cachedReadTokens: 868,
+      totalTokens: 960,
+    })
   })
 })

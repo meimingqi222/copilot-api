@@ -166,7 +166,9 @@ function toOpenAiUsage(
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
     total_tokens: totalTokens,
-    ...(!run.hasTurnUsage ? { usage_status: "pending" as const } : {}),
+    // Mark any zero-delta segment as pending so /v1/messages discards
+    // message_start input estimates even after an earlier partial snapshot.
+    ...(!usage ? { usage_status: "pending" as const } : {}),
     ...(run.contextUsage ?
       {
         context_window: {
