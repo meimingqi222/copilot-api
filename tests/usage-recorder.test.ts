@@ -352,4 +352,59 @@ describe("updateLastUsage", () => {
       output_tokens: 18,
     })
   })
+
+  test("pending frame does not overwrite already-billed message_delta counts even with zero output and cache", () => {
+    let last = updateLastUsage(
+      JSON.stringify({
+        type: "message_start",
+        message: { usage: { input_tokens: 0, output_tokens: 0 } },
+      }),
+      undefined,
+    )
+    last = updateLastUsage(
+      JSON.stringify({
+        type: "message_delta",
+        usage: { input_tokens: 120, output_tokens: 0 },
+      }),
+      last,
+    )
+    last = updateLastUsage(
+      JSON.stringify({
+        type: "message_delta",
+        usage: { input_tokens: 0, output_tokens: 0, usage_status: "pending" },
+      }),
+      last,
+    )
+    expect(last).toMatchObject({
+      input_tokens: 120,
+      output_tokens: 0,
+    })
+    expect(last).not.toHaveProperty("usage_status")
+
+    let cachedStart = updateLastUsage(
+      JSON.stringify({
+        type: "message_start",
+        message: {
+          usage: {
+            input_tokens: 20,
+            output_tokens: 0,
+            cache_read_input_tokens: 40,
+          },
+        },
+      }),
+      undefined,
+    )
+    cachedStart = updateLastUsage(
+      JSON.stringify({
+        type: "message_delta",
+        usage: { input_tokens: 0, output_tokens: 0, usage_status: "pending" },
+      }),
+      cachedStart,
+    )
+    expect(cachedStart).toMatchObject({
+      input_tokens: 20,
+      output_tokens: 0,
+      cache_read_input_tokens: 40,
+    })
+  })
 })

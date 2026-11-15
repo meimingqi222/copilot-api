@@ -166,6 +166,10 @@ export async function estimateAnthropicInputTokens(
   }
 }
 
+// Tracks message_start snapshots that only carried estimated input (no output or cache counts)
+// so a later pending frame can clear them without clobbering billed message_delta counts.
+const estimatedMessageStarts = new WeakSet<AnthropicStreamingUsage>()
+
 export function updateLastUsage(
   eventData: string,
   lastUsage: AnthropicStreamingUsage | undefined,
@@ -190,9 +194,7 @@ export function updateLastUsage(
       if (
         lastUsage
         && lastUsage.usage_status !== "pending"
-        && (lastUsage.output_tokens > 0
-          || (lastUsage.cache_read_input_tokens ?? 0) > 0
-          || (lastUsage.cache_creation_input_tokens ?? 0) > 0)
+        && !estimatedMessageStarts.has(lastUsage)
       ) {
         return lastUsage
       }
@@ -200,7 +202,7 @@ export function updateLastUsage(
     }
     if (parsed.type === "message_start" && parsed.message?.usage) {
       const msgUsage = parsed.message.usage
-      return {
+      const next: AnthropicStreamingUsage = {
         // Prefer a later non-zero input count (some gateways stub 0 here and
         // only report real input_tokens on the final message_delta).
         input_tokens: pickPositiveTokenCount(
@@ -221,6 +223,15 @@ export function updateLastUsage(
           msgUsage.cache_creation_input_tokens,
         ),
       }
+      if (
+        (!lastUsage || estimatedMessageStarts.has(lastUsage))
+        && next.output_tokens === 0
+        && (next.cache_read_input_tokens ?? 0) === 0
+        && (next.cache_creation_input_tokens ?? 0) === 0
+      ) {
+        estimatedMessageStarts.add(next)
+      }
+      return next
     }
     if (parsed.type === "message_delta" && parsed.usage) {
       // Anthropic official streams usually only put output_tokens on
