@@ -407,4 +407,34 @@ describe("updateLastUsage", () => {
       cache_read_input_tokens: 40,
     })
   })
+
+  test("zero-output intermediate message_delta keeps message_start estimated so terminal pending clears it", () => {
+    let last = updateLastUsage(
+      JSON.stringify({
+        type: "message_start",
+        message: { usage: { input_tokens: 600, output_tokens: 0 } },
+      }),
+      undefined,
+    )
+    last = updateLastUsage(
+      JSON.stringify({
+        type: "message_delta",
+        usage: { output_tokens: 0 },
+      }),
+      last,
+    )
+    expect(last?.input_tokens).toBe(600)
+    last = updateLastUsage(
+      JSON.stringify({
+        type: "message_delta",
+        usage: { input_tokens: 0, output_tokens: 0, usage_status: "pending" },
+      }),
+      last,
+    )
+    expect(last).toMatchObject({
+      input_tokens: 0,
+      output_tokens: 0,
+      usage_status: "pending",
+    })
+  })
 })

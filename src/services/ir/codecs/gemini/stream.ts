@@ -7,6 +7,7 @@ import type { IRPart, IRStop, IRUsage, StreamEvent } from "~/services/ir/types"
 
 import { decodeGeminiPart } from "./part"
 import { toBase64Image } from "~/services/ir/codecs/gemini/request"
+import { mergeUsage } from "~/services/ir/usage"
 import {
   geminiFinishReason,
   geminiUsage,
@@ -235,7 +236,7 @@ export async function* encodeGeminiStream(
         yield frame([{ functionCall: { name: tool.name, args } }])
       }
     } else if (event.type === "usage") {
-      usage = { ...usage, ...event.usage }
+      usage = mergeUsage(usage, event.usage)
     } else if (event.type === "message_end") {
       yield (
         (event.status === "incomplete" && event.stop?.reason !== "max_tokens")

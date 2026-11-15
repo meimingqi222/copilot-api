@@ -272,6 +272,51 @@ describe("context occupancy is separate from billed usage", () => {
       contextWindow: { used_tokens: 5000, max_tokens: 32000 },
     })
 
+    const estimateZeroDeltaThenPending = [
+      {
+        data: JSON.stringify({
+          type: "message_start",
+          message: {
+            id: "msg_est_mid",
+            model: "test",
+            usage: { input_tokens: 600, output_tokens: 0 },
+          },
+        }),
+      },
+      {
+        data: JSON.stringify({
+          type: "message_delta",
+          delta: {},
+          usage: { output_tokens: 0 },
+        }),
+      },
+      {
+        data: JSON.stringify({
+          type: "message_delta",
+          delta: { stop_reason: "end_turn" },
+          usage: {
+            input_tokens: 0,
+            output_tokens: 0,
+            usage_status: "pending",
+          },
+        }),
+      },
+      { data: JSON.stringify({ type: "message_stop" }) },
+    ]
+    const midUsages = []
+    for await (const ev of decodeMessagesStream(
+      (async function* () {
+        for (const frame of estimateZeroDeltaThenPending) yield frame
+      })(),
+    )) {
+      if (ev.type === "usage") midUsages.push(ev.usage)
+    }
+    expect(midUsages.at(-1)).toMatchObject({
+      inputTokens: 0,
+      outputTokens: 0,
+      usagePending: true,
+    })
+
     const billedThenPending = [
       {
         data: JSON.stringify({

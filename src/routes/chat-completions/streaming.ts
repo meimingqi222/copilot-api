@@ -147,7 +147,12 @@ function runChatSsePump(options: ChatSsePumpOptions) {
           if (logger.level >= 4) {
             logger.debug("Streaming raw event:", JSON.stringify(rawEvent))
           }
-          if (chunk.usage) {
+          if (
+            chunk.usage
+            && (!lastUsage
+              || lastUsage.usage_status === "pending"
+              || chunk.usage.usage_status !== "pending")
+          ) {
             lastUsage = chunk.usage
           }
           // `choices` is typed as required but some upstreams omit it on

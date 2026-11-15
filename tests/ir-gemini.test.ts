@@ -781,4 +781,85 @@ describe("gemini stream codec", () => {
     expect(kinds).toEqual(["thinking", "text"])
     expect(signatures).toEqual(["sig_1"])
   })
+
+  test("encodeGeminiStream merges usage updates and clears pending on settlement", async () => {
+    const events: Array<
+      | {
+          type: "message_start"
+          id: string
+          model: string
+          source: { wire: "gemini" }
+        }
+      | {
+          type: "usage"
+          usage: {
+            source: "reported"
+            inputTokens?: number
+            outputTokens?: number
+            usagePending?: boolean
+          }
+        }
+      | {
+          type: "message_end"
+          stop: { reason: "complete" }
+          status: "completed"
+        }
+    > = [
+      {
+        type: "message_start",
+        id: "resp_merge",
+        model: "gemini-3-pro",
+        source: { wire: "gemini" },
+      },
+      {
+        type: "usage",
+        usage: {
+          source: "reported",
+          inputTokens: 0,
+          outputTokens: 0,
+          usagePending: true,
+        },
+      },
+      {
+        type: "usage",
+        usage: {
+          source: "reported",
+          inputTokens: 120,
+          outputTokens: 15,
+        },
+      },
+      {
+        type: "usage",
+        usage: {
+          source: "reported",
+          inputTokens: 0,
+          outputTokens: 0,
+          usagePending: true,
+        },
+      },
+      {
+        type: "message_end",
+        stop: { reason: "complete" },
+        status: "completed",
+      },
+    ]
+
+    const out = []
+    for await (const frame of encodeGeminiStream(
+      (async function* () {
+        for (const event of events) yield event
+      })(),
+      "gemini-3-pro",
+    )) {
+      out.push(
+        JSON.parse(frame.data ?? "{}") as {
+          usageMetadata?: Record<string, unknown>
+        },
+      )
+    }
+    expect(out.at(-1)?.usageMetadata).toEqual({
+      promptTokenCount: 120,
+      candidatesTokenCount: 15,
+    })
+  })
 })

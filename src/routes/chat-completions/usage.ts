@@ -1,5 +1,6 @@
 import type { CacheCreationUsage } from "~/lib/cache-usage"
 import type { Context } from "hono"
+import type { UsageMetadata } from "~/lib/usage-translation"
 
 import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
 
@@ -11,7 +12,7 @@ import { isNullish } from "~/lib/utils"
 
 type CachedModel = NonNullable<typeof state.models>["data"][number]
 
-export interface UsageInfo {
+export interface UsageInfo extends UsageMetadata {
   prompt_tokens: number
   completion_tokens: number
   total_tokens: number

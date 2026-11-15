@@ -239,7 +239,7 @@ export function updateLastUsage(
       // Ark glm-5.2) put the real input_tokens / cache_* counts here instead
       // of message_start — merge every present usage field.
       const deltaUsage = parsed.usage
-      return {
+      const next: AnthropicStreamingUsage = {
         input_tokens: pickPositiveTokenCount(
           lastUsage?.input_tokens,
           deltaUsage.input_tokens,
@@ -258,6 +258,19 @@ export function updateLastUsage(
           deltaUsage.cache_creation_input_tokens,
         ),
       }
+      const confirmedBilled =
+        (deltaUsage.input_tokens ?? 0) > 0
+        || (deltaUsage.output_tokens ?? 0) > 0
+        || (deltaUsage.cache_read_input_tokens ?? 0) > 0
+        || (deltaUsage.cache_creation_input_tokens ?? 0) > 0
+      if (
+        lastUsage
+        && estimatedMessageStarts.has(lastUsage)
+        && !confirmedBilled
+      ) {
+        estimatedMessageStarts.add(next)
+      }
+      return next
     }
   } catch (error) {
     logger.warn("Failed to parse streaming event data:", error)
