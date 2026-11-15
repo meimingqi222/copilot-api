@@ -84,6 +84,17 @@ test("POST /v1/responses routes responses-capable models to upstream /responses"
         },
       ],
       output_text: "ok",
+      usage: {
+        input_tokens: 1000,
+        output_tokens: 70,
+        total_tokens: 1070,
+        input_tokens_details: {
+          cached_tokens: 600,
+          cache_creation_input_tokens: 200,
+        },
+        output_tokens_details: { reasoning_tokens: 43 },
+        context_window: { used_tokens: 55000, max_tokens: 200000 },
+      },
     }),
     text: () => Promise.resolve(""),
     status: 200,
@@ -111,10 +122,23 @@ test("POST /v1/responses routes responses-capable models to upstream /responses"
     input: "hi",
   })
 
-  const body = await response.json()
+  const body = (await response.json()) as { usage: unknown }
   expect(body).toMatchObject({
     object: "response",
     output_text: "ok",
+  })
+  expect(body.usage).toEqual({
+    input_tokens: 1000,
+    output_tokens: 70,
+    total_tokens: 1070,
+    input_tokens_details: { cached_tokens: 600 },
+    output_tokens_details: { reasoning_tokens: 43 },
+  })
+  expect(statsStore.getUsageStats("test-account-id")[0]).toMatchObject({
+    promptTokens: 200,
+    cacheReadTokens: 600,
+    cacheWriteTokens: 200,
+    completionTokens: 70,
   })
 })
 

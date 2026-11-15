@@ -84,8 +84,12 @@ test("POST /v1/messages routes messages-capable models to upstream /v1/messages"
         stop_reason: "end_turn",
         stop_sequence: null,
         usage: {
-          input_tokens: 1,
-          output_tokens: 1,
+          input_tokens: 200,
+          output_tokens: 70,
+          cache_read_input_tokens: 600,
+          cache_creation_input_tokens: 200,
+          cache_creation: { ephemeral_5m_input_tokens: 200 },
+          context_window: { used_tokens: 55000, max_tokens: 200000 },
         },
       }),
       text: () => Promise.resolve(""),
@@ -123,10 +127,23 @@ test("POST /v1/messages routes messages-capable models to upstream /v1/messages"
   })
   expect(options.headers?.["anthropic-version"]).toBe("2023-06-01")
 
-  const body = await response.json()
+  const body = (await response.json()) as { usage: unknown }
   expect(body).toMatchObject({
     type: "message",
     model: "claude-sonnet-4",
+  })
+  expect(body.usage).toEqual({
+    input_tokens: 200,
+    output_tokens: 70,
+    cache_read_input_tokens: 600,
+    cache_creation_input_tokens: 200,
+    cache_creation: { ephemeral_5m_input_tokens: 200 },
+  })
+  expect(statsStore.getUsageStats("test-account-id")[0]).toMatchObject({
+    promptTokens: 200,
+    cacheReadTokens: 600,
+    cacheWriteTokens: 200,
+    completionTokens: 70,
   })
 })
 

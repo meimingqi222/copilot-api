@@ -8,6 +8,8 @@
 
 import { rmSync } from "node:fs"
 
+import type { AgyStepUsage } from "~/services/antigravity/acp/step-usage"
+
 import {
   normalizeAcpContextUsage,
   normalizeAcpUsage,
@@ -54,6 +56,16 @@ function maxAgyRuns(): number {
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_MAX_RUNS
 }
 
+function cumulativeTotalTokens(usage: AcpUsage | undefined): number {
+  return Math.max(
+    usage?.totalTokens ?? 0,
+    (usage?.inputTokens ?? 0)
+      + (usage?.cachedReadTokens ?? 0)
+      + (usage?.cachedWriteTokens ?? 0)
+      + (usage?.outputTokens ?? 0),
+  )
+}
+
 export function stripBridgeToolPrefix(name: string): string {
   return name.startsWith(MCP_TOOL_PREFIX) ?
       name.slice(MCP_TOOL_PREFIX.length)
@@ -69,6 +81,7 @@ export class AgyRun {
   readonly bridgeDir: string
   sessionId = ""
   client!: AgyAcpClient
+  stepUsage?: AgyStepUsage
 
   /** 已发送到调用方的历史消息签名（用于判断是否可复用当前活着的进程）。 */
   lastMessageCount = 0
@@ -130,6 +143,7 @@ export class AgyRun {
   }
 
   resetTurnUsage(): void {
+    this.stepUsage?.startPrompt()
     this.lastTurnUsage = undefined
     this.reportedTurnUsage = undefined
     this.generationMs = 0
@@ -168,21 +182,32 @@ export class AgyRun {
       keyof AcpUsage
     >) {
       const next = this.lastTurnUsage[key]
-      if (next === undefined) continue
-      const previous =
-        key === "totalTokens" && this.reportedTurnUsage ?
-          (this.reportedTurnUsage.totalTokens
-          ?? (this.reportedTurnUsage.inputTokens ?? 0)
-            + (this.reportedTurnUsage.cachedReadTokens ?? 0)
-            + (this.reportedTurnUsage.cachedWriteTokens ?? 0)
-            + (this.reportedTurnUsage.outputTokens ?? 0))
-        : this.reportedTurnUsage?.[key]
+      if (next === undefined || key === "totalTokens") continue
+      const previous = this.reportedTurnUsage?.[key]
       if (previous === undefined || next > previous)
         delta[key] = Math.max(0, next - (previous ?? 0))
+    }
+    // Explicit totals and component counters can arrive independently. Reconcile
+    // their high-water marks, including fallback totals already sent on the wire.
+    // Thoughts are a subset of output, not another billable token bucket.
+    const totalTokens = cumulativeTotalTokens(this.lastTurnUsage)
+    const totalDelta =
+      totalTokens - cumulativeTotalTokens(this.reportedTurnUsage)
+    if (
+      this.lastTurnUsage.totalTokens !== undefined
+      && (totalDelta > 0
+        || !this.reportedTurnUsage
+        || delta.inputTokens !== undefined
+        || delta.cachedReadTokens !== undefined
+        || delta.cachedWriteTokens !== undefined
+        || delta.outputTokens !== undefined)
+    ) {
+      delta.totalTokens = Math.max(0, totalDelta)
     }
     this.reportedTurnUsage = {
       ...this.reportedTurnUsage,
       ...this.lastTurnUsage,
+      totalTokens,
     }
     if (delta.outputTokens !== undefined) {
       const elapsedMs = this.generationMs - this.reportedOutputGenerationMs

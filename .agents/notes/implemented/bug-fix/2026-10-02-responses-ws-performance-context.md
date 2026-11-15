@@ -33,6 +33,8 @@ summed, and missing historical values remain missing.
 `tests/responses-ws-route.test.ts` checks that both sequential response.create
 turns expose an active performance context during upstream execution.
 `tests/upstream-performance.test.ts` pins isolation and preprocessing error handling.
+The sequential test also strips internal usage extensions from client events;
+its active-context and instrumentation assertions remain unchanged.
 
 Proved: The sequential response.create test failed before context binding and
 passed after it on 2026-10-02; logs are in temp/ws-performance-red.log and

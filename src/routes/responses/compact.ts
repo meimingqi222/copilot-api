@@ -8,6 +8,7 @@ import type {
 import type { ResponsesCompactPayload } from "~/services/responses/compact"
 
 import { HTTPError } from "~/lib/error"
+import { publicUsageResponse } from "~/lib/public-usage"
 import { clampEffortForModel } from "~/lib/reasoning-effort"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { readJsonBody } from "~/lib/request-body"
@@ -140,5 +141,5 @@ export async function handleResponsesCompact(c: Context) {
     outputObserved: true,
     protocolTerminal: `response.${response.status ?? "completed"}`,
   })
-  return c.json(response)
+  return c.json(publicUsageResponse(response))
 }

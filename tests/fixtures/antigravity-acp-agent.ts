@@ -1,11 +1,46 @@
 #!/usr/bin/env bun
 // A deterministic external ACP peer; the gateway, RPC client and MCP callback stay real.
-import { readFileSync } from "node:fs"
+import { Database } from "bun:sqlite"
+import { mkdirSync, readFileSync } from "node:fs"
+import path from "node:path"
 import { createInterface } from "node:readline"
+
+import { ProtobufEncoder } from "~/services/windsurf/protobuf"
 
 let callbackUrl = ""
 let turn = 0
+let nativeSteps = false
+let generationIndex = 0
 const sessionId = `session-${process.pid}`
+function nativeGeneration(input: number, cache: number, output: number) {
+  const dir = path.join(
+    process.argv[process.argv.indexOf("--gemini-dir") + 1]!,
+    "antigravity-cli",
+    "conversations",
+  )
+  mkdirSync(dir, { recursive: true })
+  const db = new Database(path.join(dir, `${sessionId}.db`))
+  try {
+    db.run(
+      "CREATE TABLE IF NOT EXISTS gen_metadata (idx INTEGER PRIMARY KEY, data BLOB)",
+    )
+    const data = new ProtobufEncoder()
+    data.writeNested(1, (meta) => {
+      meta.writeNested(4, (usage) => {
+        usage.writeVarint(2, input)
+        usage.writeVarint(3, output)
+        usage.writeVarint(5, cache)
+        usage.writeVarint(9, 1)
+      })
+    })
+    db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
+      generationIndex++,
+      data.toUint8Array(),
+    ])
+  } finally {
+    db.close()
+  }
+}
 function write(value: unknown) {
   process.stdout.write(`${JSON.stringify(value)}\n`)
 }
@@ -54,6 +89,7 @@ async function handle(raw: string) {
     turn++
     const text =
       request.params?.prompt?.map((block) => block.text ?? "").join("\n") ?? ""
+    nativeSteps ||= text.includes("NATIVE_STEPS")
     let answer = `${sessionId}:${turn}`
     let usage: Record<string, number> = {
       inputTokens: 120,
@@ -69,6 +105,10 @@ async function handle(raw: string) {
     if (text.includes("[Conversation Replay]")) {
       answer = `replayed:${text}`
     } else if (text.includes("TOOL_LOOP") && turn === 1) {
+      if (nativeSteps) {
+        nativeGeneration(10, 20, 2)
+        nativeGeneration(30, 70, 5)
+      }
       if (text.includes("TIMING")) await Bun.sleep(150)
       const snapshots = text.includes("SNAPSHOT")
       const skipSecondSnapshot = text.includes("SNAPSHOT_GAP")
@@ -83,6 +123,7 @@ async function handle(raw: string) {
           },
         })
       const first = await callTool("first")
+      if (nativeSteps) nativeGeneration(50, 60, 7)
       if (text.includes("TIMING")) await Bun.sleep(150)
       context(54000)
       if (snapshots && !skipSecondSnapshot)
@@ -101,12 +142,22 @@ async function handle(raw: string) {
           usage: { cachedReadTokens: 880 },
         })
       const second = await callTool("second")
+      if (nativeSteps) nativeGeneration(40, 690, 8)
       if (text.includes("TIMING")) await Bun.sleep(150)
       context(55000)
       answer = `${sessionId}:${first}:${second}`
       if (text.includes("PARTIAL"))
         usage = { inputTokens: 120, outputTokens: 20 }
+      if (nativeSteps)
+        usage = {
+          inputTokens: 130,
+          cachedReadTokens: 840,
+          outputTokens: 22,
+          thoughtTokens: 4,
+          totalTokens: 992,
+        }
     }
+    if (nativeSteps && turn > 1) nativeGeneration(120, 880, 20)
     if (
       text.includes("SAME_VISIBLE")
       && turn === 1

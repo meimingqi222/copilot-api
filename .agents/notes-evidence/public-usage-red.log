@@ -1,0 +1,270 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/responses-ws-pump.test.ts:
+38 |         { data: JSON.stringify({ type: "response.created", response }) },
+39 |         { data: JSON.stringify({ type: "response.completed", response }) },
+40 |       ]),
+41 |       { onCommit() {}, onFrame(frame) { observed.push(frame) } },
+42 |     )
+43 |     expect(sent.map((data) => JSON.parse(data).response.usage)).toEqual([usage, usage])
+                                                                     ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
++     "context_window": {
++       "max_tokens": 200000,
++       "used_tokens": 55000,
++     },
+      "input_tokens": 1000,
+      "input_tokens_details": {
+        "cached_tokens": 600,
+      },
+      "output_tokens": 70,
+      "output_tokens_details": {
+        "reasoning_tokens": 43,
+      },
+      "total_tokens": 1070,
++     "usage_status": "pending",
+    },
+    {
++     "context_window": {
++       "max_tokens": 200000,
++       "used_tokens": 55000,
++     },
+      "input_tokens": 1000,
+      "input_tokens_details": {
+        "cached_tokens": 600,
+      },
+      "output_tokens": 70,
+      "output_tokens_details": {
+        "reasoning_tokens": 43,
+      },
+      "total_tokens": 1070,
++     "usage_status": "pending",
+    },
+  ]
+
+- Expected  - 0
++ Received  + 10
+
+      at <anonymous> (tests/responses-ws-pump.test.ts:43:65)
+(fail) Responses WebSocket pump > only sends standard usage while keeping internal accounting metadata [4.89ms]
+(pass) Responses WebSocket pump > keeps empty lifecycle frames retryable when the upstream drops [0.11ms]
+(pass) Responses WebSocket pump > keeps a 64-frame control burst retryable under the byte cap [0.13ms]
+(pass) Responses WebSocket pump > reports why the bounded control-frame buffer commits [0.22ms]
+(pass) Responses WebSocket pump > does not treat an empty output container as first content [0.04ms]
+(pass) Responses WebSocket pump > uses terminal output as the first-observed-content fallback [0.05ms]
+(pass) Responses WebSocket pump > returns response.incomplete for usage accounting [0.04ms]
+(pass) Responses WebSocket pump > collects response.incomplete for non-streaming WS clients [0.09ms]
+(pass) Responses WebSocket pump > does not send after the request signal is aborted [0.24ms]
+
+tests/forwarding-performance.test.ts:
+88 |       const events = payloads.map((payload) => ({ data: JSON.stringify(payload) }))
+89 |       if (batched) await writeSseEvents(stream, events)
+90 |       else for (const event of events) await writeSseEvent(stream, event.data)
+91 |
+92 |       const sent = stream.frames.join("").split("\n").filter((line) => line.startsWith("data: ")).map((line) => JSON.parse(line.slice(6)))
+93 |       expect(sent).toEqual([
+                        ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "usage": {
+        "completion_tokens": 70,
+        "completion_tokens_details": {
+          "reasoning_tokens": 43,
+        },
++       "context_window": {
++         "max_tokens": 200000,
++         "used_tokens": 55000,
++       },
+        "prompt_tokens": 1000,
+        "prompt_tokens_details": {
+          "audio_tokens": 11,
++         "cache_creation": {
++           "ephemeral_5m_input_tokens": 200,
++         },
++         "cache_creation_input_tokens": 200,
+          "cached_tokens": 600,
+        },
+        "total_tokens": 1070,
++       "usage_status": "pending",
+      },
+    },
+    {
+      "message": {
+        "usage": {
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 200,
+          },
+          "cache_creation_input_tokens": 200,
+          "cache_read_input_tokens": 600,
++         "context_window": {
++           "max_tokens": 200000,
++           "used_tokens": 55000,
++         },
+          "input_tokens": 200,
+          "output_tokens": 70,
+          "server_tool_use": {
+            "web_search_requests": 1,
+          },
+          "service_tier": "standard",
++         "usage_status": "pending",
+        },
+      },
+      "type": "message_start",
+    },
+    {
+      "type": "message_delta",
+      "usage": {
++       "context_window": {
++         "max_tokens": 200000,
++         "used_tokens": 55000,
++       },
+        "input_tokens": 0,
+        "output_tokens": 0,
++       "usage_status": "pending",
+      },
+    },
+    {
+      "response": {
+        "usage": {
++         "context_window": {
++           "max_tokens": 200000,
++           "used_tokens": 55000,
++         },
+          "input_tokens": 1000,
+          "input_tokens_details": {
++           "cache_creation": {
++             "ephemeral_5m_input_tokens": 200,
++           },
++           "cache_creation_input_tokens": 200,
+            "cached_tokens": 600,
+          },
+          "output_tokens": 70,
+          "output_tokens_details": {
+            "reasoning_tokens": 43,
+          },
+          "total_tokens": 1070,
++         "usage_status": "pending",
+        },
+      },
+      "type": "response.completed",
+    },
+  ]
+
+- Expected  - 0
++ Received  + 28
+
+      at <anonymous> (tests/forwarding-performance.test.ts:93:20)
+(fail) forwarding performance helpers > public SSE strips internal usage without changing standard counters (batch=false) [0.22ms]
+88 |       const events = payloads.map((payload) => ({ data: JSON.stringify(payload) }))
+89 |       if (batched) await writeSseEvents(stream, events)
+90 |       else for (const event of events) await writeSseEvent(stream, event.data)
+91 |
+92 |       const sent = stream.frames.join("").split("\n").filter((line) => line.startsWith("data: ")).map((line) => JSON.parse(line.slice(6)))
+93 |       expect(sent).toEqual([
+                        ^
+error: expect(received).toEqual(expected)
+
+  [
+    {
+      "usage": {
+        "completion_tokens": 70,
+        "completion_tokens_details": {
+          "reasoning_tokens": 43,
+        },
++       "context_window": {
++         "max_tokens": 200000,
++         "used_tokens": 55000,
++       },
+        "prompt_tokens": 1000,
+        "prompt_tokens_details": {
+          "audio_tokens": 11,
++         "cache_creation": {
++           "ephemeral_5m_input_tokens": 200,
++         },
++         "cache_creation_input_tokens": 200,
+          "cached_tokens": 600,
+        },
+        "total_tokens": 1070,
++       "usage_status": "pending",
+      },
+    },
+    {
+      "message": {
+        "usage": {
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 200,
+          },
+          "cache_creation_input_tokens": 200,
+          "cache_read_input_tokens": 600,
++         "context_window": {
++           "max_tokens": 200000,
++           "used_tokens": 55000,
++         },
+          "input_tokens": 200,
+          "output_tokens": 70,
+          "server_tool_use": {
+            "web_search_requests": 1,
+          },
+          "service_tier": "standard",
++         "usage_status": "pending",
+        },
+      },
+      "type": "message_start",
+    },
+    {
+      "type": "message_delta",
+      "usage": {
++       "context_window": {
++         "max_tokens": 200000,
++         "used_tokens": 55000,
++       },
+        "input_tokens": 0,
+        "output_tokens": 0,
++       "usage_status": "pending",
+      },
+    },
+    {
+      "response": {
+        "usage": {
++         "context_window": {
++           "max_tokens": 200000,
++           "used_tokens": 55000,
++         },
+          "input_tokens": 1000,
+          "input_tokens_details": {
++           "cache_creation": {
++             "ephemeral_5m_input_tokens": 200,
++           },
++           "cache_creation_input_tokens": 200,
+            "cached_tokens": 600,
+          },
+          "output_tokens": 70,
+          "output_tokens_details": {
+            "reasoning_tokens": 43,
+          },
+          "total_tokens": 1070,
++         "usage_status": "pending",
+        },
+      },
+      "type": "response.completed",
+    },
+  ]
+
+- Expected  - 0
++ Received  + 28
+
+      at <anonymous> (tests/forwarding-performance.test.ts:93:20)
+(fail) forwarding performance helpers > public SSE strips internal usage without changing standard counters (batch=true) [0.13ms]
+(pass) forwarding performance helpers > writeSseEvents batches multiple frames into one write call [0.03ms]
+(pass) forwarding performance helpers > writeSseEvents falls back to writeSSE for a single event [0.01ms]
+(pass) forwarding performance helpers > writeSseEvent remains available for single-event paths [0.01ms]
+
+ 11 pass
+ 3 fail
+ 38 expect() calls
+Ran 14 tests across 2 files. [110.00ms]

@@ -19,6 +19,13 @@ placeholders without this marker. ACP can defer all billable usage until its
 tool loop finishes; retaining the opening estimate in those intermediate HTTP
 segments charges it again when the final bill arrives.
 
+ACP now separates standard per-generation client usage from native billing.
+`src/lib/usage.ts` accumulates native billing across calls in one request and
+consumes it once, scoped to account and request ID. User totals, statistics and
+pricing use those billing rounds; client usage rounds must not replace them.
+`tests/usage-recorder.test.ts::native accounting is consumed once and scoped to the account and request`
+checks accumulation, cache buckets, cost and stale/mismatched override rejection.
+
 Count a finalized protocol failure as a daily error even if its HTTP response was 200. Confirmed client cancellations count as requests without increasing server-error counters. Explicit ClientAbortError and native AbortError on an aborted client signal return an empty 499 before error-level logging in `src/lib/error.ts`; internal timeout aborts remain failures. `src/lib/client-abort.ts` holds the shared identity without route/provider dependencies, and `src/lib/request-lifecycle.ts` preserves its existing re-export. Request logs normalize a pre-stream cancelled error to 499/info, while an already-open SSE response keeps its actual wire status. Merge defined usage snapshot fields within each search round and add the final snapshots across distinct rounds. Use the same connection-plus-credential ID set for account filters across usage query variants.
 
 ## Alternatives considered

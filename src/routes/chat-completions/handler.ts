@@ -10,6 +10,7 @@ import {
   updateMemoryTrace,
 } from "~/lib/memory-diagnostics"
 import { connectionProvider } from "~/lib/provider-connections"
+import { publicUsageResponse } from "~/lib/public-usage"
 import { clampEffortForModel } from "~/lib/reasoning-effort"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import {
@@ -176,7 +177,7 @@ async function handleCompletionWithTrace(c: Context, memoryTraceId: string) {
         elapsed,
       )
       endMemoryTrace(memoryTraceId, "completed")
-      return c.json(result.response)
+      return c.json(publicUsageResponse(result.response))
     }
 
     return handleStreamingResponse({

@@ -7,6 +7,7 @@
  */
 
 import { HTTPError } from "~/lib/error"
+import { publicUsageResponse } from "~/lib/public-usage"
 import {
   ClientAbortError,
   getKnownRouteErrorDetails,
@@ -129,5 +130,5 @@ export async function sendJson(
   payload: unknown,
   signal?: AbortSignal,
 ): Promise<boolean> {
-  return sendText(ws, JSON.stringify(payload), signal)
+  return sendText(ws, JSON.stringify(publicUsageResponse(payload)), signal)
 }

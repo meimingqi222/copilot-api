@@ -44,19 +44,51 @@ the complete transcript, including the caller's updated instructions.
 `src/services/antigravity/acp/client.ts` normalizes billable input to uncached
 tokens: OpenAI/Gemini inclusive prompt totals subtract cache reads/writes;
 ACP/Anthropic input already excludes them. Gemini output includes thought tokens.
-The run retains cumulative snapshots and emits only unreported deltas across tool
-segments, merging partial counters rather than discarding earlier cache fields.
-Before any billable report it emits explicit zero counters with
-`usage_status: "pending"`, preventing route-level input estimates from being
-charged. TPS uses the same accumulated active intervals as the output counter,
-excluding caller tool waiting, through a request-scoped override in
-`src/lib/usage.ts`; aggregate tool output is ineligible for segment decode TPS.
+The run retains cumulative snapshots and accounts only unreported deltas across
+tool segments, merging partial counters rather than discarding earlier cache
+fields. Its total high-water mark includes both explicit totals and component
+fallbacks already charged, so late totals do not bill those tokens twice. Cache
+reads/writes count toward totals; thoughts are already included in output.
+TPS uses the same accumulated active intervals as the output counter, excluding
+caller tool waiting; aggregate tool output is ineligible for segment decode TPS.
 
-ACP `usage_update.used/size` is independent context occupancy, exposed only as
+Spec change (2026-11-15): public ACP usage describes the last native generation
+of this HTTP step, not all generations of the still-running native prompt.
+`src/services/antigravity/acp/step-usage.ts` reads agy 1.5.x's session SQLite
+`gen_metadata` read-only, extracting only the ModelUsageStats envelope. Completed
+generation records are available at MCP pauses, before the aggregate ACP prompt
+result. A cursor prevents duplicate accounting, and a new native user prompt
+resets its baseline. All unseen generations count toward internal billing, even
+when the HTTP step includes hidden native calls; only the latest generation is
+translated to standard client usage. The separately merged ACP aggregate can
+still settle delayed billing. Neither source is replaced with `used/size`.
+
+`src/lib/usage.ts` consumes a once-only account/request-scoped accounting override
+before user totals, costs, statistics and logs. It retains full native billing
+and the matching active-time TPS independently of client counters. Multiple
+native calls within one HTTP request accumulate rather than overwrite each
+other, and pricing follows their billing rounds rather than client usage rounds.
+If native
+step records are unavailable, client counters remain zero with internal
+`usage_status: "pending"` instead of inventing per-step counts or exposing the
+prompt aggregate. This also suppresses route-level input estimates; real ACP
+billing is still recorded through the override.
+
+ACP `usage_update.used/size` is independent context occupancy, retained as internal
 `context_window` metadata. `src/services/ir/usage.ts` and
 `src/lib/usage-translation.ts` preserve it and pending status through result and
 stream codecs; occupancy snapshots replace rather than accumulate. Pending zero
 counters must supersede estimated Messages message-start counts.
+
+Spec change (2026-11-15): Chat, Messages and Responses expose standard usage only.
+`src/lib/public-usage.ts` strips `context_window` and `usage_status` at the final
+JSON, SSE (single and batched) and Responses WebSocket send boundaries, after
+accounting has consumed the internal metadata. OpenAI input detail objects also
+drop internal cache-write fields; inclusive input totals and cached/reasoning
+subsets stay unchanged. Messages keeps its standard cache-read, cache-write and
+TTL fields. Sanitizing copies rather than mutates accounting objects and does not
+traverse generated content or tool arguments. Downstream diagnostics record the
+sanitized bytes that were actually sent.
 
 ## Alternatives considered
 
@@ -76,10 +108,13 @@ reads. Lazy calls need not share agy's internal wrapper IDs: the caller only nee
 a stable ID for the parked callback and its subsequent tool result. This change
 does not grant direct access to the client's filesystem; the client must still
 supply and execute its tools.
-The optional occupancy extension does not guarantee arbitrary clients display it;
-if upstream sends no occupancy notification the bridge cannot invent one. Fresh
-replay is deliberately preferred to unsafe native-session reuse when history
-changed or multiple native sessions have the same visible reply.
+Context occupancy is not substituted for billable input or advertised as a public
+protocol extension; clients use their standard usage fields. Native SQLite
+layout is version-specific; an unavailable layout cannot provide per-step
+client usage and does not justify falling back to an accumulated context claim.
+Stripping pending metadata inside codecs instead of at egress would revive estimated intermediate
+charges. Fresh replay is deliberately preferred to unsafe native-session reuse
+when history changed or multiple native sessions have the same visible reply.
 
 ## Verification
 
@@ -98,6 +133,22 @@ All three tests passed after the fixes.
 - `tests/antigravity-acp-bridge.test.ts::HTTP accounting does not charge estimates or divide cumulative output by the last segment`
 - `tests/antigravity-acp.test.ts::antigravity acp usage normalization`
 - `tests/usage-translation.test.ts`
+- `tests/antigravity-acp.test.ts::reconciles explicit totals across partial and repeated snapshots`
+- `tests/antigravity-acp.test.ts::late total and component counters reconcile caches without counting thoughts twice`
+- `tests/antigravity-acp-bridge.test.ts::native step usage is independent of aggregate billing and resets on the next prompt`
+- `tests/usage-recorder.test.ts::native accounting is consumed once and scoped to the account and request`
+
+Proved: the natural pre-fix total reconciliation test failed on the missing
+60-token delta between explicit reports; output is saved in
+`.agents/notes-evidence/acp-late-total-red.log`. Before native step extraction,
+both streaming and non-streaming bridge assertions returned zero instead of the
+completed generation's 100 input / 5 output; output is saved in
+`.agents/notes-evidence/acp-native-step-red.log`. The same assertions now pass,
+including a hidden generation that must increase internal billing but not the
+latest-step usage, and a subsequent prompt that must not rebill the earlier
+session. Missing-native-data controls retain the full ACP bill while emitting
+only zero per-step counters. The accounting guard test verifies once-only
+consumption and rejection of another account's or request's override.
 
 Proved: the natural pre-fix bridge run failed on wrong-session continuation,
 discarded new instructions and incorrect summed billing (missing usage, 1310
@@ -120,3 +171,18 @@ turn; its agy process remained the same across turns. A separate no-tools contro
 also passed. This validates authenticated tool selection and result round-trips,
 not merely helper discovery. Temporary services and credential copies were removed;
 the production service was not replaced or restarted.
+
+- `tests/forwarding-performance.test.ts::public SSE strips internal usage without changing standard counters`
+- `tests/responses-ws-pump.test.ts::only sends standard usage while keeping internal accounting metadata`
+- `tests/chat-completions-via-messages.test.ts::POST /v1/chat/completions routes to a messages-only connection`
+- `tests/messages-route.test.ts::POST /v1/messages routes messages-capable models`
+- `tests/responses-route.test.ts::POST /v1/responses routes responses-capable models`
+- `tests/responses-via-messages.test.ts::retains split Messages stream usage`
+- `tests/responses-ws-route.test.ts::WS /responses supports sequential response.create requests`
+
+Proved: before egress filtering, the new single-SSE, batched-SSE and WebSocket
+assertions failed because internal occupancy/pending fields reached the client;
+OpenAI SSE also leaked cache-write detail fields. The three failures are saved
+in `.agents/notes-evidence/public-usage-red.log`. The same tests pass after the
+change. HTTP route assertions additionally verify exact standard usage and that
+internal statistics still retain uncached input and both cache buckets.

@@ -4,6 +4,7 @@ import type {
 } from "~/services/protocols/responses/types"
 
 import { ClientAbortError } from "~/lib/request-lifecycle"
+import { publicUsageData } from "~/lib/public-usage"
 
 import {
   TERMINAL_RESPONSE_TYPES,
@@ -62,11 +63,12 @@ export async function pumpWithLeadingBuffer(
   let bufferedBytes = 0
 
   const forward = async (data: string) => {
+    const publicData = publicUsageData(data)
     const started = hooks.onWrite ? performance.now() : undefined
-    if (!(await sendText(ws, data))) {
+    if (!(await sendText(ws, publicData))) {
       throw new ClientAbortError()
     }
-    hooks.onSent?.(data)
+    hooks.onSent?.(publicData)
     if (started !== undefined) hooks.onWrite?.(performance.now() - started)
   }
 

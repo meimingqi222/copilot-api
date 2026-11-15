@@ -3,6 +3,7 @@ import type { Context } from "hono"
 import { streamSSE } from "hono/streaming"
 
 import { logger } from "~/lib/logger"
+import { publicUsageData } from "~/lib/public-usage"
 import { observeDownstreamEvent } from "~/lib/stream-diagnostics"
 import {
   markPerformanceWrite,
@@ -63,11 +64,12 @@ export async function writeSseEvent(
     if (parsed !== undefined) markPerformanceText(context, parsed)
     else observePerformanceData(context, data)
   }
+  const publicData = publicUsageData(data)
   const started = hasRequestPerformance(context) ? performance.now() : undefined
   try {
     await stream.writeSSE({
       ...(event ? { event } : {}),
-      data,
+      data: publicData,
     })
   } finally {
     if (started !== undefined)
@@ -77,7 +79,7 @@ export async function writeSseEvent(
         performance.now() - started,
       )
   }
-  observeDownstreamEvent(context, data, event)
+  observeDownstreamEvent(context, publicData, event)
   if (context) markPerformanceWrite(context)
 }
 
@@ -112,7 +114,11 @@ export async function writeSseEvents(
     const context = performanceStreams.get(stream)
     if (context)
       for (const item of events) observePerformanceData(context, item.data)
-    const batch = events
+    const publicEvents = events.map((item) => ({
+      ...item,
+      data: publicUsageData(item.data),
+    }))
+    const batch = publicEvents
       .map((item) => formatSseFrame(item.data, item.event))
       .join("")
     const started =
@@ -127,7 +133,7 @@ export async function writeSseEvents(
           performance.now() - started,
         )
     }
-    for (const item of events)
+    for (const item of publicEvents)
       observeDownstreamEvent(context, item.data, item.event)
     if (context) markPerformanceWrite(context)
     return

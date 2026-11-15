@@ -394,25 +394,21 @@ for (const endpoint of ["responses", "chat/completions"]) {
         expect(
           data.findLast((frame) => frame.type === "response.completed")
             ?.response.usage,
-        ).toMatchObject({
+        ).toEqual({
           input_tokens: 920,
           output_tokens: 70,
           total_tokens: 990,
           input_tokens_details: {
             cached_tokens: 600,
-            cache_creation_input_tokens: 200,
-            cache_creation: { ephemeral_1h_input_tokens: 150 },
           },
         })
       } else {
-        expect(data.findLast((frame) => frame.usage)?.usage).toMatchObject({
+        expect(data.findLast((frame) => frame.usage)?.usage).toEqual({
           prompt_tokens: 920,
           completion_tokens: 70,
           total_tokens: 990,
           prompt_tokens_details: {
             cached_tokens: 600,
-            cache_creation_input_tokens: 200,
-            cache_creation: { ephemeral_1h_input_tokens: 150 },
           },
         })
       }

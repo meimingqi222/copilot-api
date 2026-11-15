@@ -16,7 +16,7 @@ import type { CacheCreationUsage } from "~/lib/cache-usage"
  * background and the conservation invariant this preserves.
  */
 
-/** Optional occupancy/availability extensions, never billable token counts. */
+/** Internal occupancy/availability metadata; removed at public response egress. */
 export interface UsageMetadata {
   context_window?: { used_tokens: number; max_tokens: number }
   usage_status?: "pending"

@@ -13,6 +13,7 @@ import {
   resolveRetryableCode,
 } from "~/lib/error-builder"
 import { logger } from "~/lib/logger"
+import { publicUsageResponse } from "~/lib/public-usage"
 import { markPerformanceDispatch } from "~/lib/request-performance"
 import { getKnownRouteErrorDetails } from "~/lib/request-lifecycle"
 import {
@@ -130,7 +131,9 @@ export async function handleAnthropicViaConnection(
         finishReason: "usage_missing",
       })
     }
-    return c.json(result.response as unknown as AnthropicResponse)
+    return c.json(
+      publicUsageResponse(result.response as unknown as AnthropicResponse),
+    )
   }
 
   // Phase 1: dispatch BEFORE the downstream SSE response exists (same

@@ -36,7 +36,7 @@ import {
 
 describe("context occupancy is separate from billed usage", () => {
   for (const pending of [true, false, undefined]) {
-    test(`public result and stream codecs preserve metadata (pending=${pending})`, async () => {
+    test(`internal result and stream codecs preserve accounting metadata (pending=${pending})`, async () => {
       const metadata = {
         ...(pending !== undefined && {
           context_window: { used_tokens: 12000, max_tokens: 128000 },

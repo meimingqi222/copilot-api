@@ -136,6 +136,7 @@ loopbackTest.each([false, true])(
             input_tokens: 1,
             output_tokens: 1,
             total_tokens: 2,
+            context_window: { used_tokens: 55000, max_tokens: 200000 },
           },
         }),
         text: () => Promise.resolve(""),
@@ -167,9 +168,15 @@ loopbackTest.each([false, true])(
     const first = JSON.parse(await queue.next()) as {
       object: string
       output_text: string
+      usage: unknown
     }
     expect(first.object).toBe("response")
     expect(first.output_text).toBe(firstInput)
+    expect(first.usage).toEqual({
+      input_tokens: 1,
+      output_tokens: 1,
+      total_tokens: 2,
+    })
 
     ws.send(
       JSON.stringify({

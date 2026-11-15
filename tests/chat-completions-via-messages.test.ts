@@ -52,7 +52,14 @@ test("POST /v1/chat/completions routes to a messages-only connection via chat→
         model: "claude-sonnet-4",
         stop_reason: "end_turn",
         stop_sequence: null,
-        usage: { input_tokens: 3, output_tokens: 5 },
+        usage: {
+          input_tokens: 200,
+          output_tokens: 70,
+          cache_read_input_tokens: 600,
+          cache_creation_input_tokens: 200,
+          cache_creation: { ephemeral_5m_input_tokens: 200 },
+          context_window: { used_tokens: 55000, max_tokens: 200000 },
+        },
       }),
       text: () => Promise.resolve(""),
       status: 200,
@@ -76,9 +83,22 @@ test("POST /v1/chat/completions routes to a messages-only connection via chat→
   expect(response.status).toBe(200)
   const body = (await response.json()) as {
     choices: Array<{ message: { content: string }; finish_reason: string }>
+    usage: unknown
   }
   expect(body.choices[0].message.content).toBe("Hello from Claude")
   expect(body.choices[0].finish_reason).toBe("stop")
+  expect(body.usage).toEqual({
+    prompt_tokens: 1000,
+    completion_tokens: 70,
+    total_tokens: 1070,
+    prompt_tokens_details: { cached_tokens: 600 },
+  })
+  expect(statsStore.getUsageStats("anthropic-conn")[0]).toMatchObject({
+    promptTokens: 200,
+    cacheReadTokens: 600,
+    cacheWriteTokens: 200,
+    completionTokens: 70,
+  })
 
   // Upstream must be hit at /v1/messages with the translated Anthropic payload.
   const [url, options] = fetchMock.mock.calls[0] as [string, { body?: string }]

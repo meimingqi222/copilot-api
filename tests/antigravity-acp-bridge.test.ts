@@ -306,16 +306,98 @@ describe("ACP public bridge continuations", () => {
     },
   )
 
+  for (const stream of [false, true]) {
+    loopbackTest(
+      `native step usage is independent of aggregate billing and resets on the next prompt: ${stream}`,
+      async () => {
+        statsStore.clearUsageStatsForTest()
+        try {
+          const messages: Message[] = [
+            { role: "user", content: "TOOL_LOOP NATIVE_STEPS" },
+          ]
+          const expected = [
+            { prompt_tokens: 100, completion_tokens: 5, total_tokens: 105 },
+            { prompt_tokens: 110, completion_tokens: 7, total_tokens: 117 },
+            { prompt_tokens: 730, completion_tokens: 8, total_tokens: 738 },
+          ]
+          for (let step = 0; step < 3; step++) {
+            const c = await requestContext()
+            c.set("model", "gemini-3.8-flash")
+            c.set("accountId", connection.id)
+            const response = await complete(messages, true, stream, c)
+            expect(response.usage).toMatchObject(expected[step]!)
+            expect(
+              response.usage?.completion_tokens_details?.reasoning_tokens,
+            ).toBe(1)
+            handleNonStreamingResponse(c, response, 12345, 1)
+            messages.push(assistant(response))
+            if (step < 2)
+              messages.push({
+                role: "tool",
+                tool_call_id: response.choices[0].message.tool_calls![0].id,
+                content: `result-${step}`,
+              })
+          }
+          expect(statsStore.getUsageStats(connection.id)[0]).toMatchObject({
+            promptTokens: 130,
+            cacheReadTokens: 840,
+            completionTokens: 22,
+            totalTokens: 992,
+          })
+          const c = await requestContext()
+          c.set("model", "gemini-3.8-flash")
+          c.set("accountId", connection.id)
+          const next = await complete(
+            [
+              ...messages,
+              {
+                role: "user",
+                content: "Continue without repeating previous results",
+              },
+            ],
+            true,
+            stream,
+            c,
+          )
+          expect(next.usage).toMatchObject({
+            prompt_tokens: 1000,
+            completion_tokens: 20,
+            total_tokens: 1020,
+          })
+          handleNonStreamingResponse(c, next, 12345, 1)
+          expect(statsStore.getUsageStats(connection.id)[0]).toMatchObject({
+            promptTokens: 250,
+            cacheReadTokens: 1720,
+            completionTokens: 42,
+            totalTokens: 2012,
+          })
+        } finally {
+          statsStore.clearUsageStatsForTest()
+        }
+      },
+    )
+  }
+
   for (const mode of ["", "SNAPSHOT", "SNAPSHOT_GAP", "PARTIAL"]) {
     loopbackTest(
       `tool loop bills once and exposes context occupancy: ${mode || "final-only"}`,
       async () => {
+        statsStore.clearUsageStatsForTest()
         const messages: Message[] = [
           { role: "user", content: `TOOL_LOOP ${mode}` },
         ]
         const responses: ChatCompletionResponse[] = []
         for (let step = 0; step < 3; step++) {
-          const response = await complete(messages, true, mode === "SNAPSHOT")
+          const c = await requestContext()
+          c.set("model", "gemini-3.8-flash")
+          c.set("accountId", connection.id)
+          const response = await complete(
+            messages,
+            true,
+            mode === "SNAPSHOT",
+            c,
+          )
+          handleNonStreamingResponse(c, response, 12345, 1)
           responses.push(response)
           messages.push(assistant(response))
           if (step < 2) {
@@ -327,24 +409,21 @@ describe("ACP public bridge continuations", () => {
             })
           }
         }
-        expect(
-          responses
-            .map((response) => response.usage?.prompt_tokens ?? -10000)
-            .reduce((a, b) => a + b),
-        ).toBe(1000)
-        expect(
-          responses
-            .map((response) => response.usage?.completion_tokens ?? -10000)
-            .reduce((a, b) => a + b),
-        ).toBe(20)
-        expect(
-          responses
-            .map(
-              (response) =>
-                response.usage?.prompt_tokens_details?.cached_tokens ?? 0,
-            )
-            .reduce((a, b) => a + b),
-        ).toBe(880)
+        // This peer supplies no native generation records. Preserve real billing,
+        // but never publish the prompt aggregate or occupancy as per-step usage.
+        for (const response of responses)
+          expect(response.usage).toMatchObject({
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            usage_status: "pending",
+          })
+        expect(statsStore.getUsageStats(connection.id)[0]).toMatchObject({
+          promptTokens: 120,
+          cacheReadTokens: 880,
+          completionTokens: 20,
+          totalTokens: 1020,
+        })
         expect(responses.at(-1)!.usage).toMatchObject({
           context_window: { used_tokens: 55000, max_tokens: 200000 },
         })
@@ -361,6 +440,7 @@ describe("ACP public bridge continuations", () => {
         expect(responses.at(-1)!.choices[0].message.content).toContain(
           "result-0:result-1",
         )
+        statsStore.clearUsageStatsForTest()
       },
     )
   }

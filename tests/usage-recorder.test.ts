@@ -1,9 +1,15 @@
 import type { Context } from "hono"
+import { Hono } from "hono"
 
 import { beforeEach, describe, expect, test } from "bun:test"
 
+import {
+  bindRequestLogContext,
+  createDetachedRequestLog,
+} from "~/lib/request-log"
 import { statsStore } from "~/lib/stats-store"
-import { recordUsage } from "~/lib/usage"
+import { addUsageAccounting, recordUsage } from "~/lib/usage"
+import { createUsagePricingRecorder } from "~/lib/usage-pricing-rounds"
 import {
   recordDirectStreamingUsage,
   updateLastUsage,
@@ -30,6 +36,93 @@ function rowCount(accountId = "acc-1"): number {
     .getUsageStats(accountId, date, date)
     .reduce((n, s) => n + Object.keys(s.models).length, 0)
 }
+
+test("native accounting is consumed once and scoped to the account and request", async () => {
+  for (const match of ["both", "wrong-account", "wrong-request"]) {
+    statsStore.clearUsageStatsForTest()
+    statsStore.setModelPricing("test-model", {
+      promptPricePer1k: 1,
+      completionPricePer1k: 2,
+      cacheReadPricePer1k: 0.1,
+      cacheWritePricePer1k: 0.5,
+    })
+    let c!: Context
+    await new Hono()
+      .get("/", (context) => {
+        c = context
+        c.set("model", "test-model")
+        return c.text("ok")
+      })
+      .request("/")
+    bindRequestLogContext(
+      c,
+      createDetachedRequestLog({
+        requestId:
+          match === "wrong-request" ? "old-request" : "current-request",
+      }),
+    )
+    const accountId = match === "wrong-account" ? "another-account" : "acc-1"
+    addUsageAccounting(c, {
+      accountId,
+      usage: {
+        promptTokens: 10,
+        cacheReadTokens: 20,
+        cacheWriteTokens: 5,
+        completionTokens: 4,
+        totalTokens: 39,
+      },
+    })
+    addUsageAccounting(c, {
+      accountId,
+      usage: {
+        promptTokens: 2,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        completionTokens: 1,
+        totalTokens: 3,
+      },
+    })
+    if (match === "wrong-request")
+      bindRequestLogContext(
+        c,
+        createDetachedRequestLog({ requestId: "current-request" }),
+      )
+    // The orchestration layer can also retain client-visible usage rounds;
+    // pricing must follow native billing, not that different set of counters.
+    createUsagePricingRecorder(
+      c,
+      "acc-1",
+    )({ source: "reported", inputTokens: 5000, outputTokens: 1000 })
+    for (let call = 0; call < 2; call++)
+      recordUsage({
+        c,
+        accountId: "acc-1",
+        model: "test-model",
+        promptTokens: 1,
+        completionTokens: 2,
+        totalTokens: 3,
+      })
+    expect(modelEntry()).toMatchObject(
+      match === "both" ?
+        {
+          promptTokens: 13,
+          completionTokens: 7,
+          cacheReadTokens: 20,
+          cacheWriteTokens: 5,
+          totalTokens: 45,
+        }
+      : {
+          promptTokens: 2,
+          completionTokens: 4,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          totalTokens: 6,
+        },
+    )
+    if (match === "both") expect(modelEntry()?.cost).toBeCloseTo(0.0315, 8)
+  }
+  statsStore.clearUsageStatsForTest()
+})
 
 test("Trae's 0/0 cache answer is recorded as uncounted; another provider's is not", () => {
   statsStore.clearUsageStatsForTest()

@@ -13,6 +13,7 @@ import type {
 
 import { HTTPError } from "~/lib/error"
 import { extractErrorMessage, resolveRetryableCode } from "~/lib/error-builder"
+import { publicUsageResponse } from "~/lib/public-usage"
 import { clampEffortForModel } from "~/lib/reasoning-effort"
 import { prepareRequestAdmission } from "~/lib/request-admission"
 import { readJsonBody } from "~/lib/request-body"
@@ -325,7 +326,7 @@ export async function handleResponses(c: Context) {
     outputObserved: hasResponsesOutput(result.response),
     protocolTerminal: `response.${result.response.status ?? "completed"}`,
   })
-  return c.json(result.response)
+  return c.json(publicUsageResponse(result.response))
 }
 
 export function isNonStreaming(

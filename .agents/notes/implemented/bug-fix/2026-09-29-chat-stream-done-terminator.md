@@ -49,6 +49,8 @@ as the end of the response, and `[DONE]` is the truthful claim of that.
 
 `tests/chat-completions-via-messages.test.ts` now asserts the terminator is
 present on the via-messages path, the same frame all translated providers reach.
+Its standard-usage egress assertions also preserve the terminator contract:
+filtering internal usage metadata must not filter or duplicate `[DONE]`.
 
 ## Verification
 

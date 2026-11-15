@@ -1,0 +1,52 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/antigravity-acp.test.ts:
+525 |       run.updateTurnUsage({ inputTokens: 100, outputTokens: 10, totalTokens: 110 })
+526 |       expect(run.consumeTurnUsage()).toEqual({
+527 |         inputTokens: 100, outputTokens: 10, totalTokens: 110,
+528 |       })
+529 |       run.updateTurnUsage({ inputTokens: 150, outputTokens: 20 })
+530 |       expect(run.consumeTurnUsage()).toEqual({
+                                           ^
+error: expect(received).toEqual(expected)
+
+  {
+    "inputTokens": 50,
+    "outputTokens": 10,
+-   "totalTokens": 60,
+  }
+
+- Expected  - 1
++ Received  + 0
+
+      at <anonymous> (tests/antigravity-acp.test.ts:530:38)
+(fail) antigravity acp usage normalization > reconciles explicit totals across partial and repeated snapshots [0.46ms]
+553 |     })
+554 |     try {
+555 |       run.updateTurnUsage({ inputTokens: 100, cachedReadTokens: 20, cachedWriteTokens: 10, outputTokens: 30, thoughtTokens: 5 })
+556 |       expect(run.consumeTurnUsage()).toEqual({ inputTokens: 100, cachedReadTokens: 20, cachedWriteTokens: 10, outputTokens: 30, thoughtTokens: 5 })
+557 |       run.updateTurnUsage({ totalTokens: 160 })
+558 |       expect(run.consumeTurnUsage()).toEqual({ totalTokens: 0 })
+                                           ^
+error: expect(received).toEqual(expected)
+
+- {
+-   "totalTokens": 0,
+- }
++ undefined
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (tests/antigravity-acp.test.ts:558:38)
+(fail) antigravity acp usage normalization > late total and component counters reconcile caches without counting thoughts twice [0.15ms]
+(pass) antigravity acp usage normalization > subtracts inclusive prompt caches but preserves uncached native input [0.07ms]
+(pass) antigravity acp usage normalization > includes Gemini thoughts in output without double-counting native output [0.03ms]
+(pass) antigravity acp usage normalization > keeps context occupancy separate from billable usage and validates both fields [0.13ms]
+(pass) antigravity acp usage normalization > extracts camelCase, snake_case, and usage_update payloads [0.13ms]
+
+ 4 pass
+ 12 filtered out
+ 2 fail
+ 45 expect() calls
+Ran 6 tests across 1 file. [96.00ms]

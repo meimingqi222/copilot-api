@@ -25,7 +25,7 @@ import {
   setDecodeTpsEligible,
 } from "~/lib/request-performance"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
-import { getRequestLogContext } from "~/lib/request-log"
+import { addUsageAccounting } from "~/lib/usage"
 import {
   measureLocalWork,
   performanceContext,
@@ -59,6 +59,7 @@ import {
   type AnnouncedToolCall,
 } from "./run-registry"
 import { antigravityCallbackBaseUrl } from "./server-address"
+import { AgyStepUsage } from "~/services/antigravity/acp/step-usage"
 import { findAgyBinary } from "./transport"
 
 const PARALLEL_TOOL_BATCH_MS = 40
@@ -146,13 +147,28 @@ function toOpenAiUsage(
   run: AgyRun,
   c?: Context,
 ): NonNullable<ChatCompletionChunk["usage"]> {
-  const usage = run.consumeTurnUsage()
-  // Billing may arrive only after several HTTP tool segments. Measure the same
-  // active intervals as the output counter, excluding time spent in caller tools.
-  c?.set("usageTpsOverride", {
+  const native = run.stepUsage?.read()
+  run.updateTurnUsage(native?.cumulative)
+  const billing = run.consumeTurnUsage()
+  // The last native generation describes this step; all internal generations
+  // still count toward the account bill. Neither is ACP's context occupancy.
+  const usage = native?.step
+  const billInput = billing?.inputTokens ?? 0
+  const billCacheRead = billing?.cachedReadTokens ?? 0
+  const billCacheWrite = billing?.cachedWriteTokens ?? 0
+  const billOutput = billing?.outputTokens ?? 0
+  addUsageAccounting(c, {
     accountId: run.connectionId,
-    requestId: c && getRequestLogContext(c)?.requestId,
     tps: run.usageTps,
+    usage: {
+      promptTokens: billInput,
+      cacheReadTokens: billCacheRead,
+      cacheWriteTokens: billCacheWrite,
+      completionTokens: billOutput,
+      totalTokens:
+        billing?.totalTokens
+        ?? billInput + billCacheRead + billCacheWrite + billOutput,
+    },
   })
   if (run.resumedToolTurn) setDecodeTpsEligible(c, false)
   const rawInput = usage?.inputTokens ?? 0
@@ -166,8 +182,7 @@ function toOpenAiUsage(
     prompt_tokens: promptTokens,
     completion_tokens: completionTokens,
     total_tokens: totalTokens,
-    // Mark any zero-delta segment as pending so /v1/messages discards
-    // message_start input estimates even after an earlier partial snapshot.
+    // Missing step data must not preserve /v1/messages input estimates.
     ...(!usage ? { usage_status: "pending" as const } : {}),
     ...(run.contextUsage ?
       {
@@ -287,6 +302,14 @@ async function startNewRun(params: {
       mcpServers,
     )
     run.sessionId = sessionId
+    run.stepUsage = new AgyStepUsage(
+      path.join(
+        geminiDir,
+        "antigravity-cli",
+        "conversations",
+        `${path.basename(sessionId)}.db`,
+      ),
+    )
     const targetModel = resolveAcpModelId(params.model, availableModels)
     if (targetModel) {
       await client.setModel(sessionId, targetModel)

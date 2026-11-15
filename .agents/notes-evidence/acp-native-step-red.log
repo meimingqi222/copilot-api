@@ -1,0 +1,67 @@
+bun test v1.4.4 (38afee6c8)
+
+tests/antigravity-acp-bridge.test.ts:
+323 |           for (let step = 0; step < 3; step++) {
+324 |             const c = await requestContext()
+325 |             c.set("model", "gemini-3.8-flash")
+326 |             c.set("accountId", connection.id)
+327 |             const response = await complete(messages, true, stream, c)
+328 |             expect(response.usage).toMatchObject(expected[step]!)
+                                         ^
+error: expect(received).toMatchObject(expected)
+
+  {
+-   "completion_tokens": 5,
+-   "prompt_tokens": 100,
+-   "total_tokens": 105,
++   "completion_tokens": 0,
++   "context_window": {
++     "max_tokens": 200000,
++     "used_tokens": 53000,
++   },
++   "prompt_tokens": 0,
++   "total_tokens": 0,
++   "usage_status": "pending",
+  }
+
+- Expected  - 3
++ Received  + 8
+
+      at <anonymous> (tests/antigravity-acp-bridge.test.ts:328:36)
+[warn] antigravity-acp: MCP callback failed { error: 'Antigravity ACP session closed' }
+(fail) ACP public bridge continuations > native step usage is independent of aggregate billing and resets on the next prompt: false [70.10ms]
+323 |           for (let step = 0; step < 3; step++) {
+324 |             const c = await requestContext()
+325 |             c.set("model", "gemini-3.8-flash")
+326 |             c.set("accountId", connection.id)
+327 |             const response = await complete(messages, true, stream, c)
+328 |             expect(response.usage).toMatchObject(expected[step]!)
+                                         ^
+error: expect(received).toMatchObject(expected)
+
+  {
+-   "completion_tokens": 5,
+-   "prompt_tokens": 100,
+-   "total_tokens": 105,
++   "completion_tokens": 0,
++   "context_window": {
++     "max_tokens": 200000,
++     "used_tokens": 53000,
++   },
++   "prompt_tokens": 0,
++   "total_tokens": 0,
++   "usage_status": "pending",
+  }
+
+- Expected  - 3
++ Received  + 8
+
+      at <anonymous> (tests/antigravity-acp-bridge.test.ts:328:36)
+[warn] antigravity-acp: MCP callback failed { error: 'Antigravity ACP session closed' }
+(fail) ACP public bridge continuations > native step usage is independent of aggregate billing and resets on the next prompt: true [62.41ms]
+
+ 0 pass
+ 9 filtered out
+ 2 fail
+ 2 expect() calls
+Ran 2 tests across 1 file. [231.00ms]

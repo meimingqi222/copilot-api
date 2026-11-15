@@ -17,6 +17,52 @@ function eventStream(
 }
 
 describe("Responses WebSocket pump", () => {
+  test("only sends standard usage while keeping internal accounting metadata", async () => {
+    const sent: string[] = []
+    const observed: unknown[] = []
+    const usage = {
+      input_tokens: 1000,
+      output_tokens: 70,
+      total_tokens: 1070,
+      input_tokens_details: { cached_tokens: 600 },
+      output_tokens_details: { reasoning_tokens: 43 },
+    }
+    const metadata = {
+      context_window: { used_tokens: 55000, max_tokens: 200000 },
+      usage_status: "pending" as const,
+    }
+    const response = {
+      id: "resp_usage",
+      status: "completed",
+      usage: { ...usage, ...metadata },
+    }
+    const result = await pumpWithLeadingBuffer(
+      {
+        readyState: 1,
+        send(data) {
+          sent.push(String(data))
+        },
+      },
+      eventStream([
+        { data: JSON.stringify({ type: "response.created", response }) },
+        { data: JSON.stringify({ type: "response.completed", response }) },
+      ]),
+      {
+        onCommit() {},
+        onFrame(frame) {
+          observed.push(frame)
+        },
+      },
+    )
+    expect(sent.map((data) => JSON.parse(data).response.usage)).toEqual([
+      usage,
+      usage,
+    ])
+    expect(result.completedResponse?.usage).toEqual({ ...usage, ...metadata })
+    expect(observed).toHaveLength(2)
+    expect(observed[1]).toMatchObject({ response: { usage: metadata } })
+  })
+
   test("keeps empty lifecycle frames retryable when the upstream drops", async () => {
     const sent: Array<string> = []
     let commits = 0

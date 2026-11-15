@@ -25,4 +25,7 @@ Sequential WS turns retain distinct request ids and a shared parent whether or n
 - `tests/responses-ws-route.test.ts`
 - `tests/responses-ws-route.test.ts::WS /responses supports sequential response.create requests`
 
+The sequential-turn test additionally checks standard-only public usage while
+retaining the distinct-turn IDs and shared-parent assertions unchanged.
+
 Proved: The first full suite and an isolated WS route run failed the existing parentRequestId toBeDefined assertion. After session-owned parent capture, all WS route tests and the final full suite pass; the full suite reports 2261 pass and 0 fail.

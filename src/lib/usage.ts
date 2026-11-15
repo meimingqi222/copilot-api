@@ -181,6 +181,64 @@ interface UsageRecordInput {
   finishReason?: string
 }
 
+interface UsageAccountingOverride {
+  accountId: string
+  requestId?: string
+  usage: PricingRound & { totalTokens: number }
+  rounds: Array<PricingRound>
+  generationMs?: number
+  tps?: number
+}
+
+/** Several native calls (e.g. proxy search) can share one client request. */
+export function addUsageAccounting(
+  c: Context | undefined,
+  input: Pick<UsageAccountingOverride, "accountId" | "usage" | "tps">,
+): void {
+  if (!c) return
+  const requestId = getRequestLogContext(c)?.requestId
+  const previous = c.get("usageAccountingOverride") as
+    | UsageAccountingOverride
+    | undefined
+  const current =
+    (
+      previous?.accountId === input.accountId
+      && previous.requestId === requestId
+    ) ?
+      previous
+    : undefined
+  const usage = { ...input.usage }
+  for (const key of [
+    "promptTokens",
+    "completionTokens",
+    "cacheReadTokens",
+    "cacheWriteTokens",
+    "totalTokens",
+  ] as const) {
+    usage[key] += current?.usage[key] ?? 0
+  }
+  const unknownDuration =
+    (input.usage.completionTokens > 0 && !input.tps)
+    || ((current?.usage.completionTokens ?? 0) > 0
+      && current?.generationMs === undefined)
+  const generationMs =
+    unknownDuration ? undefined : (
+      (current?.generationMs ?? 0)
+      + (input.tps ? (input.usage.completionTokens * 1000) / input.tps : 0)
+    )
+  c.set("usageAccountingOverride", {
+    accountId: input.accountId,
+    requestId,
+    usage,
+    rounds: [...(current?.rounds ?? []), input.usage],
+    generationMs,
+    tps:
+      generationMs && usage.completionTokens > 0 ?
+        (usage.completionTokens * 1000) / generationMs
+      : undefined,
+  } satisfies UsageAccountingOverride)
+}
+
 /** A group is a routing name; accounting follows the final responding model. */
 function resolveGroupUsageModel(
   c: Context,
@@ -214,6 +272,22 @@ function resolveGroupUsageModel(
 }
 
 export function recordUsage(input: UsageRecordInput): void {
+  // CLI bridges expose the last native generation on the client wire, while
+  // accounting must include every internal generation and any late reports.
+  const pendingOverride = input.c.get("usageAccountingOverride") as
+    | UsageAccountingOverride
+    | undefined
+  const override =
+    (
+      pendingOverride?.accountId === input.accountId
+      && pendingOverride.requestId === getRequestLogContext(input.c)?.requestId
+    ) ?
+      pendingOverride
+    : undefined
+  if (pendingOverride) input.c.set("usageAccountingOverride", undefined)
+  if (override) {
+    input = { ...input, ...override.usage, tps: override.tps }
+  }
   const {
     c,
     accountId,
@@ -259,15 +333,17 @@ export function recordUsage(input: UsageRecordInput): void {
       conn ?
         resolveConnectionModelPricing(conn, usageModel, actual.upstream)
       : statsStore.getModelPricing(usageModel, providerHint)
-    const pricingRounds = takeUsagePricingRounds(c, accountId) ?? [
-      {
-        promptTokens,
-        completionTokens,
-        cacheReadTokens,
-        cacheWriteTokens,
-        cacheWrite1hTokens,
-      },
-    ]
+    const recordedRounds = takeUsagePricingRounds(c, accountId)
+    const pricingRounds = override?.rounds
+      ?? recordedRounds ?? [
+        {
+          promptTokens,
+          completionTokens,
+          cacheReadTokens,
+          cacheWriteTokens,
+          cacheWrite1hTokens,
+        },
+      ]
     const cost =
       pricing ?
         pricingRounds.reduce(
@@ -281,19 +357,6 @@ export function recordUsage(input: UsageRecordInput): void {
         )
       : 0
 
-    // CLI bridges can report one token counter across several tool HTTP segments.
-    // Their active-time rate must not be replaced by the last segment's duration.
-    const usageTpsOverride = c.get("usageTpsOverride") as
-      | { accountId: string; requestId?: string; tps?: number }
-      | undefined
-    if (usageTpsOverride) c.set("usageTpsOverride", undefined)
-    const effectiveTps =
-      (
-        usageTpsOverride?.accountId === accountId
-        && usageTpsOverride.requestId === getRequestLogContext(c)?.requestId
-      ) ?
-        usageTpsOverride.tps
-      : tps
     statsStore.recordUsage({
       date: statsStore.getDateString(now),
       accountId,
@@ -313,7 +376,7 @@ export function recordUsage(input: UsageRecordInput): void {
       cost,
       timestamp: now,
       ttftMs,
-      tps: effectiveTps,
+      tps,
       streaming,
       performance: requestPerformanceSnapshot(c, streaming),
     })
@@ -338,7 +401,7 @@ export function recordUsage(input: UsageRecordInput): void {
       cacheReadTokens,
       cacheWriteTokens,
       ttftMs,
-      generationTps: effectiveTps,
+      generationTps: tps,
       streaming,
       finishReason,
     })

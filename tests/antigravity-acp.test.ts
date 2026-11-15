@@ -513,6 +513,138 @@ describe("antigravity acp admin account settings", () => {
 })
 
 describe("antigravity acp usage normalization", () => {
+  test("reconciles explicit totals across partial and repeated snapshots", () => {
+    const run = new AgyRun({
+      token: "tok-partial-totals",
+      connectionId: "conn-1",
+      model: "gemini-4-hydrogen-high",
+      toolsSignature: "sig-1",
+      bridgeDir: makeTempDir("ag-acp-partial-totals-"),
+    })
+    try {
+      run.updateTurnUsage({
+        inputTokens: 100,
+        outputTokens: 10,
+        totalTokens: 110,
+      })
+      expect(run.consumeTurnUsage()).toEqual({
+        inputTokens: 100,
+        outputTokens: 10,
+        totalTokens: 110,
+      })
+      run.updateTurnUsage({ inputTokens: 150, outputTokens: 20 })
+      expect(run.consumeTurnUsage()).toEqual({
+        inputTokens: 50,
+        outputTokens: 10,
+        totalTokens: 60,
+      })
+      run.updateTurnUsage({
+        inputTokens: 200,
+        outputTokens: 30,
+        totalTokens: 230,
+      })
+      expect(run.consumeTurnUsage()).toEqual({
+        inputTokens: 50,
+        outputTokens: 10,
+        totalTokens: 60,
+      })
+      run.updateTurnUsage({
+        inputTokens: 150,
+        outputTokens: 20,
+        totalTokens: 170,
+      })
+      expect(run.consumeTurnUsage()).toBeUndefined()
+      run.updateTurnUsage({ totalTokens: 230 })
+      expect(run.consumeTurnUsage()).toBeUndefined()
+    } finally {
+      run.dispose()
+    }
+  })
+
+  test("late total and component counters reconcile caches without counting thoughts twice", () => {
+    const run = new AgyRun({
+      token: "tok-late-totals",
+      connectionId: "conn-1",
+      model: "gemini-4-hydrogen-high",
+      toolsSignature: "sig-1",
+      bridgeDir: makeTempDir("ag-acp-late-totals-"),
+    })
+    try {
+      run.updateTurnUsage({
+        inputTokens: 100,
+        cachedReadTokens: 20,
+        cachedWriteTokens: 10,
+        outputTokens: 30,
+        thoughtTokens: 5,
+      })
+      expect(run.consumeTurnUsage()).toEqual({
+        inputTokens: 100,
+        cachedReadTokens: 20,
+        cachedWriteTokens: 10,
+        outputTokens: 30,
+        thoughtTokens: 5,
+      })
+      run.updateTurnUsage({ totalTokens: 160 })
+      expect(run.consumeTurnUsage()).toBeUndefined()
+      run.updateTurnUsage({
+        cachedReadTokens: 30,
+        cachedWriteTokens: 15,
+        outputTokens: 40,
+        thoughtTokens: 8,
+      })
+      expect(run.consumeTurnUsage()).toEqual({
+        cachedReadTokens: 10,
+        cachedWriteTokens: 5,
+        outputTokens: 10,
+        thoughtTokens: 3,
+        totalTokens: 25,
+      })
+      run.updateTurnUsage({ totalTokens: 185 })
+      expect(run.consumeTurnUsage()).toBeUndefined()
+      run.updateTurnUsage({ thoughtTokens: 10 })
+      expect(run.consumeTurnUsage()).toEqual({ thoughtTokens: 2 })
+      run.updateTurnUsage({ totalTokens: 200 })
+      expect(run.consumeTurnUsage()).toEqual({ totalTokens: 15 })
+      run.updateTurnUsage({ inputTokens: 110 })
+      expect(run.consumeTurnUsage()).toEqual({
+        inputTokens: 10,
+        totalTokens: 0,
+      })
+      run.updateTurnUsage({ inputTokens: 120 })
+      expect(run.consumeTurnUsage()).toEqual({
+        inputTokens: 10,
+        totalTokens: 5,
+      })
+
+      run.resetTurnUsage()
+      expect(run.consumeTurnUsage()).toBeUndefined()
+      run.updateTurnUsage({ totalTokens: 160 })
+      expect(run.consumeTurnUsage()).toEqual({ totalTokens: 160 })
+      run.updateTurnUsage({
+        inputTokens: 100,
+        cachedReadTokens: 20,
+        cachedWriteTokens: 10,
+        outputTokens: 30,
+        thoughtTokens: 5,
+      })
+      expect(run.consumeTurnUsage()).toEqual({
+        inputTokens: 100,
+        cachedReadTokens: 20,
+        cachedWriteTokens: 10,
+        outputTokens: 30,
+        thoughtTokens: 5,
+        totalTokens: 0,
+      })
+      run.updateTurnUsage({ inputTokens: 110 })
+      expect(run.consumeTurnUsage()).toEqual({
+        inputTokens: 10,
+        totalTokens: 10,
+      })
+    } finally {
+      run.dispose()
+    }
+  })
+
   test("subtracts inclusive prompt caches but preserves uncached native input", () => {
     for (const input of [
       "inputTokens",

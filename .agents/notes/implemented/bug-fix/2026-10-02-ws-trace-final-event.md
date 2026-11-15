@@ -28,4 +28,7 @@ Live trace subscribers receive actual results immediately after each turn settle
 - `tests/responses-ws-route.test.ts::WS /v1/responses forwards upstream errors as error events`
 - `tests/responses-ws-route.test.ts::WS /v1/responses logs an active turn as cancelled on client close`
 
+The sequential-turn test additionally filters public usage extensions without
+changing its finalized-trace assertions or internal accounting snapshots.
+
 Proved: Before adding the final publication, the sequential-turn regression failed with expected inFlight false but received true despite successful persisted logs. After the fix, all 30 tests in the WS route, WS concurrency, admin trace, and stale trace suites pass.
