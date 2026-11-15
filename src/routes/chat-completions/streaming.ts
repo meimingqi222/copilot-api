@@ -181,10 +181,12 @@ function runChatSsePump(options: ChatSsePumpOptions) {
         // OpenAI SSE 契约的显式终止帧：上游的 [DONE] 在上面被消费成 break，
         // 不会原样出现在我们的流里。不带它时严格 SDK（等终止帧才能释放
         // EventSource）只能干挂 EOF。
-        try {
-          await writeSseEvent(stream, "[DONE]")
-        } catch {
-          // 客户端已经断开：终止帧没有落点，上游数据完整无后续。
+        if (!signal?.aborted) {
+          try {
+            await writeSseEvent(stream, "[DONE]")
+          } catch {
+            // 客户端已经断开：终止帧没有落点，上游数据完整无后续。
+          }
         }
       } catch (error) {
         outcome = signalOutcome(signal)

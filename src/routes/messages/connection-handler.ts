@@ -255,7 +255,6 @@ export async function handleAnthropicViaConnection(
         const cancelled = signal.aborted && !messageStop
         if (cancelled) {
           lastUsage = reportedUsage
-          patchRequestLog(c, { finishReason: "aborted" })
         }
         markStreamTerminal(
           c,
@@ -282,8 +281,13 @@ export async function handleAnthropicViaConnection(
               firstChunkTs,
               lastUsage?.output_tokens ?? 0,
             ),
-            estimatedInputTokens,
+            {
+              estimatedInputTokens,
+              ...(cancelled ? { finishReason: "aborted" } : {}),
+            },
           )
+        } else if (cancelled) {
+          patchRequestLog(c, { finishReason: "aborted" })
         }
       }
     },

@@ -15,13 +15,26 @@ import {
   encodeChatRequest,
 } from "~/services/ir/codecs/messages-chat"
 
+export interface DirectStreamingUsageOptions {
+  estimatedInputTokens?: number
+  finishReason?: string
+}
+
 export function recordDirectStreamingUsage(
   c: Context,
   accountId: string,
   lastUsage: AnthropicStreamingUsage | undefined,
   timing?: { ttftMs: number; tps: number },
-  estimatedInputTokens = 0,
+  estimatedInputTokensOrOpts: number | DirectStreamingUsageOptions = 0,
 ): void {
+  const estimatedInputTokens =
+    typeof estimatedInputTokensOrOpts === "number" ?
+      estimatedInputTokensOrOpts
+    : (estimatedInputTokensOrOpts.estimatedInputTokens ?? 0)
+  const finishReason =
+    typeof estimatedInputTokensOrOpts === "number" ? undefined : (
+      estimatedInputTokensOrOpts.finishReason
+    )
   const model = c.get("model")
   if (!model) {
     return
@@ -38,7 +51,7 @@ export function recordDirectStreamingUsage(
       tps: 0,
       ttftMs: timing?.ttftMs,
       streaming: true,
-      finishReason: "usage_missing",
+      finishReason: finishReason ?? "usage_missing",
     })
     return
   }
@@ -63,6 +76,7 @@ export function recordDirectStreamingUsage(
     ttftMs: timing?.ttftMs,
     tps: timing?.tps,
     streaming: true,
+    ...(finishReason !== undefined ? { finishReason } : {}),
   })
 }
 

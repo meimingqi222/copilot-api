@@ -403,7 +403,7 @@ export function recordUsage(input: UsageRecordInput): void {
       ttftMs,
       generationTps: tps,
       streaming,
-      finishReason,
+      ...(finishReason !== undefined ? { finishReason } : {}),
     })
     // logger.info(
     //   `Token usage: ${promptTokens} in + ${completionTokens} out = ${totalTokens} total (model: ${usageModel})${cacheReadTokens > 0 ? `, cache read: ${cacheReadTokens} (${Math.round((cacheReadTokens / (promptTokens + cacheReadTokens)) * 100)}%)` : ""}`,

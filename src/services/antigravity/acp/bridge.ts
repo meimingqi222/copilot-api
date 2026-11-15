@@ -515,9 +515,14 @@ async function resolveOrStartRun(
     ownerKey,
   )
 
-  // Match what the caller actually saw, not just the request before our reply.
-  const matchesHistory = (candidate: AgyRun) =>
-    matchRunHistory(candidate, payload.messages, toolsSignature).ok
+  // Parked tool continuations already identify the exact run via unique
+  // parked toolCallIds; like user-turn reuse, only the prior prefix and tool
+  // definitions need to match byte-for-byte.
+  const matchesPrefix = (match: HistoryMatch) =>
+    match.toolsMatch
+    && match.countPositive
+    && match.previousAssistant
+    && match.prefixMatch
 
   // 1. 若末尾是 tool_result 且命中挂起中的 run，精准唤醒对应进程继续执行
   if (trailingTools.length > 0) {
@@ -526,7 +531,9 @@ async function resolveOrStartRun(
     )
     if (
       parkedRun
-      && matchesHistory(parkedRun)
+      && matchesPrefix(
+        matchRunHistory(parkedRun, payload.messages, toolsSignature),
+      )
       && payload.messages.length
         === parkedRun.lastMessageCount + 1 + trailingTools.length
       && payload.messages[parkedRun.lastMessageCount].tool_calls?.length
@@ -579,13 +586,7 @@ async function resolveOrStartRun(
       candidate,
       match: matchRunHistory(candidate, payload.messages, toolsSignature),
     }))
-    .filter(
-      ({ match }) =>
-        match.toolsMatch
-        && match.countPositive
-        && match.previousAssistant
-        && match.prefixMatch,
-    )
+    .filter(({ match }) => matchesPrefix(match))
   let prefixRun: AgyRun | undefined
   if (prefixCandidates.length === 1) {
     prefixRun = prefixCandidates[0].candidate

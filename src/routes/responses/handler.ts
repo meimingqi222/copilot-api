@@ -284,7 +284,8 @@ export async function handleResponses(c: Context) {
         await writeResponsesErrorEvent(stream, error)
       } finally {
         clearInterval(pingInterval)
-        if (signal.aborted && !sawTerminal) {
+        const cancelled = signal.aborted && !sawTerminal
+        if (cancelled) {
           markStreamTerminal(c, "client_abort", "cancelled", outputObserved)
         }
         if (accountId && !usageRecorded) {
@@ -307,7 +308,10 @@ export async function handleResponses(c: Context) {
             tps,
             streaming: true,
             ttftMs,
+            ...(cancelled ? { finishReason: "aborted" } : {}),
           })
+        } else if (cancelled) {
+          patchRequestLog(c, { finishReason: "aborted" })
         }
         finishRequestLog(c)
       }
@@ -434,10 +438,11 @@ interface RecordResponsesUsageOpts {
   tps?: number
   streaming?: boolean
   ttftMs?: number
+  finishReason?: string
 }
 
 export function recordResponsesUsage(opts: RecordResponsesUsageOpts): void {
-  const { c, accountId, response, tps, streaming, ttftMs } = opts
+  const { c, accountId, response, tps, streaming, ttftMs, finishReason } = opts
   const usage = response.usage
   const model = c.get("model")
   if (!model) {
@@ -459,7 +464,7 @@ export function recordResponsesUsage(opts: RecordResponsesUsageOpts): void {
       tps,
       streaming,
       ttftMs,
-      finishReason: "usage_missing",
+      finishReason: finishReason ?? "usage_missing",
     })
     return
   }
@@ -488,6 +493,7 @@ export function recordResponsesUsage(opts: RecordResponsesUsageOpts): void {
     tps,
     streaming,
     ttftMs,
+    ...(finishReason !== undefined ? { finishReason } : {}),
   })
 }
 

@@ -551,6 +551,43 @@ describe("ACP public bridge continuations", () => {
   )
 
   loopbackTest(
+    "parked tool continuation resumes warm session even when assistant echo is normalized",
+    async () => {
+      const messages: Message[] = [
+        { role: "user", content: "TOOL_LOOP IMAGE_RESULT" },
+      ]
+      let response = await complete(messages, true)
+      const prefix = String(response.choices[0].message.reasoning_content)
+      for (let step = 0; step < 2; step++) {
+        const call = response.choices[0].message.tool_calls![0]
+        messages.push(
+          {
+            ...assistant(response),
+            content: `client-normalized tool preamble ${step}`,
+          },
+          {
+            role: "tool",
+            tool_call_id: call.id,
+            content: `normalized-echo-result-${step}`,
+          },
+        )
+        response = await complete(messages, true)
+      }
+      expect(response.choices[0].finish_reason).toBe("stop")
+      expect(response.choices[0].message.content).not.toContain("replayed:")
+      expect(response.choices[0].message.content).toContain(
+        prefix.replace("native-reasoning-", ""),
+      )
+      expect(response.choices[0].message.content).toContain(
+        "normalized-echo-result-0",
+      )
+      expect(response.choices[0].message.content).toContain(
+        "normalized-echo-result-1",
+      )
+    },
+  )
+
+  loopbackTest(
     "HTTP accounting does not charge estimates or divide cumulative output by the last segment",
     async () => {
       statsStore.clearUsageStatsForTest()

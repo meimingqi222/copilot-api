@@ -239,6 +239,7 @@ test("Messages and Responses quiet cancellation preserves only reported billing 
           )
           if (!success && !incomplete) {
             expect(trace.entry.protocolTerminal).toBe("client_abort")
+            expect(trace.entry.finishReason).toBe("aborted")
             expect(text).not.toContain('"type":"error"')
           }
           expect(trace.entry.outputObserved).toBe(content)
@@ -340,8 +341,11 @@ test("quiet Chat cancellation records one request without inventing usage", asyn
       })
     })
     const response = await app.request("/", { signal: controller.signal })
-    await response.text()
+    const text = await response.text()
     expect(response.status).toBe(200)
+    if (mode !== "incomplete" && mode !== "finished") {
+      expect(text).not.toContain("[DONE]")
+    }
     expect(trace.entry).toMatchObject({
       outcome:
         mode === "finished" ? "success"
@@ -352,11 +356,12 @@ test("quiet Chat cancellation records one request without inventing usage", asyn
         : mode === "incomplete" ? "missing"
         : "client_abort",
       outputObserved: false,
-      finishReason:
-        mode === "finished" ? "stop"
-        : mode === "incomplete" ? undefined
-        : "aborted",
     })
+    expect(trace.entry.finishReason).toBe(
+      mode === "finished" ? "stop"
+      : mode === "incomplete" ? undefined
+      : "aborted",
+    )
     expect(modelEntry()).toMatchObject({
       requests: 1,
       promptTokens:
