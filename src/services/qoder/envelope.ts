@@ -18,7 +18,7 @@
  * 返回值是 JSON 字符串，交给 codec.encodeRequestBody 编码成 wire body。
  */
 
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 
 import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
 import type { QoderTask } from "~/services/qoder/session"
@@ -31,8 +31,8 @@ import {
   extractReasoningTextAlias,
 } from "~/lib/thinking"
 
-import { QODER_COSY_VERSION } from "./endpoints"
-import { newQoderId } from "./ids"
+import { QODER_COSY_VERSION } from "~/services/qoder/endpoints"
+import { qoderContextWindows } from "~/services/qoder/models"
 
 /** 一条 Qoder 模型配置（来自 model/list，见 Stage 3 的 models.ts）。 */
 export interface QoderModelInfo {
@@ -60,11 +60,13 @@ const DEFAULT_MAX_TOKENS = 32000
 function qoderEffort(
   asked: string,
   model: QoderModelInfo,
+  budget = 0,
 ): { thinking: boolean; effort: string } {
   let want = asked.toLowerCase()
   if (!isEffortLevel(want)) {
     want = ""
   }
+  if (!want && budget > 0 && budget <= 1024) want = "none"
   if (!model.thinks || (want === "none" && !model.alwaysThinks)) {
     return { thinking: false, effort: "" }
   }
@@ -161,16 +163,24 @@ function qoderMessages(
 ): Array<Record<string, unknown>> {
   const out: Array<Record<string, unknown>> = []
   const names = new Map<string, string>()
+  let turn: { open: Array<string>; kept: Set<string> } | undefined
   let seen: Array<Record<string, unknown>> = []
   const showSeen = () => {
     if (seen.length > 0) out.push({ role: "user", content: seen })
     seen = []
   }
-  for (const m of messages) {
+  for (const [i, m] of messages.entries()) {
     if (isSystemRole(m.role)) continue
+    if (m.role === "user") turn = undefined
     if (m.role !== "user" && m.role !== "tool") showSeen()
     if (m.role === "tool") {
-      const callId = m.tool_call_id ?? ""
+      const named = m.tool_call_id?.trim() ?? ""
+      const exact = turn?.open.indexOf(named) ?? -1
+      const pick =
+        exact >= 0 ? exact : (
+          (turn?.open.findIndex((id) => !turn?.kept.has(id)) ?? -1)
+        )
+      const callId = pick >= 0 ? turn?.open.splice(pick, 1)[0] : undefined
       let text = textOf(m.content)
       const images =
         Array.isArray(m.content) ?
@@ -189,6 +199,11 @@ function qoderMessages(
               }
             })
         : []
+      if (!callId) {
+        if (text) seen.push({ type: "text", text })
+        seen.push(...images)
+        continue
+      }
       if (images.length > 0) {
         const name = names.get(callId) || m.name
         const of =
@@ -213,8 +228,17 @@ function qoderMessages(
       : undefined
     const thinking = reasoning?.trim() ? { reasoning_content: reasoning } : {}
     if (m.role === "assistant" && (m.tool_calls?.length ?? 0) > 0) {
-      const calls = (m.tool_calls ?? []).map((c) => {
-        const id = c.id || `call_${newQoderId()}`
+      const calls = (m.tool_calls ?? []).map((c, k) => {
+        const said =
+          typeof c.function?.arguments === "string" ?
+            c.function.arguments
+          : JSON.stringify(c.function?.arguments ?? {})
+        const id =
+          c.id?.trim()
+          || `call_${createHash("sha256")
+            .update(`${i}\0${k}\0${c.function?.name ?? ""}\0${said}`)
+            .digest("hex")
+            .slice(0, 32)}`
         names.set(id, c.function?.name ?? "")
         const args = c.function?.arguments
         return {
@@ -233,6 +257,17 @@ function qoderMessages(
         tool_calls: calls,
         ...thinking,
       })
+      const open = calls.map((c) => c.id)
+      const kept = new Set<string>()
+      for (
+        let j = i + 1;
+        j < messages.length && messages[j]?.role === "tool";
+        j++
+      ) {
+        const id = messages[j]?.tool_call_id?.trim() ?? ""
+        if (open.includes(id)) kept.add(id)
+      }
+      turn = { open, kept }
       continue
     }
     let blocks = blocksOf(m.content)
@@ -246,8 +281,32 @@ function qoderMessages(
       seen = []
     }
     out.push({ role: m.role, content: blocks, ...thinking })
+    turn = undefined
   }
   showSeen()
+  return out
+}
+
+/** Qoder reads user blocks through both names; only the final user block is marked. */
+function cacheMarked(messages: Array<Record<string, unknown>>) {
+  const out = messages.map((m) =>
+    m.role === "user" && Array.isArray(m.content) ?
+      { ...m, contents: m.content }
+    : m,
+  )
+  const last = out.at(-1)
+  if (
+    last?.role === "user"
+    && Array.isArray(last.content)
+    && last.content.length
+  ) {
+    const blocks = [...last.content] as Array<Record<string, unknown>>
+    blocks[blocks.length - 1] = {
+      ...blocks.at(-1),
+      cache_control: { type: "ephemeral" },
+    }
+    out[out.length - 1] = { ...last, content: blocks, contents: blocks }
+  }
   return out
 }
 
@@ -306,11 +365,21 @@ export function buildChatEnvelope(
   const { thinking, effort } = qoderEffort(
     payload.reasoning_effort ?? "",
     model,
+    payload.max_completion_tokens || payload.max_tokens || 0,
   )
-  const maxTok =
-    typeof payload.max_tokens === "number" && payload.max_tokens > 0 ?
-      payload.max_tokens
-    : DEFAULT_MAX_TOKENS
+  const asked =
+    payload.max_completion_tokens || payload.max_tokens || DEFAULT_MAX_TOKENS
+  const positive = (v: unknown): v is number =>
+    typeof v === "number" && Number.isInteger(v) && v > 0
+  const cap =
+    positive(raw.max_output_tokens) ? raw.max_output_tokens
+    : positive(raw.maxOutputTokens) ? raw.maxOutputTokens
+    : model.key === "lmodel" ? 131072
+    : 0
+  const maxTok = Math.min(
+    asked > 0 ? asked : DEFAULT_MAX_TOKENS,
+    cap || Infinity,
+  )
   const parameters: Record<string, unknown> = {
     enable_thinking: thinking,
     max_tokens: maxTok,
@@ -318,8 +387,26 @@ export function buildChatEnvelope(
   if (effort) {
     parameters.reasoning_effort = effort
   }
-  if (model.maxInputTokens > 0) {
-    parameters.context_length = model.maxInputTokens
+  const { windows, defaultWindow } = qoderContextWindows(raw)
+  const base =
+    defaultWindow
+    || (positive(raw.max_input_tokens) ?
+      raw.max_input_tokens
+    : model.maxInputTokens)
+  const need =
+    Math.ceil(
+      Buffer.byteLength(
+        JSON.stringify({ m: payload.messages, t: payload.tools ?? [] }),
+      ) / 3,
+    ) + maxTok
+  const window =
+    windows.length ?
+      base > 0 && need <= base ?
+        base
+      : (windows.find((w) => w >= need) ?? windows.at(-1))
+    : model.maxInputTokens
+  if (window && window > 0) {
+    parameters.context_length = window
   }
 
   const requestId = randomUUID()
@@ -358,12 +445,12 @@ export function buildChatEnvelope(
       url: "",
       source: raw.source || model.source || "system",
       max_input_tokens:
-        model.maxInputTokens > 0 ? model.maxInputTokens : 200000,
+        positive(raw.max_input_tokens) ? raw.max_input_tokens : 200000,
     },
     system: [sys],
     messages: [
       { role: "system", content: [sys] },
-      ...qoderMessages(payload.messages),
+      ...cacheMarked(qoderMessages(payload.messages)),
     ],
   }
   if (payload.tool_choice !== "none" && tools.length > 0) {

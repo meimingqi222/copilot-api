@@ -13,6 +13,7 @@ function accountsView() {
     providerCategory: "all",
     providerSearchQuery: "",
     authMethodTab: "oauth",
+    patSubmitting: false,
     showImportModal: false,
     /** @type {Array<File>} selected import files (CPA supports multi-select) */
     importFiles: [],
@@ -592,6 +593,7 @@ function accountsView() {
     getSubmitButtonText() {
       const meta = this.getProviderMeta(this.newAccount.provider)
       if (meta.hasManualMode && this.authMethodTab === "manual") {
+        if (meta.importMethod === "pat") return I18n.t("accounts.pat.login")
         return I18n.t("accounts.saveAndImport") || "保存并导入"
       }
       const authMode = this.selectedProvider()?.authMode
@@ -607,6 +609,19 @@ function accountsView() {
     handleAccountSubmit() {
       const meta = this.getProviderMeta(this.newAccount.provider)
       const isManual = meta.hasManualMode && this.authMethodTab === "manual"
+      if (isManual && meta.importMethod === "pat") {
+        if (this.patSubmitting) return
+        const pat = (this.newAccount.credentials.pat || "").trim()
+        if (!pat) {
+          this.showToast(I18n.t("accounts.pat.required"), "error")
+          return
+        }
+        this.newAccount.credentials.pat = pat
+        this.patSubmitting = true
+        return this.submitAccount(true).finally(() => {
+          this.patSubmitting = false
+        })
+      }
       return this.submitAccount(isManual)
     },
 

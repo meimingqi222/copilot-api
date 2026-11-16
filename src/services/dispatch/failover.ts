@@ -86,6 +86,7 @@ interface FailoverOptions<TPayload, TResult> {
     adapter: ReturnType<typeof getProtocolAdapter>,
     target: RouteTarget,
     current: RequestAdmission,
+    hasFallback: () => boolean,
   ) => Promise<TResult>
   logPrefix?: string
   c?: Context
@@ -294,7 +295,17 @@ export async function executeWithFailover<
         }
         markAttemptStarting(c, attemptTargetMetadata(current))
         const result = await runWithPerformanceContext(c, () =>
-          execute(adapter, current.target, current),
+          execute(adapter, current.target, current, () =>
+            buildGroupRouteTargets(current.groupMembers ?? [requestedModel], {
+              endpoint: routeKind,
+              compact: current.compact,
+              onlyAvailable: true,
+            }).some(
+              (candidate) =>
+                targetKey(candidate) !== targetKey(current.target)
+                && !tried.has(targetKey(candidate)),
+            ),
+          ),
         )
         if (!isWrappedStream(result) && !isAsyncIterable(result))
           markResponseReady(c)

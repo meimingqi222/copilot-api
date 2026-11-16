@@ -363,6 +363,7 @@ export async function* runSearchAwareStream(
       || event.type === "usage"
       || event.type === "message_end"
       || event.type === "error"
+      || event.type === "heartbeat"
     ) {
       return event
     }

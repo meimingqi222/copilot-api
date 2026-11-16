@@ -16,11 +16,13 @@ import type { ProviderConnection } from "~/lib/provider-connections/types"
 import { applyOAuthQuotaSnapshot } from "~/lib/quota"
 import { parseQoderQuota } from "~/lib/quota/fetchers/qoder"
 import { fetchQoderQuota } from "~/lib/quota/fetchers/qoder"
+import { cancelAllOAuthRefreshTimers } from "~/services/oauth/refresh-scheduler"
 
 const originalFetch = globalThis.fetch
 
 afterEach(() => {
   globalThis.fetch = originalFetch
+  cancelAllOAuthRefreshTimers()
   __resetProviderConnectionsForTest()
 })
 
@@ -126,6 +128,54 @@ describe("parseQoderQuota", () => {
 })
 
 describe("fetchQoderQuota", () => {
+  test("PAT-only usage uses the job token and recovers a refused sign-in once", async () => {
+    const connection = makeConnection()
+    connection.credentials[0].context = {
+      pat: "saved-pat",
+      refreshToken: "old-refresh",
+    }
+    const auth: Array<string | null> = []
+    let refreshes = 0
+    globalThis.fetch = ((input: unknown, init?: RequestInit) => {
+      if (String(input).endsWith("/refresh")) {
+        refreshes++
+        return Promise.resolve(
+          jsonResponse({ token: "jt-new", refresh_token: "rotated" }),
+        )
+      }
+      const token = new Headers(init?.headers).get("Authorization")
+      auth.push(token)
+      return Promise.resolve(
+        token === "Bearer jt-new" ? jsonResponse(USAGE) : jsonResponse({}, 401),
+      )
+    }) as typeof fetch
+    const snapshot = await fetchQoderQuota(connection)
+    expect(auth).toEqual(["Bearer jt-1", "Bearer jt-new"])
+    expect(refreshes).toBe(1)
+    expect(snapshot.chatTotal).toBe(2150)
+  })
+
+  test("PAT usage does not loop when the replacement token is refused too", async () => {
+    const connection = makeConnection()
+    connection.credentials[0].context = {
+      pat: "saved-pat",
+      refreshToken: "old-refresh",
+    }
+    let calls = 0
+    globalThis.fetch = ((input: unknown) => {
+      calls++
+      return Promise.resolve(
+        String(input).endsWith("/refresh") ?
+          jsonResponse({ token: "jt-new", refresh_token: "rotated" })
+        : jsonResponse({}, 403),
+      )
+    }) as typeof fetch
+    await expect(fetchQoderQuota(connection)).rejects.toThrow(/403/)
+    expect(calls).toBe(3)
+    await expect(fetchQoderQuota(connection)).rejects.toThrow(/403/)
+    expect(calls).toBe(4)
+  })
+
   test("canonical credits combine complementary pools without rounding and preserve CN identity", async () => {
     const connection = makeConnection()
     connection.metadata = { provider: "qoder-cn" }

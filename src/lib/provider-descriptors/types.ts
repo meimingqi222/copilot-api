@@ -39,7 +39,7 @@ export interface ProviderPresentation {
   badgeKey: string
   hintKey?: string
   hasManualMode?: boolean
-  importMethod?: "cookie" | "json" | "lobsterai"
+  importMethod?: "cookie" | "json" | "lobsterai" | "pat"
   manualOAuthCallback?: boolean
 }
 

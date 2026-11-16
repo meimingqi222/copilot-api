@@ -312,7 +312,9 @@ export async function* encodeMessagesStream(
   })
   try {
     for await (const event of sequentialMessagesParts(stream)) {
-      if (event.type === "message_start") {
+      if (event.type === "heartbeat") {
+        yield { type: "ping" }
+      } else if (event.type === "message_start") {
         started = true
         yield {
           type: "message_start",

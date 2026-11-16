@@ -299,6 +299,7 @@ export type StreamEvent =
   | { type: "part_delta"; partId: string; index: number; delta: IRPartDelta }
   | { type: "part_end"; partId: string; index: number }
   | { type: "usage"; usage: IRUsage }
+  | { type: "heartbeat" }
   | { type: "message_end"; stop?: IRStop; status?: ResultIR["status"] }
   | { type: "error"; error: { type: string; message: string; status?: number } }
 

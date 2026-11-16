@@ -41,7 +41,7 @@
         }, FAILSAFE_MS)
       })()
     </script>
-    <script src="/admin/static/js/i18n.js?v=0.7.34"></script>
+    <script src="/admin/static/js/i18n.js?v=0.7.35"></script>
     <script src="/admin/static/js/api.js?v=0.7.5"></script>
     <script src="/admin/static/js/admin-icons.js?v=0.7.0"></script>
     <script src="/admin/static/js/view-helpers.js?v=0.7.6"></script>
@@ -2363,7 +2363,7 @@
 
                   <!-- 双认证模式切换 Tab（仅当当前 Provider 具备手动导入模式时展示，如 CodeBuddy / LobsterAI） -->
                   <div
-                    x-show="getProviderMeta(newAccount.provider).hasManualMode"
+                    x-show="getProviderMeta(newAccount.provider).hasManualMode && (!isReauthFlow() || getProviderMeta(newAccount.provider).importMethod !== 'pat')"
                     class="flex p-1 bg-[var(--apple-gray-6)] rounded-lg"
                   >
                     <button
@@ -2382,7 +2382,9 @@
                       class="flex-1 py-1.5 text-xs font-medium rounded-md transition-all text-center flex items-center justify-center gap-1.5"
                     >
                       <i data-lucide="file-key" class="w-3.5 h-3.5"></i>
-                      <span x-text="t('accounts.authMethod.manual')"></span>
+                      <span
+                        x-text="t(getProviderMeta(newAccount.provider).importMethod === 'pat' ? 'accounts.pat.login' : 'accounts.authMethod.manual')"
+                      ></span>
                     </button>
                   </div>
 
@@ -2510,6 +2512,34 @@
                     ></textarea>
                   </div>
 
+                  <!-- PAT 登录（保留已有账号的浏览器重新授权流程） -->
+                  <div
+                    x-show="getProviderMeta(newAccount.provider).importMethod === 'pat' && authMethodTab === 'manual' && !isReauthFlow()"
+                    class="space-y-2"
+                  >
+                    <label
+                      for="account-pat"
+                      class="form-label"
+                      x-text="t('accounts.pat.label')"
+                    ></label>
+                    <input
+                      id="account-pat"
+                      type="password"
+                      x-model="newAccount.credentials.pat"
+                      autocomplete="off"
+                      spellcheck="false"
+                      class="form-input font-mono text-sm"
+                      :placeholder="t('accounts.pat.placeholder')"
+                      :disabled="patSubmitting"
+                      aria-describedby="account-pat-hint"
+                    />
+                    <p
+                      id="account-pat-hint"
+                      class="text-xs text-[var(--apple-text-secondary)]"
+                      x-text="t('accounts.pat.hint')"
+                    ></p>
+                  </div>
+
                   <!-- CodeBuddy JSON 粘贴（仅在 manual 模式） -->
                   <div
                     x-show="(newAccount.provider === 'codebuddy' || newAccount.provider === 'codebuddy-cn') && authMethodTab === 'manual'"
@@ -2589,6 +2619,7 @@
                     <button
                       @click="handleAccountSubmit()"
                       class="btn btn-primary"
+                      :disabled="patSubmitting"
                       x-text="getSubmitButtonText()"
                     ></button>
                   </div>
@@ -8634,7 +8665,7 @@
     <script src="/admin/static/js/views/redaction.js?v=0.8.13"></script>
     <script src="/admin/static/js/views/dashboard.js?v=0.7.4"></script>
     <script src="/admin/static/js/views/users.js?v=0.7.3"></script>
-    <script src="/admin/static/js/views/accounts.js?v=0.7.5"></script>
+    <script src="/admin/static/js/views/accounts.js?v=0.7.6"></script>
     <script src="/admin/static/js/views/connections.js?v=0.7.9"></script>
     <script src="/admin/static/js/views/model-aliases.js?v=0.7.3"></script>
     <script src="/admin/static/js/views/routing-groups.js?v=0.7.7"></script>

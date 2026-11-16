@@ -42,7 +42,7 @@ export const QODER_SITES: Record<QoderSite["id"], QoderSite> = {
     deviceFlowHost: "https://qoder.com",
     openapiHost: "https://openapi.qoder.sh",
     apiHost: "https://api3.qoder.sh",
-    redirectUri: "qoder-app://",
+    redirectUri: "",
     deviceChat: false,
   },
   "qoder-cn": {
@@ -98,6 +98,7 @@ export const QODER_DEVICE_TOKEN_POLL_PATH = "/api/v1/deviceToken/poll"
 export const QODER_DEVICE_TOKEN_REFRESH_PATH = "/api/v1/deviceToken/refresh"
 export const QODER_USERINFO_PATH = "/api/v1/userinfo"
 export const QODER_JOB_TOKEN_PATH = "/api/v1/me/jobToken"
+export const QODER_JOB_TOKEN_EXCHANGE_PATH = "/api/v1/jobToken/exchange"
 export const QODER_JOB_TOKEN_REFRESH_PATH = "/api/v1/jobToken/refresh"
 
 /** SSE 对话端点：取 LLM 结果、指定 agent_common、Encode=1 走自定义 body 编码。 */

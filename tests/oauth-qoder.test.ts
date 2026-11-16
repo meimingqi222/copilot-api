@@ -6,7 +6,19 @@ import {
   __resetProviderConnectionsForTest,
   getConnectionProvider,
   getProviderConnection,
+  managedConnectionFromInput,
+  serializeConnectionForExport,
+  upsertProviderConnection,
 } from "~/lib/provider-connections"
+import { getBuiltinProviderModule } from "~/services/providers/builtins"
+import {
+  cancelAllOAuthRefreshTimers,
+  refreshOAuthConnectionToken,
+} from "~/services/oauth/refresh-scheduler"
+import {
+  withQoderModelAuthRecovery,
+  qoderListingHasOnlyFreeModels,
+} from "~/services/providers/qoder"
 import { publicAccountFromConnection } from "~/routes/admin/api/account-views"
 import {
   getOAuthProviderDescriptor,
@@ -21,6 +33,9 @@ import {
   fetchQoderUserInfo,
   qoderUserFromConnection,
   refreshQoderJobToken,
+  recoverQoderAuthentication,
+  qoderJobTokenLifetimeMs,
+  QODER_PAT_REFRESH_MARKER,
 } from "~/services/oauth/qoder"
 import {
   getOAuthStrategy,
@@ -36,6 +51,7 @@ const originalFetch = globalThis.fetch
 
 afterEach(() => {
   globalThis.fetch = originalFetch
+  cancelAllOAuthRefreshTimers()
   __resetProviderConnectionsForTest()
 })
 
@@ -122,7 +138,7 @@ describe("Qoder device flow", () => {
     expect(url.searchParams.get("client_id")).toBe(
       "732aef47-9cf2-46a2-95fe-4cebb5d0d1fa",
     )
-    expect(url.searchParams.get("redirect_uri")).toBe("qoder-app://")
+    expect(url.searchParams.get("redirect_uri")).toBeNull()
     expect(url.searchParams.get("nonce")).toBe(request.nonce)
     expect(url.searchParams.get("machine_id")).toBe(request.machineId)
     // verifier 只留在本地，授权页只看到 S256 摘要。
@@ -222,6 +238,225 @@ describe("Qoder device flow", () => {
 })
 
 describe("Qoder token refresh", () => {
+  for (const site of Object.values(QODER_SITES)) {
+    test(`PAT account creation exchanges and preserves portable identity on ${site.id}`, async () => {
+      const requests: Array<{ url: string; init?: RequestInit }> = []
+      const end = Date.now() + 7200_000
+      globalThis.fetch = ((input: unknown, init?: RequestInit) => {
+        requests.push({ url: String(input), init })
+        return Promise.resolve(
+          String(input).includes("userinfo") ?
+            jsonResponse({ user_id: 42, name: "PAT User", email: "pat@x.dev" })
+          : jsonResponse({ access_token: "jt-pat", expire_time: String(end) }),
+        )
+      }) as typeof fetch
+      const prepared = await getBuiltinProviderModule(
+        site.id,
+      )!.accountCreation!.prepare({
+        body: {
+          credentials: { pat: " pat-secret " },
+          settings: { proxyUrl: "http://proxy.test" },
+        },
+        label: "PAT account",
+        registerDeviceFlow() {
+          throw new Error("not a device login")
+        },
+      })
+      if (!("id" in prepared)) throw new Error(JSON.stringify(prepared))
+      const connection = managedConnectionFromInput(prepared)
+      expect(connection.baseUrl).toBe(site.apiHost)
+      expect(connection.credentials[0].value).toBe("jt-pat")
+      expect(connection.credentials[0].context).toMatchObject({
+        uid: "42",
+        pat: "pat-secret",
+        refreshToken: QODER_PAT_REFRESH_MARKER,
+        expiresAt: end,
+      })
+      expect(qoderUserFromConnection(connection)?.machineId).toBeTruthy()
+      expect(
+        JSON.stringify(serializeConnectionForExport(connection)),
+      ).toContain("pat-secret")
+      expect(requests[0].url).toBe(
+        `${site.openapiHost}/api/v1/jobToken/exchange`,
+      )
+      expect(JSON.parse(String(requests[0].init?.body))).toEqual({
+        personal_token: "pat-secret",
+      })
+      expect(new Headers(requests[1].init?.headers).get("Authorization")).toBe(
+        "Bearer jt-pat",
+      )
+      expect((requests[0].init as RequestInit & { proxy?: string }).proxy).toBe(
+        "http://proxy.test",
+      )
+    })
+  }
+
+  for (const [field, value] of [
+    ["expire_time", () => String(Date.now() + 3600_000)],
+    ["expires_at", () => Math.floor((Date.now() + 3600_000) / 1000)],
+    ["expires_at", () => new Date(Date.now() + 3600_000).toISOString()],
+    ["expires_in", () => 3600_000],
+  ] as const) {
+    test(`refresh reads job expiry ${field} (${typeof value()})`, async () => {
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          jsonResponse({
+            token: "new",
+            refresh_token: "next",
+            [field]: value(),
+          }),
+        )) as unknown as typeof fetch
+      const job = await refreshQoderJobToken("refresh")
+      expect(qoderJobTokenLifetimeMs(job)).toBeGreaterThan(3598_000)
+      expect(qoderJobTokenLifetimeMs(job)).toBeLessThanOrEqual(3600_000)
+    })
+  }
+
+  test("PAT exchanges again after refusal, but not on transient failures", async () => {
+    const connection = createConnection()
+    connection.credentials[0].context!.pat = "saved-pat"
+    const urls: string[] = []
+    globalThis.fetch = ((input: unknown) => {
+      urls.push(String(input))
+      return Promise.resolve(
+        String(input).endsWith("/refresh") ?
+          jsonResponse({}, 401)
+        : jsonResponse({ token: "reexchanged", refresh_token: "new-pair" }),
+      )
+    }) as typeof fetch
+    await OAUTH_REFRESH_STRATEGIES.qoder(connection, "old-pair", {})
+    expect(urls.map((url) => new URL(url).pathname)).toEqual([
+      "/api/v1/jobToken/refresh",
+      "/api/v1/jobToken/exchange",
+    ])
+    expect(connection.credentials[0].value).toBe("reexchanged")
+    urls.length = 0
+    globalThis.fetch = ((input: unknown) => {
+      urls.push(String(input))
+      return Promise.resolve(jsonResponse({}, 503))
+    }) as typeof fetch
+    await expect(
+      OAUTH_REFRESH_STRATEGIES.qoder(connection, "new-pair", {}),
+    ).rejects.toThrow()
+    expect(urls).toHaveLength(1)
+  })
+
+  test("PAT-only credentials renew through the shared scheduler without sending a fake refresh pair", async () => {
+    const connection = createConnection()
+    connection.credentials[0].context!.pat = "saved-pat"
+    connection.credentials[0].context!.refreshToken = QODER_PAT_REFRESH_MARKER
+    const urls: string[] = []
+    globalThis.fetch = ((input: unknown) => {
+      urls.push(String(input))
+      return Promise.resolve(
+        jsonResponse({ token: "pat-renewed", expires_in: 7200_000 }),
+      )
+    }) as typeof fetch
+    await refreshOAuthConnectionToken(connection)
+    expect(urls).toEqual(["https://openapi.qoder.sh/api/v1/jobToken/exchange"])
+    expect(connection.credentials[0].value).toBe("pat-renewed")
+    expect(connection.credentials[0].context!.refreshToken).toBe(
+      QODER_PAT_REFRESH_MARKER,
+    )
+    expect(connection.credentials[0].context!.pat).toBe("saved-pat")
+  })
+
+  test("absolute expiry wins over relative expiry and past absolute expiry falls back", async () => {
+    const end = Date.now() + 600_000
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        jsonResponse({
+          token: "job",
+          refresh_token: "next",
+          expire_time: end,
+          expires_in: 7200_000,
+        }),
+      )) as unknown as typeof fetch
+    const job = await refreshQoderJobToken("refresh")
+    expect(job.expiresAtMs).toBe(end)
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        jsonResponse({
+          token: "job",
+          refresh_token: "next",
+          expire_time: 1,
+          expires_in: 7200_000,
+        }),
+      )) as unknown as typeof fetch
+    expect(
+      qoderJobTokenLifetimeMs(await refreshQoderJobToken("refresh")),
+    ).toBeGreaterThan(7199_000)
+  })
+
+  test("recovery shares the scheduler lock and suppresses refusal of a newly refreshed token", async () => {
+    const connection = createConnection()
+    upsertProviderConnection(connection)
+    let calls = 0
+    globalThis.fetch = (() => {
+      calls++
+      return Promise.resolve(
+        jsonResponse({
+          token: "jt-recovered",
+          refresh_token: "rotated",
+          expires_in: 3600_000,
+        }),
+      )
+    }) as unknown as typeof fetch
+    await Promise.all([
+      refreshOAuthConnectionToken(connection),
+      recoverQoderAuthentication(connection, "jt-old"),
+      recoverQoderAuthentication(connection, "jt-old"),
+    ])
+    expect(calls).toBe(1)
+    const live = getProviderConnection(connection.id)!
+    expect(live.credentials[0].value).toBe("jt-recovered")
+    expect(await recoverQoderAuthentication(live, "jt-recovered")).toBe(false)
+    expect(await recoverQoderAuthentication(live, "jt-old")).toBe(true)
+    expect(calls).toBe(1)
+  })
+
+  test("free-only discovery refreshes once and remembers a truly exhausted listing", async () => {
+    const connection = createConnection()
+    const listing = {
+      app: [
+        { key: "free", enable: true, price_factor: 0 },
+        { key: "paid", enable: false, price_factor: 1 },
+      ],
+    }
+    expect(qoderListingHasOnlyFreeModels(listing)).toBe(true)
+    expect(qoderListingHasOnlyFreeModels({ app: [] })).toBe(false)
+    expect(
+      qoderListingHasOnlyFreeModels({ app: [{ key: "paid", enable: true }] }),
+    ).toBe(false)
+    let refreshes = 0
+    let reads = 0
+    globalThis.fetch = (() => {
+      refreshes++
+      return Promise.resolve(
+        jsonResponse({ token: "still-free", refresh_token: "next" }),
+      )
+    }) as unknown as typeof fetch
+    const fetchListing = () => {
+      reads++
+      return Promise.resolve(listing)
+    }
+    expect(await withQoderModelAuthRecovery(connection, fetchListing)).toEqual(
+      listing,
+    )
+    const now = Date.now
+    const later = now() + 6 * 60_000
+    try {
+      Date.now = () => later
+      expect(
+        await withQoderModelAuthRecovery(connection, fetchListing),
+      ).toEqual(listing)
+    } finally {
+      Date.now = now
+    }
+    expect(refreshes).toBe(1)
+    expect(reads).toBe(3)
+  })
+
   test("account view preserves protocol fallback for an empty non-Qoder provider", () => {
     const connection = createConnection({
       protocol: "copilot-native",

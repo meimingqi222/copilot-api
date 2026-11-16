@@ -157,6 +157,10 @@ export async function* decodeChatStream(
         source: { wire: "chat" },
       }
     }
+    if (raw.event === "ping") {
+      yield { type: "heartbeat" }
+      continue
+    }
     if (chunk.usage)
       yield {
         type: "usage",
@@ -331,6 +335,11 @@ export async function* encodeChatStream(
         created = event.createdAt ?? Math.floor(Date.now() / 1000)
         yield {
           data: JSON.stringify(chunk({ role: "assistant", content: "" })),
+        }
+      } else if (event.type === "heartbeat") {
+        yield {
+          event: "ping",
+          data: JSON.stringify({ ...chunk({}), choices: [] }),
         }
       } else if (
         event.type === "part_start"

@@ -27,6 +27,7 @@ import { fetchWithConnectionProxy } from "~/lib/quota/upstream-proxy"
 import { asNumber, asRecord } from "~/lib/json-shape"
 import {
   applyQoderDeviceTokenRefresh,
+  recoverQoderAuthentication,
   refreshQoderDeviceToken,
 } from "~/services/oauth/qoder"
 import {
@@ -218,7 +219,10 @@ export async function fetchQoderQuota(
   // 站点优先按 connection.baseUrl 判：qoder / qoder-cn 共用 qoder-native
   // 协议，裸 connection 的 protocol → provider 反查会推错站。
   const site = qoderSiteForConnection(connection)
-  const deviceToken = getCredentialContextString(connection, "deviceToken")
+  const savedDeviceToken = getCredentialContextString(connection, "deviceToken")
+  const pat = getCredentialContextString(connection, "pat")
+  const deviceToken =
+    savedDeviceToken || (pat ? connection.credentials[0]?.value : undefined)
   if (!deviceToken) {
     throw new Error(
       "Qoder usage is unavailable: the saved sign-in carries no device token — sign in again to see usage",
@@ -227,12 +231,24 @@ export async function fetchQoderQuota(
 
   let response = await requestUsage(connection, site, deviceToken, signal)
   if (response.status === 401 || response.status === 403) {
-    await response.text()
     const deviceRefresh = getCredentialContextString(
       connection,
       "deviceRefreshToken",
     )
-    if (deviceRefresh) {
+    if (
+      !savedDeviceToken
+      && pat
+      && (await recoverQoderAuthentication(connection, deviceToken))
+    ) {
+      await response.text()
+      response = await requestUsage(
+        connection,
+        site,
+        connection.credentials[0].value,
+        signal,
+      )
+    } else if (deviceRefresh) {
+      await response.text()
       try {
         const refreshed = await refreshQoderDeviceToken(
           deviceRefresh,

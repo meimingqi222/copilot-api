@@ -412,14 +412,14 @@ async function dispatchPreparedRequest(
     routeKind: options.routeKind,
     logPrefix: `[dispatch/${options.routeKind}]`,
     c: options.c,
-    execute: (adapter, target: RouteTarget, current) =>
+    execute: (adapter, target: RouteTarget, current, hasFallback) =>
       executeCandidateCall({
         source: options.routeKind,
         adapter,
         target,
         current,
         payload,
-        ctx: buildExecutionContext(options, current),
+        ctx: { ...buildExecutionContext(options, current), hasFallback },
         signal,
       }).then((r) => decorateResult(r, current, options.c)),
   })

@@ -1,4 +1,5 @@
 import { prepareOAuthRefresh } from "~/services/providers/auth-update"
+import { createQoderAccountCreation } from "~/services/providers/account-creation/qoder"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
 import { fetchQoderQuota } from "~/lib/quota/fetchers/qoder"
 import { getQoderFallbackModels } from "~/services/providers/model-catalogs/qoder"
@@ -23,6 +24,7 @@ import {
   applyQoderOAuthBundle,
   createQoderAuthRequest,
   exchangeQoderJobToken,
+  exchangeQoderPersonalToken,
   fetchQoderUserInfo,
   pollQoderDeviceToken,
   QODER_DEVICE_FLOW_DEADLINE_MS,
@@ -32,6 +34,7 @@ import {
   applyQoderJobTokenRefresh,
   refreshQoderDeviceToken,
   refreshQoderJobToken,
+  QODER_PAT_REFRESH_MARKER,
 } from "~/services/oauth/qoder"
 
 function qoderStrategy(site: QoderSite): OAuthProviderStrategy {
@@ -138,7 +141,25 @@ function qoderRefreshAuth() {
       applyQoderDeviceChatRefresh(connection, device)
       return
     }
-    const job = await refreshQoderJobToken(refreshToken, fetchOptions, site)
+    const pat = getCredentialContextString(connection, "pat")
+    let job
+    try {
+      job =
+        refreshToken === QODER_PAT_REFRESH_MARKER && pat ?
+          await exchangeQoderPersonalToken(pat, fetchOptions, site)
+        : await refreshQoderJobToken(refreshToken, fetchOptions, site)
+    } catch (error) {
+      // Only a refused rotation justifies exchanging the long-lived PAT again.
+      // Do not hide transient network/5xx failures or retry the one-shot pair.
+      const status = error instanceof HTTPError ? error.response.status : 0
+      if (
+        !pat
+        || refreshToken === QODER_PAT_REFRESH_MARKER
+        || ![400, 401, 403].includes(status)
+      )
+        throw error
+      job = await exchangeQoderPersonalToken(pat, fetchOptions, site)
+    }
     applyQoderJobTokenRefresh(connection, job)
   })
 }
@@ -160,6 +181,13 @@ function getQoderModuleFor(site: QoderSite): ProviderModule {
       adapter: qoderNativeAdapter,
       createRuntime: () => qoderProviderRuntimeFor(site.id),
       oauth: qoderStrategy(site),
+      accountCreation: createQoderAccountCreation(site),
+      async afterAuthentication(connection) {
+        const { scheduleOAuthRefreshForConnection } = await import(
+          "~/services/oauth/refresh-scheduler"
+        )
+        scheduleOAuthRefreshForConnection(connection)
+      },
       refreshAuth: qoderRefreshAuth(),
       refreshLeadMs: 5 * 60 * 1000,
     }

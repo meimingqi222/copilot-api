@@ -182,6 +182,10 @@ export async function* encodeGeminiStream(
       resolvedModel = event.model || model
       continue
     }
+    if (event.type === "heartbeat") {
+      yield frame([])
+      continue
+    }
     if (event.type === "part_start") {
       if (event.part.type === "text" && event.part.text)
         yield frame([{ text: event.part.text }])

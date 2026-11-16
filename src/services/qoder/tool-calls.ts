@@ -1,20 +1,6 @@
-/**
- * Qoder 的工具调用拆解。
- *
- * Qoder 有两种下发工具调用的方式：
- * 1. 原生 OpenAI 形态：`delta.tool_calls[]`，id 由它签发、必须原样保留；
- * 2. 把调用写进 `delta.content` 文本里的 XML：
- *      <tool_call><function=name><parameter=k>v</parameter></function></tool_call>
- *
- * 这个拆分器只负责第 2 种：它是**有状态**的，因为标记可能被切在两个分片中间；
- * 未成形的尾巴要么留着等下一片，要么在流结束时按原文吐出（绝不吞掉用户可见文本）。
- */
-
-import {
-  TOOL_CALL_CLOSE as CALL_CLOSE,
-  TOOL_CALL_OPEN as CALL_OPEN,
-  parseXmlToolCall,
-} from "~/services/tool-call-text"
+import { HTTPError } from "~/lib/error"
+import { asRecord } from "~/lib/json-shape"
+import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
 
 interface QoderToolCall {
   name: string
@@ -25,139 +11,261 @@ export type QoderFragment =
   | { kind: "text"; text: string }
   | { kind: "call"; call: QoderToolCall }
 
-/** 尾部仍可能长成调用标记的长度。 */
-function markerSuffix(value: string): number {
-  for (let size = CALL_OPEN.length - 1; size > 0; size--) {
-    if (value.endsWith(CALL_OPEN.slice(0, size))) return size
-  }
-  return 0
+type Tools = NonNullable<ChatCompletionsPayload["tools"]>
+const OPEN = "<tool_call>"
+const CLOSE = "</tool_call>"
+const MARKS = [
+  OPEN,
+  "<function=",
+  "<invoke ",
+  "<antml:invoke ",
+  "<function_calls>",
+  "<antml:function_calls>",
+  "</function_calls>",
+  "</antml:function_calls>",
+]
+
+function invalid(truncated: boolean): never {
+  const message =
+    truncated ? "Qoder: tool call cut short" : "Qoder: unreadable tool call"
+  throw new HTTPError(message, new Response(message, { status: 502 }), message)
 }
 
-/**
- * 读一个调用块：JSON `{name,arguments}`，或 XML 的 function/parameter 形态。
- * 参数值原样取用（上游没有约定转义规则），能当 JSON 解析就按 JSON 放。
- */
-function parseQoderToolCall(value: string): QoderToolCall | undefined {
+function parseCall(value: string, tools: Tools): QoderToolCall | undefined {
   const trimmed = value.trim()
-  try {
-    const framed = JSON.parse(trimmed) as {
-      name?: unknown
-      arguments?: unknown
+  if (trimmed.startsWith("{")) {
+    let framed: Record<string, unknown> | undefined
+    try {
+      framed = asRecord(JSON.parse(trimmed))
+    } catch {
+      return undefined
     }
-    if (
-      framed
-      && typeof framed === "object"
-      && typeof framed.name === "string"
-      && framed.name.trim()
-    ) {
-      // `arguments` 原样取用（Go 那边是 json.RawMessage）：能解析成对象才算数，
-      // 否则掉到 XML 分支。
-      const rawArgs =
-        typeof framed.arguments === "string" ? framed.arguments
-        : framed.arguments === undefined ? undefined
-        : JSON.stringify(framed.arguments)
-      if (rawArgs !== undefined) {
-        let parsed: unknown
-        try {
-          parsed = JSON.parse(rawArgs)
-        } catch {
-          parsed = undefined
-        }
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          return { name: framed.name.trim(), args: rawArgs.trim() }
-        }
+    if (typeof framed?.name !== "string" || !framed.name.trim())
+      return undefined
+    let args = framed.arguments
+    if (typeof args === "string") {
+      try {
+        args = JSON.parse(args)
+      } catch {
+        return undefined
       }
     }
-  } catch {
-    // 不是 JSON 形态，继续走 XML。
+    if (!asRecord(args)) return undefined
+    return { name: framed.name.trim(), args: JSON.stringify(args) }
   }
-
-  const xml = parseXmlToolCall(value)
-  if (!xml) return undefined
-  return { name: xml.name, args: JSON.stringify(xml.arguments) }
+  const match =
+    /^<(?:function=([^<>]+)|(?:antml:)?invoke\s+name\s*=\s*"([^"<>]+)")\s*>([\s\S]*?)<\/(?:function|(?:antml:)?invoke)\s*>$/.exec(
+      trimmed,
+    )
+  if (!match) return undefined
+  const name = (match[1] ?? match[2] ?? "").trim()
+  if (!name) return undefined
+  const props = asRecord(
+    tools.find((t) => t.function.name === name)?.function.parameters
+      ?.properties,
+  )
+  const args: Record<string, unknown> = {}
+  const body = match[3] ?? ""
+  const re =
+    /<(?:antml:)?parameter(?:=([^\s<>]+)|\s+name\s*=\s*"([^"<>]+)")\s*>([\s\S]*?)<\/(?:antml:)?parameter\s*>/g
+  let consumed = 0
+  for (const param of body.matchAll(re)) {
+    if (body.slice(consumed, param.index).trim()) return undefined
+    consumed = param.index + param[0].length
+    const key = param[1] ?? param[2] ?? ""
+    const raw = param[3] ?? ""
+    if (asRecord(props?.[key])?.type === "string") args[key] = raw
+    else {
+      try {
+        args[key] = JSON.parse(raw)
+      } catch {
+        args[key] = raw
+      }
+    }
+  }
+  if (body.slice(consumed).trim()) return undefined
+  return { name, args: JSON.stringify(args) }
 }
 
-/**
- * 流式拆分器：文本先攒着，直到一个完整的调用块到达再作为调用吐出。
- */
+/** Incremental XML splitter. Wrapped calls remain compatible without tool declarations. */
 export class QoderToolCallSplitter {
   private textBuf = ""
-  /** 调用块已收到的分片；闭合时才 join，避免逐帧复制整个缓冲。 */
-  private callParts: Array<string> = []
-  /** 已收内容的末尾（<= 标记长度 - 1），用来发现被切开的闭合标记。 */
-  private callTail = ""
-  private inCall = false
-  /** 这段流里出现过 XML 形式的调用（用于判定 finish_reason）。 */
+  private parts: Array<string> = []
+  private tail = ""
+  private close = ""
+  private opener = ""
+  private fence = false
+  private inline = false
+  private ticks = 0
+  private wrappers = 0
+  private readonly tools: Tools
   sawTool = false
+
+  constructor(tools?: Tools | null) {
+    this.tools = tools ?? []
+  }
+
+  private text(out: Array<QoderFragment>, text: string) {
+    if (!text) return
+    for (const char of text) {
+      if (char === "`") {
+        this.ticks++
+        continue
+      }
+      if (this.ticks >= 3) this.fence = !this.fence
+      else if (this.ticks && !this.fence) this.inline = !this.inline
+      this.ticks = 0
+      if (char === "\n" && !this.fence) this.inline = false
+    }
+    out.push({ kind: "text", text })
+  }
 
   feed(input: string): Array<QoderFragment> {
     const out: Array<QoderFragment> = []
     let rest = input
-    while (rest !== "") {
-      if (!this.inCall) {
-        const combined = this.textBuf + rest
-        this.textBuf = ""
-        const at = combined.indexOf(CALL_OPEN)
+    while (rest) {
+      if (this.close) {
+        const scan = this.tail + rest
+        const at = scan.indexOf(this.close)
         if (at < 0) {
-          const keep = markerSuffix(combined)
-          if (keep < combined.length) {
-            out.push({
-              kind: "text",
-              text: combined.slice(0, combined.length - keep),
-            })
-            this.textBuf = combined.slice(combined.length - keep)
-          } else {
-            this.textBuf = combined
-          }
+          this.parts.push(rest)
+          this.tail = scan.slice(-(this.close.length - 1))
           break
         }
-        if (at > 0) {
-          out.push({ kind: "text", text: combined.slice(0, at) })
+        const count = at - this.tail.length
+        const full = this.parts.join("") + rest
+        const body = full.slice(0, full.length - rest.length + count)
+        const call = parseCall(
+          this.opener + body + (this.opener ? this.close : ""),
+          this.tools,
+        )
+        if (!call) {
+          if (
+            this.opener
+            || body.trimStart().startsWith("{")
+            || body.includes("<function=")
+          )
+            invalid(false)
+          this.text(out, OPEN + body + CLOSE)
+        } else {
+          out.push({ kind: "call", call })
+          this.sawTool = true
         }
-        rest = combined.slice(at + CALL_OPEN.length)
-        this.inCall = true
+        rest = rest.slice(count + this.close.length)
+        this.parts = []
+        this.tail = ""
+        this.close = ""
+        this.opener = ""
         continue
       }
-
-      const scan = this.callTail + rest
-      const close = scan.indexOf(CALL_CLOSE)
-      if (close < 0) {
-        this.callParts.push(rest)
-        this.callTail = scan.slice(-(CALL_CLOSE.length - 1))
+      const combined = this.textBuf + rest
+      this.textBuf = ""
+      const at = combined.indexOf("<")
+      if (at < 0) {
+        this.text(out, combined)
         break
       }
-      const closeAt = close - this.callTail.length
-      const full = this.callParts.join("") + rest
-      const body = full.slice(0, full.length - rest.length + closeAt)
-      this.callParts = []
-      this.callTail = ""
-      const call = parseQoderToolCall(body)
-      if (call) {
-        this.sawTool = true
-        out.push({ kind: "call", call })
-      } else {
-        out.push({ kind: "text", text: CALL_OPEN + body + CALL_CLOSE })
+      this.text(out, combined.slice(0, at))
+      const candidate = combined.slice(at)
+      const quoted =
+        (this.ticks >= 3 ? !this.fence : this.fence)
+        || (this.ticks > 0 && this.ticks < 3 ? !this.inline : this.inline)
+      const marks = this.tools.length ? MARKS : [OPEN]
+      if (!quoted && marks.some((m) => m.startsWith(candidate))) {
+        if (candidate !== OPEN && !candidate.endsWith(">")) {
+          this.textBuf = candidate
+          break
+        }
       }
-      rest = rest.slice(closeAt + CALL_CLOSE.length)
-      this.inCall = false
+      if (!quoted && candidate.startsWith(OPEN)) {
+        this.close = CLOSE
+        rest = candidate.slice(OPEN.length)
+        continue
+      }
+      if (!quoted && this.tools.length) {
+        const wrapper = /^<(?:antml:)?function_calls>/.exec(candidate)
+        if (wrapper) {
+          const next = candidate.slice(wrapper[0].length).trimStart()
+          const end = next.indexOf(">")
+          if (
+            end < 0
+            && (!next
+              || MARKS.some((m) => m.startsWith(next))
+              || /^<(?:function=|(?:antml:)?invoke\s)/.test(next))
+          ) {
+            this.textBuf = candidate
+            break
+          }
+          const name =
+            /^<(?:antml:)?invoke\s+name\s*=\s*"([^"<>]+)"\s*>/.exec(next)?.[1]
+            ?? /^<function=([^\s<>]+)\s*>/.exec(next)?.[1]
+          if (name && this.tools.some((t) => t.function.name === name)) {
+            this.wrappers++
+            rest = candidate.slice(wrapper[0].length)
+            continue
+          }
+        }
+        const wrapperClose = /^<\/(?:antml:)?function_calls>/.exec(candidate)
+        if (wrapperClose && this.wrappers > 0) {
+          this.wrappers--
+          rest = candidate.slice(wrapperClose[0].length)
+          continue
+        }
+        if (/^<(?:function=|(?:antml:)?invoke\s)/.test(candidate)) {
+          const end = candidate.indexOf(">")
+          if (end < 0) {
+            this.textBuf = candidate
+            break
+          }
+          const opener = candidate.slice(0, end + 1)
+          const name =
+            /^<function=([^\s<>]+)\s*>$/.exec(opener)?.[1]
+            ?? /^<(?:antml:)?invoke\s+name\s*=\s*"([^"<>]+)"\s*>$/.exec(
+              opener,
+            )?.[1]
+          if (name && this.tools.some((t) => t.function.name === name)) {
+            this.opener = opener
+            this.close =
+              opener.startsWith("<function=") ? "</function>"
+              : opener.startsWith("<antml:") ? "</antml:invoke>"
+              : "</invoke>"
+            rest = candidate.slice(end + 1)
+            continue
+          }
+        }
+      }
+      this.text(out, "<")
+      rest = candidate.slice(1)
     }
     return out
   }
 
-  /** 流结束：未闭合的调用按原文吐出，残余文本照发。 */
   flush(): Array<QoderFragment> {
-    if (this.inCall) {
-      const text = CALL_OPEN + this.callParts.join("")
-      this.inCall = false
-      this.callParts = []
-      this.callTail = ""
-      return [{ kind: "text", text }]
+    if (this.close) {
+      const body = this.parts.join("")
+      const call = parseCall(this.opener + body, this.tools)
+      if (!call) {
+        if (
+          this.opener
+          || body.trimStart().startsWith("{")
+          || body.includes("<function=")
+        )
+          invalid(true)
+        this.close = ""
+        this.parts = []
+        this.tail = ""
+        return [{ kind: "text", text: OPEN + body }]
+      }
+      this.close = ""
+      this.parts = []
+      this.tail = ""
+      this.opener = ""
+      this.sawTool = true
+      return [{ kind: "call", call }]
     }
-    if (this.textBuf !== "") {
-      const text = this.textBuf
-      this.textBuf = ""
-      return [{ kind: "text", text }]
-    }
-    return []
+    const out: Array<QoderFragment> = []
+    this.text(out, this.textBuf)
+    this.textBuf = ""
+    return out
   }
 }

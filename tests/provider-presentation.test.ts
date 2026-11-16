@@ -20,19 +20,99 @@ interface AccountView {
   getProviderMeta(id: string): ProviderPresentation
   needsManualOAuthCallback(id: string): boolean
   filteredProviders(): Array<PresentationProvider>
+  newAccount: {
+    provider: string
+    label: string
+    credentials: Record<string, string>
+    settings: Record<string, string>
+  }
+  authMethodTab: string
+  patSubmitting: boolean
+  deviceFlowStep: string
+  handleAccountSubmit(): Promise<void> | undefined
+  getSubmitButtonText(): string
+  resetAddModalState(): void
+  showToast(message: string, kind: string): void
+  load(): Promise<void>
+  startOAuthFlow(): Promise<void>
 }
 
-function createView(): AccountView {
+function createView(
+  createAccount?: (payload: unknown) => Promise<unknown>,
+): AccountView {
   const source = fs.readFileSync("pages/js/views/accounts.js", "utf8")
   const autoRefresh = fs.readFileSync("pages/js/usage-auto-refresh.js", "utf8")
   const view = vm.runInNewContext(`${autoRefresh}\n${source}\naccountsView()`, {
     ViewHelpers: {},
+    I18n: { t: (key: string) => key },
+    API: { accounts: { create: createAccount } },
   }) as AccountView
   view.providers = PROVIDER_IDS.map(getProviderDescriptor)
   return view
 }
 
 describe("provider-owned account presentation", () => {
+  test.each(["qoder", "qoder-cn"])(
+    "%s PAT login validates, submits once, and keeps browser login available",
+    async (provider) => {
+      const sent: unknown[] = []
+      let finish!: (result: unknown) => void
+      const view = createView((payload) => {
+        sent.push(payload)
+        return new Promise((resolve) => {
+          finish = resolve
+        })
+      })
+      const messages: string[] = []
+      view.showToast = (message) => {
+        messages.push(message)
+      }
+      view.load = () => Promise.resolve()
+      let authorized = false
+      view.startOAuthFlow = () => {
+        authorized = true
+        return Promise.resolve()
+      }
+      expect(view.getProviderMeta(provider)).toMatchObject({
+        hasManualMode: true,
+        importMethod: "pat",
+      })
+      view.newAccount = {
+        provider,
+        label: "Test account",
+        credentials: { pat: "  " },
+        settings: { proxyUrl: "http://localhost:9876" },
+      }
+      view.authMethodTab = "manual"
+      expect(view.getSubmitButtonText()).toBe("accounts.pat.login")
+      await view.handleAccountSubmit()
+      expect(sent).toHaveLength(0)
+      expect(messages).toEqual(["accounts.pat.required"])
+      view.newAccount.credentials.pat = "  test-pat  "
+      const pending = view.handleAccountSubmit()
+      await view.handleAccountSubmit()
+      expect(sent).toEqual([
+        {
+          provider,
+          label: "Test account",
+          credentials: { pat: "test-pat" },
+          settings: { proxyUrl: "http://localhost:9876" },
+        },
+      ])
+      expect(view.patSubmitting).toBe(true)
+      finish({ status: "complete" })
+      await pending
+      expect(view.patSubmitting).toBe(false)
+      expect(view.deviceFlowStep).toBe("success")
+      view.authMethodTab = "oauth"
+      await view.handleAccountSubmit()
+      expect(authorized).toBe(true)
+      expect(sent).toHaveLength(1)
+      view.resetAddModalState()
+      expect(view.newAccount.credentials).toEqual({})
+    },
+  )
+
   test("existing categories, import modes and manual callback availability survive API-driven rendering", () => {
     const view = createView()
     expect(view.getProviderMeta("mimo-aistudio")).toMatchObject({

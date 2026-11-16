@@ -765,6 +765,19 @@ export async function* encodeResponsesStream(
         started = true
         yield start()
       }
+      if (current.type === "heartbeat") {
+        yield event("response.in_progress", {
+          response: {
+            id: responseId,
+            object: "response",
+            model,
+            status: "in_progress",
+            output: [],
+            created_at: createdAt ?? Math.floor(Date.now() / 1000),
+          },
+        })
+        continue
+      }
       if (current.type === "part_start") {
         // A search's sources arrive as a separate `web_search_result` part right
         // after the call, but Responses reports both in one item — so the call's

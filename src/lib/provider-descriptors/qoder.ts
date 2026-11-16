@@ -5,6 +5,7 @@ export const providerMetadata = defineProviderMetadata({
   oauth: true,
   credentials: {
     primaryKey: "accessToken",
+    defaultBaseUrl: "https://api3.qoder.sh",
     // COSY signing and quota/userinfo need the device identity. Without these
     // keys an exported account re-imports without them and every request fails
     // with "the saved sign-in is incomplete".
@@ -14,6 +15,7 @@ export const providerMetadata = defineProviderMetadata({
       "deviceToken",
       "deviceRefreshToken",
       "chatTokenKind",
+      "pat",
     ],
   },
   descriptor: {
@@ -22,6 +24,8 @@ export const providerMetadata = defineProviderMetadata({
       category: "ide",
       badgeKey: "accounts.badge.deviceFlow",
       hintKey: "accounts.provider.qoder.deviceHint",
+      hasManualMode: true,
+      importMethod: "pat",
     },
     name: "Qoder",
     icon: "qoder",

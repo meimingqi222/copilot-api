@@ -666,6 +666,12 @@ const i18n = {
       "accounts.provider.qoder": "Qoder",
       "accounts.provider.qoder.name": "Qoder",
       "accounts.provider.qoder.oauthLogin": "浏览器登录 (OAuth)",
+      "accounts.pat.login": "PAT 登录",
+      "accounts.pat.label": "Personal Access Token (PAT)",
+      "accounts.pat.placeholder": "粘贴当前站点的 Qoder PAT",
+      "accounts.pat.hint":
+        "使用当前 Qoder 站点签发的 Personal Access Token，无需浏览器授权。PAT 将保存在服务器，用于自动续期；请勿填写 job token 或 device token。",
+      "accounts.pat.required": "请填写 Personal Access Token (PAT)",
       "accounts.provider.qoder.deviceHint":
         "点击「授权」后会打开 Qoder 授权页选择账号，确认完即可，无需手工粘贴 token。",
       "accounts.provider.qoder-cn": "Qoder CN",
@@ -2809,6 +2815,12 @@ const i18n = {
       "accounts.provider.qoder": "Qoder",
       "accounts.provider.qoder.name": "Qoder",
       "accounts.provider.qoder.oauthLogin": "Browser login (OAuth)",
+      "accounts.pat.login": "PAT login",
+      "accounts.pat.label": "Personal Access Token (PAT)",
+      "accounts.pat.placeholder": "Paste a Qoder PAT for this site",
+      "accounts.pat.hint":
+        "Use a Personal Access Token issued by this Qoder site; no browser authorization is needed. The PAT is saved on the server for automatic renewal. Do not enter a job token or device token.",
+      "accounts.pat.required": "Enter a Personal Access Token (PAT)",
       "accounts.provider.qoder.deviceHint":
         "Clicking Authorize opens the Qoder account picker; confirm there and no token paste is needed.",
       "accounts.provider.qoder-cn": "Qoder CN",

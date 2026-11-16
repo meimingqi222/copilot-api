@@ -35,6 +35,8 @@ export interface RequestExecutionContext {
    * producers may skip their flat Chat aggregation even for non-streaming requests.
    */
   preferStreamingResponse?: boolean
+  /** Check for an untried available route before holding an upstream queue. */
+  hasFallback?: () => boolean
   /**
    * Ask a chat streaming producer to attach its structured delta twin (e.g.
    * Windsurf's `collected`) to each stream event. Cross-protocol consumers

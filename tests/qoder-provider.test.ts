@@ -33,14 +33,24 @@ import type {
   ChatCompletionChunk,
   ChatCompletionResponse,
   ChatCompletionsPayload,
+  CopilotStreamEvent,
 } from "~/services/protocols/chat/types"
+import {
+  decodeChatStream,
+  encodeChatStream,
+  encodeMessagesStream,
+} from "~/services/ir/codecs/messages-chat"
+import { encodeResponsesStream } from "~/services/ir/codecs/responses/stream"
+import { encodeGeminiStream } from "~/services/ir/codecs/gemini/stream"
 import type { AnthropicResponse } from "~/services/protocols/anthropic"
 import type { ResponsesResponse } from "~/services/protocols/responses/types"
 
 import {
   __resetProviderConnectionsForTest,
+  getProviderConnection,
   upsertProviderConnection,
 } from "~/lib/provider-connections"
+import { cancelAllOAuthRefreshTimers } from "~/services/oauth/refresh-scheduler"
 import { PATHS, redirectPathsToDir } from "~/lib/paths"
 import { resetProtectedRouteGuardForTest } from "~/lib/protected-route-guard"
 import { state } from "~/lib/state"
@@ -176,6 +186,32 @@ async function collectFrames(
 // ── 流内错误 ────────────────────────────────────────────────────────
 
 describe("detectQoderStreamError", () => {
+  test("business codes distinguish queues, credits and request refusals from login failures", () => {
+    for (const [code, status] of [
+      [10605, 503],
+      [110, 429],
+      [118, 429],
+      [416, 400],
+      [105, 401],
+    ]) {
+      const error = detectQoderStreamError({
+        data: JSON.stringify({
+          statusCodeValue: 403,
+          body: JSON.stringify({
+            code,
+            message: "vendor refusal",
+            ...(code === 10605 ?
+              { queue: { isQueued: true, retryAfterSeconds: 7 } }
+            : {}),
+          }),
+        }),
+      })
+      expect(error?.response.status).toBe(status)
+      if (code === 10605)
+        expect(error?.response.headers.get("Retry-After")).toBe("7")
+    }
+  })
+
   test("maps a non-200 statusCodeValue to a legal HTTP status", () => {
     const error = detectQoderStreamError({
       data: JSON.stringify({
@@ -323,6 +359,364 @@ interface QoderEnvelope {
 }
 
 describe("qoderNativeAdapter.createChatCompletions", () => {
+  test("keeps queued streams alive across Chat, Messages and Responses without changing completion identity", async () => {
+    let release!: (response: Response) => void
+    let chats = 0
+    globalThis.fetch = mock(async (input: unknown) => {
+      if (String(input).includes("/queue/status"))
+        return new Promise<Response>((resolve) => {
+          release = resolve
+        })
+      if (++chats === 1)
+        return sseResponse([
+          outerFrame({ code: 10605, queue: { isQueued: true } }, 403),
+        ])
+      return sseResponse([
+        outerFrame({
+          id: "upstream-id",
+          choices: [{ delta: { content: "ready" }, finish_reason: "stop" }],
+        }),
+      ])
+    }) as unknown as typeof fetch
+    const result = await qoderNativeAdapter.createChatCompletions!({
+      target: chatTarget("claude-sonnet-4-6"),
+      connection: makeConnection(),
+      credential: makeCredential(),
+      payload: {
+        model: "claude-sonnet-4-6",
+        stream: true,
+        messages: [{ role: "user", content: "wait" }],
+      },
+    })
+    const iterator = (result.response as AsyncIterable<CopilotStreamEvent>)[
+      Symbol.asyncIterator
+    ]()
+    const ping = await iterator.next()
+    expect(ping.value?.event).toBe("ping")
+    expect(chats).toBe(1)
+    release(
+      jsonResponse({
+        isQueued: false,
+        serviceAvailable: true,
+        retryAfterSeconds: 0,
+      }),
+    )
+    const frames: CopilotStreamEvent[] = [ping.value!]
+    for (
+      let next = await iterator.next();
+      !next.done;
+      next = await iterator.next()
+    )
+      frames.push(next.value)
+    const chunks = frames
+      .filter((frame) => frame.data !== "[DONE]")
+      .map((frame) => JSON.parse(frame.data!))
+    expect(new Set(chunks.map((chunk) => chunk.id)).size).toBe(1)
+    expect(
+      chunks.some((chunk) => chunk.choices[0]?.delta.content === "ready"),
+    ).toBe(true)
+    const replay = async function* () {
+      yield* frames
+    }
+    const chat = []
+    for await (const frame of encodeChatStream(decodeChatStream(replay())))
+      chat.push(frame)
+    expect(
+      chat.some(
+        (frame) =>
+          frame.event === "ping"
+          && JSON.parse(frame.data!).choices.length === 0,
+      ),
+    ).toBe(true)
+    const gemini = []
+    for await (const frame of encodeGeminiStream(
+      decodeChatStream(replay()),
+      "claude-sonnet-4-6",
+    ))
+      gemini.push(JSON.parse(frame.data!))
+    expect(gemini[0].candidates[0].content.parts).toEqual([])
+    expect(
+      gemini.some((chunk) =>
+        chunk.candidates?.[0]?.content.parts.some(
+          (part: { text?: string }) => part.text === "ready",
+        ),
+      ),
+    ).toBe(true)
+    const messages = []
+    for await (const event of encodeMessagesStream(decodeChatStream(replay())))
+      messages.push(event)
+    expect(messages.some((event) => event.type === "ping")).toBe(true)
+    expect(
+      messages.some(
+        (event) =>
+          event.type === "content_block_delta"
+          && event.delta.type === "text_delta"
+          && event.delta.text === "ready",
+      ),
+    ).toBe(true)
+    const responses = []
+    for await (const event of encodeResponsesStream(decodeChatStream(replay())))
+      responses.push(JSON.parse(event.data!))
+    expect(
+      responses.some((event) => event.type === "response.in_progress"),
+    ).toBe(true)
+    expect(responses.some((event) => event.type === "response.completed")).toBe(
+      true,
+    )
+  }, 20_000)
+
+  test("cancels an occupied queue without resending the prompt", async () => {
+    const controller = new AbortController()
+    let chats = 0
+    let queueSignal: AbortSignal | null | undefined
+    globalThis.fetch = mock(async (input: unknown, init?: RequestInit) => {
+      if (String(input).includes("/queue/status")) {
+        queueSignal = init?.signal
+        return new Promise<Response>((_resolve, reject) => {
+          queueSignal!.addEventListener(
+            "abort",
+            () => reject(queueSignal!.reason),
+            { once: true },
+          )
+        })
+      }
+      chats++
+      return sseResponse([
+        outerFrame({ code: 10605, queue: { isQueued: true } }, 403),
+      ])
+    }) as unknown as typeof fetch
+    const result = await qoderNativeAdapter.createChatCompletions!({
+      target: chatTarget("claude-sonnet-4-6"),
+      connection: makeConnection(),
+      credential: makeCredential(),
+      signal: controller.signal,
+      payload: {
+        model: "claude-sonnet-4-6",
+        stream: true,
+        messages: [{ role: "user", content: "cancel" }],
+      },
+    })
+    controller.abort(new Error("caller cancelled"))
+    const iterator = (result.response as AsyncIterable<CopilotStreamEvent>)[
+      Symbol.asyncIterator
+    ]()
+    await expect(iterator.next()).rejects.toThrow("caller cancelled")
+    expect(queueSignal?.aborted).toBe(true)
+    expect(chats).toBe(1)
+  })
+
+  test("waits for its queue lease and resends the same task with a new request id", async () => {
+    const bodies: Array<QoderEnvelope> = []
+    const statuses: Array<URL> = []
+    globalThis.fetch = mock(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(input).includes("/queue/status")) {
+          statuses.push(new URL(String(input)))
+          expect(new Headers(init?.headers).get("X-Session-ID")).toBe(
+            bodies[0]!.session_id,
+          )
+          return jsonResponse({
+            data: {
+              isQueued: false,
+              serviceAvailable: true,
+              retryAfterSeconds: 0,
+            },
+          })
+        }
+        bodies.push(
+          JSON.parse(
+            Buffer.from(decodeRequestBody(String(init?.body))).toString(),
+          ),
+        )
+        if (bodies.length === 1)
+          return sseResponse([
+            outerFrame(
+              {
+                code: 10605,
+                message: "busy",
+                queue: {
+                  isQueued: true,
+                  queueType: "p3",
+                  retryAfterSeconds: 1,
+                },
+              },
+              403,
+            ),
+          ])
+        return sseResponse([
+          outerFrame({
+            choices: [{ delta: { content: "ready" }, finish_reason: "stop" }],
+          }),
+        ])
+      },
+    ) as unknown as typeof fetch
+    const result = await qoderNativeAdapter.createChatCompletions!({
+      target: chatTarget("claude-sonnet-4-6"),
+      connection: makeConnection(),
+      credential: makeCredential(),
+      payload: {
+        model: "claude-sonnet-4-6",
+        stream: false,
+        messages: [{ role: "user", content: "queue test" }],
+      },
+    })
+    expect(
+      (result.response as ChatCompletionResponse).choices[0]?.message.content,
+    ).toBe("ready")
+    expect(statuses).toHaveLength(1)
+    expect(statuses[0]!.searchParams.get("requestSetId")).toBe(
+      bodies[0]!.request_set_id,
+    )
+    expect(statuses[0]!.searchParams.get("queueType")).toBe("p3")
+    expect(bodies[1]!.request_set_id).toBe(bodies[0]!.request_set_id)
+    expect(bodies[1]!.request_id).not.toBe(bodies[0]!.request_id)
+    expect(bodies[1]!.business.stage).toBe("start")
+  })
+
+  test("does not wait in a queue when dispatch has another route", async () => {
+    globalThis.fetch = mock(async () =>
+      sseResponse([
+        outerFrame(
+          {
+            code: 10605,
+            message: "busy",
+            queue: { isQueued: true, retryAfterSeconds: 3 },
+          },
+          403,
+        ),
+      ]),
+    ) as unknown as typeof fetch
+    try {
+      await qoderNativeAdapter.createChatCompletions!({
+        target: chatTarget("claude-sonnet-4-6"),
+        connection: makeConnection(),
+        credential: makeCredential(),
+        payload: {
+          model: "claude-sonnet-4-6",
+          stream: true,
+          messages: [{ role: "user", content: "use backup" }],
+        },
+        ctx: { hasFallback: () => true },
+      })
+      throw new Error("expected queue refusal")
+    } catch (error) {
+      expect((error as { response: Response }).response.status).toBe(503)
+      expect(
+        (error as { response: Response }).response.headers.get("Retry-After"),
+      ).toBe("3")
+    }
+  })
+
+  test("retries nameless native tools only before output and keeps arguments until a name arrives", async () => {
+    let calls = 0
+    globalThis.fetch = mock(async () => {
+      calls++
+      if (calls === 1)
+        return sseResponse([
+          outerFrame({
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    { index: 0, id: "bad", function: { arguments: "{}" } },
+                  ],
+                },
+                finish_reason: "tool_calls",
+              },
+            ],
+          }),
+        ])
+      return sseResponse([
+        outerFrame({
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  { index: 0, id: "good", function: { arguments: '{"tz":' } },
+                ],
+              },
+            },
+          ],
+        }),
+        outerFrame({
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    function: { name: "clock", arguments: '"UTC"}' },
+                  },
+                ],
+              },
+              finish_reason: "tool_calls",
+            },
+          ],
+        }),
+      ])
+    }) as unknown as typeof fetch
+    const result = await qoderNativeAdapter.createChatCompletions!({
+      target: chatTarget("claude-sonnet-4-6"),
+      connection: makeConnection(),
+      credential: makeCredential(),
+      payload: {
+        model: "claude-sonnet-4-6",
+        stream: false,
+        messages: [{ role: "user", content: "time" }],
+      },
+    })
+    expect(calls).toBe(2)
+    expect(
+      (result.response as ChatCompletionResponse).choices[0]!.message
+        .tool_calls,
+    ).toMatchObject([
+      {
+        id: "good",
+        type: "function",
+        function: { name: "clock", arguments: '{"tz":"UTC"}' },
+      },
+    ])
+  })
+
+  test("learns a refused output ceiling and keeps smaller future budgets", async () => {
+    const budgets: Array<number> = []
+    const connection = makeConnection({ id: "cap-regression" })
+    globalThis.fetch = mock(async (_input: unknown, init?: RequestInit) => {
+      const envelope = JSON.parse(
+        Buffer.from(decodeRequestBody(String(init?.body))).toString(),
+      ) as { parameters: { max_tokens: number } }
+      budgets.push(envelope.parameters.max_tokens)
+      if (budgets.length === 1)
+        return new Response(
+          JSON.stringify({
+            message: "Error in upstream response",
+            details: {
+              error: { message: "Range of max_tokens should be [1, 2048]" },
+            },
+          }),
+          { status: 400 },
+        )
+      return sseResponse([
+        outerFrame({
+          choices: [{ delta: { content: "ok" }, finish_reason: "stop" }],
+        }),
+      ])
+    }) as unknown as typeof fetch
+    for (const max_tokens of [9000, 8000, 512])
+      await qoderNativeAdapter.createChatCompletions!({
+        target: chatTarget("claude-sonnet-4-6"),
+        connection,
+        credential: makeCredential(),
+        payload: {
+          model: "claude-sonnet-4-6",
+          max_tokens,
+          max_completion_tokens: max_tokens,
+          messages: [{ role: "user", content: "ceiling" }],
+        },
+      })
+    expect(budgets).toEqual([9000, 2048, 2048, 512])
+  })
+
   test("keeps one Qoder task across tool rounds and isolates sessions and callers", async () => {
     const bodies: Array<QoderEnvelope> = []
     globalThis.fetch = mock(async (_url: unknown, init: { body: string }) => {
@@ -840,7 +1234,12 @@ describe("qoderNativeAdapter.createChatCompletions", () => {
     expect(JSON.stringify(messages[0])).toContain("be terse")
     expect(messages[1]).toEqual({
       role: "user",
-      content: [{ type: "text", text: "hi" }],
+      content: [
+        { type: "text", text: "hi", cache_control: { type: "ephemeral" } },
+      ],
+      contents: [
+        { type: "text", text: "hi", cache_control: { type: "ephemeral" } },
+      ],
     })
     expect(envelope.tools).toHaveLength(1)
 
@@ -1297,7 +1696,11 @@ describe("qoderNativeAdapter.createChatCompletions", () => {
       type: "image_url",
       image_url: { url: "data:image/png;base64,AAA" },
     })
-    expect(blocks[2]).toEqual({ type: "text", text: "next" })
+    expect(blocks[2]).toEqual({
+      type: "text",
+      text: "next",
+      cache_control: { type: "ephemeral" },
+    })
   })
 })
 
@@ -1457,12 +1860,61 @@ describe("Qoder end-to-end routing", () => {
 
   afterEach(async () => {
     globalThis.fetch = originalFetch
+    cancelAllOAuthRefreshTimers()
     redirectPathsToDir(isolationRoot)
     __resetProviderConnectionsForTest()
     state.legacyApiKey = originalApiKey
     if (tempAppDir) {
       await fs.rm(tempAppDir, { recursive: true, force: true }).catch(() => {})
     }
+  })
+
+  test("recovers authentication through the live adapter and does not rotate again on immediate refusal", async () => {
+    let chats = 0
+    let refreshes = 0
+    let refuse = false
+    globalThis.fetch = mock(async (input: unknown) => {
+      if (String(input).includes("/refresh")) {
+        refreshes++
+        return jsonResponse({
+          token: "jt-new",
+          refresh_token: "rotated",
+          expires_in: 3600_000,
+        })
+      }
+      if (++chats === 1 || refuse)
+        return jsonResponse({ code: 105, message: "expired" }, 401)
+      return sseResponse([
+        outerFrame({
+          choices: [{ delta: { content: "recovered" }, finish_reason: "stop" }],
+        }),
+      ])
+    }) as unknown as typeof fetch
+    const connection = getProviderConnection("qoder-e2e")!
+    const call = () =>
+      qoderNativeAdapter.createChatCompletions!({
+        target: chatTarget("claude-sonnet-4-6"),
+        connection,
+        credential: connection.credentials.at(0)!,
+        payload: {
+          model: "claude-sonnet-4-6",
+          stream: false,
+          messages: [{ role: "user", content: "auth" }],
+        },
+      })
+    const result = await call()
+    expect(
+      (result.response as ChatCompletionResponse).choices[0]?.message.content,
+    ).toBe("recovered")
+    expect(getProviderConnection(connection.id)?.credentials[0]?.value).toBe(
+      "jt-new",
+    )
+    expect(chats).toBe(2)
+    expect(refreshes).toBe(1)
+    refuse = true
+    await expect(call()).rejects.toThrow("sign in again")
+    expect(chats).toBe(3)
+    expect(refreshes).toBe(1)
   })
 
   test.each(["chat/completions", "messages", "responses"])(

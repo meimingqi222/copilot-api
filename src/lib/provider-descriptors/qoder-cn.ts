@@ -4,13 +4,19 @@ import { providerMetadata as qoderMetadata } from "~/lib/provider-descriptors/qo
 export const providerMetadata = defineProviderMetadata({
   protocol: "qoder-native",
   oauth: true,
-  credentials: qoderMetadata.credentials,
+  credentials: {
+    ...qoderMetadata.credentials,
+    primaryKey: "accessToken",
+    defaultBaseUrl: "https://gateway.qoder.com.cn",
+  },
   descriptor: {
     id: "qoder-cn",
     presentation: {
       category: "ide",
       badgeKey: "accounts.badge.deviceFlow",
       hintKey: "accounts.provider.qoder-cn.deviceHint",
+      hasManualMode: true,
+      importMethod: "pat",
     },
     name: "Qoder CN",
     icon: "qoder",

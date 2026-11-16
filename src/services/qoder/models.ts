@@ -15,7 +15,39 @@
 import { EFFORT_RANK, effortRank } from "~/lib/effort-levels"
 import type { ModelMapping } from "~/lib/provider-connections"
 import { asRecord } from "~/lib/json-shape"
-import type { QoderModelInfo } from "./envelope"
+import type { QoderModelInfo } from "~/services/qoder/envelope"
+
+/** Listing windows, sorted by capacity; do not silently choose the largest. */
+export function qoderContextWindows(raw: Record<string, unknown>): {
+  windows: Array<number>
+  defaultWindow: number
+} {
+  const positive = (v: unknown): v is number =>
+    typeof v === "number" && Number.isInteger(v) && v > 0
+  const windows = new Set<number>()
+  let defaultWindow = 0
+  const config = asRecord(raw.context_config ?? raw.contextConfig)
+  for (const item of Object.values(config ?? {})) {
+    const entry = asRecord(item)
+    if (!positive(entry?.token_count)) continue
+    windows.add(entry.token_count)
+    if (
+      [true, 1, "1"].includes(entry.is_default as boolean | number | string)
+    ) {
+      defaultWindow = entry.token_count
+    }
+  }
+  if (windows.size === 0) {
+    const available =
+      raw.available_context_windows ?? raw.availableContextWindows
+    if (Array.isArray(available)) {
+      for (const value of available) if (positive(value)) windows.add(value)
+    }
+    const candidate = raw.default_context_window ?? raw.defaultContextWindow
+    if (positive(candidate) && windows.has(candidate)) defaultWindow = candidate
+  }
+  return { windows: [...windows].sort((a, b) => a - b), defaultWindow }
+}
 
 /** 按全局档位顺序排序；不认识的档位排在最后。 */
 function sortRank(name: string): number {
@@ -162,7 +194,9 @@ function readEntry(
     source,
     displayName: displayName || key,
     isVl: config.is_vl === true,
-    maxInputTokens: numberOr(config.max_input_tokens),
+    maxInputTokens:
+      qoderContextWindows(config).windows.at(-1)
+      ?? numberOr(config.max_input_tokens),
     free: freeOf(config),
     ...rateOf(config),
     ...thinking,

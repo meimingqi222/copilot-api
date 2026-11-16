@@ -94,6 +94,37 @@ adapter (mirroring how MiniMax Code got `minimax-native`):
   XML and native calls share that output counter. Never deduplicate prose or
   merge arguments merely because Qoder reused an index. See Magpie's fixture
   fix: https://github.com/magpie-community/plugins/commit/34786ed.
+- **Recovery stays before output.** Business queue code 10605 takes precedence
+  over an HTTP 403: it is a 503 with Retry-After, not an expired login. Credit
+  codes become 429; invalid requests remain 400. `qoder/request.ts` permits one
+  auth recovery, one nameless-tool replay and one learned output-cap correction,
+  but never replays a partly delivered answer. Learned caps apply to both output
+  budget spellings and are isolated by connection, site and model.
+  An available untried dispatch target wins over waiting. Otherwise queue status
+  retains the original request set, bounds JSON waits to four minutes and stream
+  waits to one hour, and stops on missing/stuck state or repeated probe failures.
+  Cancellation aborts the probe. Queue heartbeats remain non-content events across
+  Chat, Messages, Responses and Gemini; the resumed Chat answer keeps the heartbeat's id.
+- **PAT is an alternate login, not a second credential store.** Account creation
+  accepts `credentials.pat` for both sites, exchanges it for a job token and
+  requires userinfo uid before registration. Save the PAT in credential context
+  for portable export/import. Refresh the job pair first; only 400/401/403 refusal
+  permits PAT re-exchange. PAT exchanges without a refresh pair use a local marker
+  for the existing scheduler; never transmit that marker as a refresh token.
+  Request refusal and a disabled-paid/free-only model listing share the scheduler
+  lock and five-minute suppression. Sign retries with live credentials, not the
+  pre-refresh token. Remember a still-free token to avoid rotating genuinely
+  exhausted accounts forever. PAT-only quota uses the job token instead of
+  requiring a device token; device-token quota remains independently refreshable.
+- **Window capacity is not the selected context.** Discovery reports the largest
+  offered context, while inference prefers the default and expands only when the
+  estimated input plus output budget needs it. Keep the original listing input
+  capacity in the minimal model_config. Mirror user blocks through content and
+  contents and mark only the final user block ephemeral. Missing historical tool
+  ids are deterministic; reserve explicit result references before pairing unknown
+  ids, and preserve orphan results as user text/images. Only declared tools can be
+  lifted from bare XML; quoted/fenced examples stay prose. Complete calls missing
+  an outer closing tag can recover, but genuinely broken calls fail explicitly.
 
 ## Alternatives considered
 
@@ -119,9 +150,16 @@ covers; dropping it means the signature no longer matches what the client produc
 
 ## Consequences
 
-The add-account dialog needs no new fields: the descriptor's `accountFields` is empty
-(one global account domain, so no region select), the modal opens the returned
-`authUrl`, and polling reports `complete` when the browser approval lands.
+The add-account dialog defaults to browser authorization: `accountFields` stays
+empty, the modal opens the returned `authUrl`, and polling reports `complete`
+when approval lands. Both site descriptors advertise `hasManualMode` and
+`importMethod: "pat"` for the alternate PAT login. The password field posts
+`credentials.pat` through account creation, trims whitespace, rejects empty
+values and prevents duplicate submissions while exchanging credentials.
+Keep the existing-account reauthorization dialog on OAuth: manual creation is
+not an in-place credential update and must not silently duplicate that account.
+Closing/resetting the modal clears the entered PAT. The hint explicitly says the
+PAT is saved on the server; masking the input is not encryption at rest.
 `tests/oauth-qoder.test.ts` pins the registration bijection, the descriptor, the PKCE
 device URL, the poll → job-token → userinfo landing, and refresh rotation keeping the
 device token. `tests/qoder-provider.test.ts` pins the outbound envelope/COSY/`X-Model-*`
@@ -138,12 +176,32 @@ in CI; real availability needs `scripts/test-qoder-live.ts` (device login → mo
 streaming/non-streaming chat → usage) against a live account, and any upstream change
 has to be tracked there first.
 
-Qoder's job token lifetime comes from the response's `expires_in` (milliseconds, not a
-JWT `exp`), with a 24h fallback; `OAUTH_REFRESH_LEAD_MS.qoder` is five minutes.
+Qoder's job token lifetime prefers future `expire_time` / `expires_at` (ISO or
+seconds/milliseconds epoch), then `expires_in` (milliseconds, not a JWT `exp`),
+with a 24h fallback; `OAUTH_REFRESH_LEAD_MS.qoder` is five minutes.
 If the real lifetime turns out to be shorter, that lead is the knob to turn down.
 
 ## Verification
 
+- `tests/qoder-provider.test.ts::business codes distinguish queues, credits and request refusals from login failures`
+  pins queue-before-auth classification, credit and invalid-request semantics.
+- `tests/qoder-provider.test.ts::keeps queued streams alive across Chat, Messages and Responses without changing completion identity`
+  waits for a real heartbeat, clears the queue, then checks resumed content and
+  translated heartbeat formats, including Chat re-encoding and Gemini.
+- `tests/qoder-provider.test.ts::recovers authentication through the live adapter and does not rotate again on immediate refusal`
+  checks one refresh, successful replay and suppression of an immediately refused
+  replacement token through the real adapter with mocked upstream transport.
+- `tests/qoder-provider.test.ts::cancels an occupied queue without resending the prompt`
+  checks the probe abort and absence of replay after caller cancellation.
+- `tests/qoder-provider.test.ts::learns a refused output ceiling and keeps smaller future budgets`
+  checks retry, later requests, both budget spellings and a smaller caller limit.
+- `tests/qoder-envelope.test.ts` and `tests/qoder-tool-calls.test.ts` pin window
+  choice, cache markers, deterministic tool pairing and split/quoted XML behavior.
+- `tests/oauth-qoder.test.ts` and `tests/qoder-quota.test.ts` cover PAT creation,
+  expiry, refresh fallback/suppression, free-view recovery and job-token quota.
+- `tests/provider-presentation.test.ts::PAT login validates, submits once, and keeps browser login available`
+  covers both site descriptors, blank validation, trimmed submission with proxy,
+  duplicate-click prevention, browser login and clearing the form on reset.
 - `tests/qoder-provider.test.ts::keeps one Qoder task across tool rounds and isolates sessions and callers`
   covers prompt changes, fallback identity, caller/session isolation, failed
   openings and sliding expiry through the real adapter's encoded requests.
@@ -180,3 +238,9 @@ failed on absent session_id, listing metadata in model_config and invalid merged
 tool arguments. The natural red run is in
 `.agents/notes-evidence/qoder-request-parity-red.log`. These checks do not prove
 that Qoder will stop generating repetitive wording or change billing attribution.
+
+Proved: Before business-code classification, the focused queue regression in
+`bun test tests/qoder-provider.test.ts` expected status 503 for code 10605 wrapped
+in HTTP 403 and received 401. The corrected classifier passes. Core parity follows
+Magpie's Qoder plugin 0.2.71; mocked transport tests do not establish live PAT or
+model acceptance on either site.

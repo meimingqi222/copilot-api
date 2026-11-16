@@ -37,6 +37,12 @@ import {
   qoderSiteForProvider,
 } from "~/services/qoder/endpoints"
 import { newQoderId } from "~/services/qoder/ids"
+import { qoderError } from "~/services/qoder/errors"
+import {
+  openQoderRequest,
+  QoderNamelessToolError,
+} from "~/services/qoder/request"
+import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
 import { getQoderTask, type QoderTask } from "~/services/qoder/session"
 import {
   parseQoderModelList,
@@ -47,11 +53,15 @@ import {
   QoderToolCallSplitter,
   type QoderFragment,
 } from "~/services/qoder/tool-calls"
-import { qoderUserFromConnection } from "~/services/oauth/qoder"
+import {
+  qoderUserFromConnection,
+  recoverQoderAuthentication,
+} from "~/services/oauth/qoder"
+import { withQoderModelAuthRecovery } from "~/services/providers/qoder"
+import { getMutableProviderConnection } from "~/lib/provider-connections"
 import type { CopilotStreamEvent } from "~/services/protocols/chat/types"
 import {
   connectionFetchInit,
-  handleUpstreamFailure,
   safeSseStream,
   setHeader,
 } from "~/services/protocols/shared"
@@ -93,60 +103,6 @@ function safeJson(text: string): unknown {
   }
 }
 
-function normalizeHttpStatus(value: number): number {
-  return value >= 400 && value <= 599 ? value : 502
-}
-
-/**
- * 流内业务错误（外层 `statusCodeValue` ≠ 200）归一化成合法 HTTP 状态。
- *
- * `new Response(null, { status })` 只接受 200–599，越界会抛 RangeError；
- * Qoder 的 401/403 表示登录过期，含 "quota" 的报文表示用量见底。
- */
-function qoderStreamError(
-  statusCode: number,
-  inner: string,
-  outer: string,
-): HTTPError {
-  const parsed = asRecord(safeJson(inner))
-  const nested = asRecord(parsed?.error)
-  let message =
-    (typeof parsed?.message === "string" && parsed.message)
-    || (typeof nested?.message === "string" && nested.message)
-    || inner.trim().slice(0, 300)
-    || `Qoder upstream error ${statusCode}`
-  // Qoder 的真实错误描述常藏在 details 里（JSON 字符串或对象，
-  // { error: { message } }），剥一层拼到 message 后面。
-  const details =
-    typeof parsed?.details === "string" ?
-      asRecord(safeJson(parsed.details))
-    : asRecord(parsed?.details)
-  const detailMessage = asRecord(details?.error)?.message
-  if (
-    typeof detailMessage === "string"
-    && detailMessage
-    && !message.includes(detailMessage)
-  ) {
-    message = `${message}: ${detailMessage}`
-  }
-  const status = normalizeHttpStatus(statusCode)
-  if (statusCode === 401 || statusCode === 403) {
-    return new HTTPError(
-      "Qoder: the sign-in lapsed — sign in again",
-      new Response(null, { status: 401 }),
-      inner || outer,
-    )
-  }
-  if (statusCode === 429 || message.toLowerCase().includes("quota")) {
-    return new HTTPError(
-      `usage limit reached: ${message}`,
-      new Response(null, { status: 429 }),
-      inner || outer,
-    )
-  }
-  return new HTTPError(message, new Response(null, { status }), inner || outer)
-}
-
 /** 外层信封的业务错误（statusCodeValue ≠ 200）；没有则 null。 */
 function outerError(
   outer: Record<string, unknown>,
@@ -155,7 +111,7 @@ function outerError(
   const status = outer.statusCodeValue
   if (typeof status === "number" && status !== 200) {
     const inner = typeof outer.body === "string" ? outer.body : ""
-    return qoderStreamError(status, inner, raw)
+    return qoderError(status, inner || raw)
   }
   return null
 }
@@ -200,10 +156,16 @@ async function* decodeQoderStream(
   model: string,
   task: QoderTask,
   c?: Context,
+  tools?: ChatCompletionsPayload["tools"],
 ): AsyncGenerator<CopilotStreamEvent> {
-  const splitter = new QoderToolCallSplitter()
+  const splitter = new QoderToolCallSplitter(tools)
   let nextToolIndex = 0
-  const nativeCalls = new Map<number, { id?: string; index: number }>()
+  const nativeCalls = new Map<
+    number,
+    { id?: string; index: number; named: boolean; args: string }
+  >()
+  let sawNameless = false
+  let sawOutput = false
   let sawNativeTool = false
   let sawFinish = false
   let usageSent = false
@@ -229,6 +191,8 @@ async function* decodeQoderStream(
     for (const frag of frags) {
       if (frag.kind === "text") {
         if (frag.text) {
+          sawOutput = true
+          task.answered = true
           out.push(
             chunkFrame({
               ...base(),
@@ -247,6 +211,8 @@ async function* decodeQoderStream(
       // XML arguments were accumulated before emitting this call. Counting all
       // their tokens against the shorter downstream interval inflates TPS.
       bufferedOutput = true
+      sawOutput = true
+      task.answered = true
       setDecodeTpsEligible(c, false)
       out.push(
         chunkFrame({
@@ -280,7 +246,6 @@ async function* decodeQoderStream(
   for await (const event of upstream) {
     const chunk = parseQoderFrame(event.data)
     if (!chunk) continue
-    if (chunk.choices?.length) task.answered = true
     if (chunk.id) id = chunk.id
     if (typeof chunk.created === "number") created = chunk.created
 
@@ -296,6 +261,8 @@ async function* decodeQoderStream(
       setDecodeTpsEligible(c, !bufferedOutput && now - firstOutputAt >= 100)
     }
     if (delta?.reasoning_content) {
+      sawOutput = true
+      task.answered = true
       yield chunkFrame({
         ...base(),
         choices: [
@@ -315,36 +282,61 @@ async function* decodeQoderStream(
     // 原生 tool_calls：id 由 Qoder 签发，必须原样保留（调用结果要用它回配）。
     if (delta?.tool_calls && delta.tool_calls.length > 0) {
       for (const frame of fragments(splitter.flush())) yield frame
-      sawNativeTool = true
-      const calls = delta.tool_calls.map((call) => {
+      const calls = delta.tool_calls.flatMap((call) => {
         const upstreamIndex = call.index ?? 0
         let open = nativeCalls.get(upstreamIndex)
         // Qoder can reuse index 0 for another id. XML and native calls also
         // need one shared output index space, or their arguments are merged.
         if (!open || (call.id && open.id && call.id !== open.id)) {
-          open = { id: call.id, index: nextToolIndex++ }
+          open = { id: call.id, index: nextToolIndex++, named: false, args: "" }
           nativeCalls.set(upstreamIndex, open)
         }
         if (call.id) open.id = call.id
-        return { ...call, index: open.index }
+        if (!open.named) {
+          open.args += call.function?.arguments ?? ""
+          if (!call.function?.name) {
+            sawNameless = true
+            return []
+          }
+          open.named = true
+          sawNativeTool = sawOutput = true
+          task.answered = true
+          return [
+            {
+              ...call,
+              id: open.id,
+              index: open.index,
+              function: { ...call.function, arguments: open.args },
+            },
+          ]
+        }
+        return [{ ...call, index: open.index }]
       })
-      yield chunkFrame({
-        ...base(),
-        choices: [
-          {
-            index: 0,
-            delta: { tool_calls: calls },
-            finish_reason: null,
-          },
-        ],
-      })
+      if (calls.length)
+        yield chunkFrame({
+          ...base(),
+          choices: [
+            {
+              index: 0,
+              delta: { tool_calls: calls },
+              finish_reason: null,
+            },
+          ],
+        })
     }
 
     if (choice?.finish_reason && !sawFinish) {
       for (const frame of fragments(splitter.flush())) yield frame
+      if (sawNameless && !sawOutput) throw new QoderNamelessToolError()
+      task.answered = true
       const finish =
-        choice.finish_reason === "stop" && (splitter.sawTool || sawNativeTool) ?
+        (
+          (choice.finish_reason === "stop"
+            || choice.finish_reason === "tool_calls")
+          && (splitter.sawTool || sawNativeTool)
+        ) ?
           "tool_calls"
+        : choice.finish_reason === "tool_calls" && sawNameless ? "stop"
         : choice.finish_reason
       yield chunkFrame({
         ...base(),
@@ -368,6 +360,7 @@ async function* decodeQoderStream(
 
   if (!sawFinish) {
     for (const frame of fragments(splitter.flush())) yield frame
+    if (sawNameless && !sawOutput) throw new QoderNamelessToolError()
     yield chunkFrame({
       ...base(),
       choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
@@ -423,21 +416,31 @@ export const qoderNativeAdapter: ProtocolAdapter = {
       connection.baseUrl
       || qoderSiteForProvider(getConnectionProvider(connection)).apiHost
     const url = qoderListModelsUrl(base)
-    // GET 的 COSY 签名用空 body。
-    const headers = buildQoderHeaders(connection, credential.value, url, "")
-    const response = await fetch(
-      url,
-      connectionFetchInit(connection, { headers, signal }),
+    const parsed = await withQoderModelAuthRecovery(
+      connection,
+      async (current) => {
+        for (let attempt = 0; ; attempt++) {
+          signal?.throwIfAborted()
+          const live = getMutableProviderConnection(current.id) ?? current
+          const token = live.credentials.at(0)?.value ?? credential.value
+          const headers = buildQoderHeaders(live, token, url, "")
+          const response = await fetch(
+            url,
+            connectionFetchInit(live, { headers, signal }),
+          )
+          const body = await response.text()
+          if (response.ok) return safeJson(body)
+          const error = qoderError(response.status, body)
+          if (
+            attempt === 0
+            && error.lapsed
+            && (await recoverQoderAuthentication(live, token))
+          )
+            continue
+          throw error
+        }
+      },
     )
-    if (!response.ok) {
-      await handleUpstreamFailure(
-        response,
-        credential,
-        "Failed to discover Qoder models",
-        "qoder-native",
-      )
-    }
-    const parsed = safeJson(await response.text())
     return qoderModelMappings(parseQoderModelList(parsed))
   },
 
@@ -462,53 +465,120 @@ export const qoderNativeAdapter: ProtocolAdapter = {
     }
 
     const task = getQoderTask(payload, connection, ctx)
-    const plaintext = buildChatEnvelope(maskUpstream(payload), model, task)
-    if (process.env.QODER_DUMP) {
-      // 调试用：把发往 Qoder 的明文信封落盘，便于比对。
-      try {
-        await Bun.write("temp/qoder-envelope.json", plaintext)
-      } catch {
-        // 忽略
-      }
-    }
-    const wire = encodeRequestBody(new TextEncoder().encode(plaintext))
     const base =
       connection.baseUrl
       || qoderSiteForProvider(getConnectionProvider(connection)).apiHost
     const url = qoderChatUrl(base)
-    const headers = buildQoderHeaders(connection, credential.value, url, wire)
-    setHeader(headers, "Accept", "text/event-stream")
-    setHeader(headers, "Cache-Control", "no-cache")
-    setHeader(headers, "Accept-Encoding", "identity")
-    setHeader(headers, "X-Model-Key", model.key)
-    setHeader(headers, "X-Model-Source", model.source)
-
-    const response = await fetch(
-      url,
-      connectionFetchInit(connection, {
-        method: "POST",
-        headers,
-        body: wire,
-        signal,
-      }),
-    )
-    if (!response.ok) {
-      await handleUpstreamFailure(
-        response,
-        credential,
-        "Failed to create Qoder chat completions",
-        "qoder-native",
-      )
-    }
-
-    // 上游只有流式；跨协议消费者自己聚合有序事件，不能先压平为 Chat。
-    const upstream = await safeSseStream(response, detectQoderStreamError)
-    const stream = decodeQoderStream(
-      upstream as unknown as AsyncIterable<SimpleSseEventLike>,
-      target.upstreamModelId,
-      task,
-      ctx?.c,
-    )
+    let requestId = ""
+    let refusedToken = credential.value
+    const stream = await openQoderRequest({
+      key: JSON.stringify([connection.id, base, model.key]),
+      model: target.upstreamModelId,
+      streaming: Boolean(payload.stream),
+      signal,
+      hasFallback: ctx?.hasFallback,
+      recover: () => recoverQoderAuthentication(connection, refusedToken),
+      async open(requestSignal, cap) {
+        const live = getMutableProviderConnection(connection.id) ?? connection
+        refusedToken = live.credentials.at(0)?.value ?? credential.value
+        const budget = Math.min(
+          payload.max_completion_tokens || payload.max_tokens || cap || 32000,
+          cap || Infinity,
+        )
+        const request =
+          cap ?
+            {
+              ...payload,
+              max_tokens: budget,
+              ...(payload.max_completion_tokens ?
+                { max_completion_tokens: budget }
+              : {}),
+            }
+          : payload
+        const plaintext = buildChatEnvelope(maskUpstream(request), model, task)
+        requestId = (JSON.parse(plaintext) as { request_id: string }).request_id
+        const wire = encodeRequestBody(new TextEncoder().encode(plaintext))
+        const headers = buildQoderHeaders(live, refusedToken, url, wire)
+        setHeader(headers, "Accept", "text/event-stream")
+        setHeader(headers, "Cache-Control", "no-cache")
+        setHeader(headers, "Accept-Encoding", "identity")
+        setHeader(headers, "X-Model-Key", model.key)
+        setHeader(headers, "X-Model-Source", model.source)
+        // Bound headers and first event together, and abort the socket on refusal.
+        const attempt = new AbortController()
+        const timer = setTimeout(
+          () =>
+            attempt.abort(
+              new HTTPError(
+                "Qoder sent no first event in 120s",
+                new Response(null, { status: 504 }),
+              ),
+            ),
+          120_000,
+        )
+        const attemptSignal = AbortSignal.any([requestSignal, attempt.signal])
+        let decoded: AsyncGenerator<CopilotStreamEvent>
+        let first: IteratorResult<CopilotStreamEvent>
+        try {
+          const response = await fetch(
+            url,
+            connectionFetchInit(live, {
+              method: "POST",
+              headers,
+              body: wire,
+              signal: attemptSignal,
+            }),
+          )
+          if (!response.ok)
+            throw qoderError(response.status, await response.text())
+          const upstream = await safeSseStream(response, detectQoderStreamError)
+          decoded = decodeQoderStream(
+            upstream as AsyncIterable<SimpleSseEventLike>,
+            target.upstreamModelId,
+            task,
+            ctx?.c,
+            payload.tool_choice === "none" ? [] : payload.tools,
+          )
+          first = await decoded.next()
+        } catch (error) {
+          attempt.abort()
+          throw error
+        } finally {
+          clearTimeout(timer)
+        }
+        return (async function* () {
+          try {
+            if (!first.done) yield first.value
+            yield* decoded
+          } finally {
+            attempt.abort()
+            await decoded.return(undefined)
+          }
+        })()
+      },
+      async queueStatus(error, queueSignal) {
+        const params = new URLSearchParams({
+          requestSetId: task.id,
+          modelKey: model.key,
+        })
+        if (error.queue?.queueType)
+          params.set("queueType", error.queue.queueType)
+        const statusUrl = `${base}/algo/api/v2/service/ask/queue/status?${params}`
+        const live = getMutableProviderConnection(connection.id) ?? connection
+        const headers = buildQoderHeaders(
+          live,
+          live.credentials.at(0)?.value ?? credential.value,
+          statusUrl,
+          "",
+        )
+        setHeader(headers, "X-Request-ID", requestId)
+        setHeader(headers, "X-Session-ID", task.sessionId)
+        return fetch(
+          statusUrl,
+          connectionFetchInit(live, { headers, signal: queueSignal }),
+        )
+      },
+    })
 
     if (!payload.stream && !ctx?.preferStreamingResponse) {
       const aggregated = await aggregateSseToResponse(

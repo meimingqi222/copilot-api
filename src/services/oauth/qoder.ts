@@ -3,7 +3,7 @@
  *
  * **纯 HTTP** 流程（不依赖本机 CLI / SQLite / keychain）：
  *
- *   授权页   https://qoder.com/device/selectAccounts?challenge=&nonce=&machine_id=&client_id=&redirect_uri=qoder-app://
+ *   授权页   https://qoder.com/device/selectAccounts?challenge=&nonce=&machine_id=&client_id=
  *   轮询     GET  https://openapi.qoder.sh/api/v1/deviceToken/poll?nonce=&verifier=&challenge_method=S256
  *   job token POST https://openapi.qoder.sh/api/v1/me/jobToken  {clientId}
  *   userinfo GET  https://openapi.qoder.sh/api/v1/userinfo      Bearer <deviceToken>
@@ -12,7 +12,7 @@
  * - `device_token`（dt-）：userinfo / usage 用，直接 `Authorization: Bearer`
  * - job `token`（jt-）：chat 用，经 COSY 加密后进 `Authorization: Bearer COSY.<payload>.<sig>`
  * 两者各有独立 refresh 端点，且都会轮换 refresh token；有效期来自响应的
- * `expires_in`（**毫秒**），不是 JWT 的 `exp`。
+ * `expire_time` / `expires_at` 或 `expires_in`（**毫秒**），不是 JWT 的 `exp`。
  *
  * 落位（见 plan 的架构决策 3）：
  * - `credential.value`                    = job token（chat）
@@ -26,6 +26,7 @@ import type { ProviderConnection } from "~/lib/provider-connections"
 import { HTTPError } from "~/lib/error"
 import {
   getCredentialContextString,
+  getMutableProviderConnection,
   setConnectionCredentialExtra,
   setCredentialContextField,
 } from "~/lib/provider-connections"
@@ -35,6 +36,7 @@ import {
   QODER_DEVICE_TOKEN_POLL_PATH,
   QODER_DEVICE_TOKEN_REFRESH_PATH,
   QODER_JOB_TOKEN_PATH,
+  QODER_JOB_TOKEN_EXCHANGE_PATH,
   QODER_JOB_TOKEN_REFRESH_PATH,
   QODER_SITES,
   QODER_USERINFO_PATH,
@@ -72,6 +74,7 @@ interface QoderDeviceTokenResponse {
 interface QoderJobTokenResponse {
   token: string
   refreshToken: string
+  expiresAtMs?: number
   /** 毫秒；缺失或 ≤ 0 时由调用方兜 24h。 */
   expiresInMs?: number
 }
@@ -104,7 +107,7 @@ export function createQoderAuthRequest(site: QoderSite = QODER_SITES.qoder): {
     machine_id: machineId,
     client_id: site.clientId,
   })
-  // Qoder CN 的 CLI 不带 redirect_uri；国际站带 qoder-app://。
+  // Both current device authorization pages omit redirect_uri.
   if (site.redirectUri) params.set("redirect_uri", site.redirectUri)
   return {
     authUrl: `${site.deviceFlowHost}${QODER_DEVICE_SELECT_ACCOUNTS_PATH}?${params.toString()}`,
@@ -116,15 +119,13 @@ export function createQoderAuthRequest(site: QoderSite = QODER_SITES.qoder): {
 
 /** 设备 token 的到期：expires_at（RFC3339 或秒/毫秒纪元）+ expires_in（毫秒）兜底。 */
 function deviceExpiryMs(raw: Record<string, unknown>): number | undefined {
-  const at = raw.expires_at
-  if (typeof at === "string") {
-    const parsed = Date.parse(at)
-    if (!Number.isNaN(parsed)) return parsed
-    const n = Number(at)
-    if (Number.isFinite(n) && n > 0) return n < 1e12 ? n * 1000 : n
+  for (const at of [raw.expire_time, raw.expires_at]) {
+    const numeric =
+      typeof at === "number" || /^\d+$/.test(String(at ?? "").trim())
+    const n = numeric ? Number(at) : Date.parse(String(at ?? ""))
+    const parsed = numeric && n < 1e12 ? n * 1000 : n
+    if (Number.isFinite(parsed) && parsed > Date.now()) return parsed
   }
-  const n = typeof at === "number" ? at : NaN
-  if (Number.isFinite(n) && n > 0) return n < 1e12 ? n * 1000 : n
   const inMs = numberOrUndefined(raw.expires_in)
   return inMs !== undefined ? Date.now() + inMs : undefined
 }
@@ -230,6 +231,49 @@ export async function exchangeQoderJobToken(
     token,
     refreshToken: asStringOrEmpty(raw.refresh_token),
     expiresInMs: numberOrUndefined(raw.expires_in),
+    expiresAtMs: deviceExpiryMs(raw),
+  }
+}
+
+/** Keeps PAT-only credentials on the host scheduler even when no refresh pair is issued. */
+export const QODER_PAT_REFRESH_MARKER = "qoder:pat-exchange"
+
+export async function exchangeQoderPersonalToken(
+  personalToken: string,
+  options?: OAuthFetchOptions,
+  site: QoderSite = QODER_SITES.qoder,
+): Promise<QoderJobTokenResponse> {
+  const response = await oauthFetch(
+    `${site.openapiHost}${QODER_JOB_TOKEN_EXCHANGE_PATH}`,
+    {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ personal_token: personalToken }),
+    },
+    options,
+  )
+  const body = await response.text()
+  if (!response.ok) {
+    throw new HTTPError(
+      `Qoder PAT exchange failed (${response.status})`,
+      new Response(body, { status: response.status }),
+      body,
+    )
+  }
+  const raw = asRecordOrEmpty(safeJson(body))
+  const token =
+    asStringOrEmpty(raw.token)
+    || asStringOrEmpty(raw.device_token)
+    || asStringOrEmpty(raw.access_token)
+  if (!token.trim())
+    throw new Error("Qoder PAT exchange returned an empty token")
+  return {
+    token,
+    refreshToken:
+      asStringOrEmpty(raw.refresh_token)
+      || asStringOrEmpty(raw.refreshToken)
+      || QODER_PAT_REFRESH_MARKER,
+    expiresAtMs: deviceExpiryMs(raw),
   }
 }
 
@@ -276,6 +320,7 @@ export async function refreshQoderJobToken(
     token,
     refreshToken: nextRefresh,
     expiresInMs: numberOrUndefined(raw.expires_in),
+    expiresAtMs: deviceExpiryMs(raw),
   }
 }
 
@@ -359,7 +404,7 @@ export async function fetchQoderUserInfo(
   }
   const raw = asRecordOrEmpty(safeJson(body))
   return {
-    id: asStringOrEmpty(raw.id),
+    id: String(raw.id ?? raw.user_id ?? raw.uid ?? ""),
     name: asStringOrEmpty(raw.name),
     email: asStringOrEmpty(raw.email),
   }
@@ -379,10 +424,12 @@ function numberOrUndefined(value: unknown): number | undefined {
     : undefined
 }
 
-/** job token 寿命：响应的 `expires_in`（毫秒），缺失时兜 24h。 */
+/** Job lifetime: absolute expiry first, then expires_in (ms), then 24h. */
 export function qoderJobTokenLifetimeMs(
-  job: Pick<QoderJobTokenResponse, "expiresInMs">,
+  job: Pick<QoderJobTokenResponse, "expiresInMs" | "expiresAtMs">,
 ): number {
+  if (job.expiresAtMs !== undefined)
+    return Math.max(0, job.expiresAtMs - Date.now())
   return job.expiresInMs && job.expiresInMs > 0 ?
       job.expiresInMs
     : QODER_TOKEN_FALLBACK_MS
@@ -460,6 +507,7 @@ export function applyQoderJobTokenRefresh(
     refreshToken: job.refreshToken,
     expiresAt: Date.now() + qoderJobTokenLifetimeMs(job),
   })
+  setCredentialContextField(connection, "qoderRefreshedAt", Date.now())
 }
 
 /**
@@ -476,6 +524,46 @@ export function applyQoderDeviceChatRefresh(
     expiresAt: token.expiresAtMs ?? Date.now() + QODER_TOKEN_FALLBACK_MS,
   })
   applyQoderDeviceTokenRefresh(connection, token)
+  setCredentialContextField(connection, "qoderRefreshedAt", Date.now())
+}
+
+const QODER_RECOVERY_GAP_MS = 5 * 60 * 1000
+const recoveries = new WeakMap<
+  ProviderConnection,
+  { at: number; pending?: Promise<boolean> }
+>()
+
+/** A caller retries its rejected operation once only when this returns true.
+ * All rotations still go through the host's lock, auth merge and persistence.
+ */
+export async function recoverQoderAuthentication(
+  connection: ProviderConnection,
+  refusedToken: string,
+): Promise<boolean> {
+  const live = getMutableProviderConnection(connection.id) ?? connection
+  if (live.credentials[0]?.value !== refusedToken) return true
+  const previous = recoveries.get(live)
+  if (previous?.pending) return previous.pending
+  const refreshedAt = Number(
+    live.credentials[0]?.context?.qoderRefreshedAt ?? 0,
+  )
+  if (
+    Date.now() - Math.max(previous?.at ?? 0, refreshedAt)
+    < QODER_RECOVERY_GAP_MS
+  )
+    return false
+  const entry: { at: number; pending?: Promise<boolean> } = { at: Date.now() }
+  recoveries.set(live, entry)
+  entry.pending = (async () => {
+    const { refreshOAuthConnectionToken } = await import(
+      "~/services/oauth/refresh-scheduler"
+    )
+    await refreshOAuthConnectionToken(live, "qoder-auth-recovery")
+    return live.credentials[0]?.value !== refusedToken
+  })().finally(() => {
+    entry.pending = undefined
+  })
+  return entry.pending
 }
 
 /** 从 connection 读回 COSY 签名所需的身份（缺失时 undefined）。 */

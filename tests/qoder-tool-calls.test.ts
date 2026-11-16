@@ -1,12 +1,18 @@
 import { describe, expect, test } from "bun:test"
+import { HTTPError } from "~/lib/error"
+import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
 
 import {
   QoderToolCallSplitter,
   type QoderFragment,
 } from "~/services/qoder/tool-calls"
 
-function feedInChunks(text: string, size: number): Array<QoderFragment> {
-  const splitter = new QoderToolCallSplitter()
+function feedInChunks(
+  text: string,
+  size: number,
+  tools?: ChatCompletionsPayload["tools"],
+): Array<QoderFragment> {
+  const splitter = new QoderToolCallSplitter(tools ?? [])
   const out: Array<QoderFragment> = []
   for (let i = 0; i < text.length; i += size) {
     out.push(...splitter.feed(text.slice(i, i + size)))
@@ -34,11 +40,123 @@ describe("QoderToolCallSplitter", () => {
     }
   })
 
-  test("unclosed call is flushed verbatim", () => {
-    const frags = feedInChunks("a<tool_call><function=x>", 3)
-    expect(frags.map((f) => (f.kind === "text" ? f.text : "")).join("")).toBe(
+  test("truncated and malformed calls throw explicit upstream errors", () => {
+    for (const text of [
       "a<tool_call><function=x>",
-    )
+      '<tool_call>{"name":"x","arguments":',
+      "<tool_call>{bad}</tool_call>",
+      "<tool_call><function=x><parameter=a>bad</function></tool_call>",
+    ]) {
+      try {
+        feedInChunks(text, 3)
+        throw new Error("accepted bad tool")
+      } catch (error) {
+        expect(error).toBeInstanceOf(HTTPError)
+        expect((error as HTTPError).response.status).toBe(502)
+      }
+    }
+  })
+
+  test("complete JSON and XML recover when only the outer close is missing", () => {
+    for (const text of [
+      '<tool_call>{"name":"x","arguments":{"n":1}}',
+      CALL.replace("</tool_call>", ""),
+    ]) {
+      expect(
+        feedInChunks(text, 1).filter((f) => f.kind === "call"),
+      ).toHaveLength(1)
+    }
+  })
+
+  const tools: NonNullable<ChatCompletionsPayload["tools"]> = [
+    {
+      type: "function",
+      function: {
+        name: "Write",
+        parameters: {
+          type: "object",
+          properties: { path: { type: "string" }, count: { type: "integer" } },
+        },
+      },
+    },
+  ]
+
+  test("declared bare Qwen and Anthropic tools preserve schema strings at every boundary", () => {
+    for (const text of [
+      "<function=Write><parameter=path>[1,2]</parameter><parameter=count>2</parameter></function>",
+      '<function_calls><invoke name="Write"><parameter name="path">[1,2]</parameter><parameter name="count">2</parameter></invoke></function_calls>',
+      '<antml:function_calls><antml:invoke name="Write"><antml:parameter name="path">[1,2]</antml:parameter><antml:parameter name="count">2</antml:parameter></antml:invoke></antml:function_calls>',
+    ]) {
+      for (let size = 1; size <= text.length; size++) {
+        const fragments = feedInChunks(text, size, tools)
+        expect(fragments.filter((f) => f.kind === "call")).toEqual([
+          {
+            kind: "call",
+            call: { name: "Write", args: '{"path":"[1,2]","count":2}' },
+          },
+        ])
+        expect(
+          fragments
+            .filter((f) => f.kind === "text")
+            .map((f) => f.text)
+            .join("")
+            .trim(),
+        ).toBe("")
+      }
+    }
+  })
+
+  test("undeclared bare tools and quoted examples remain prose", () => {
+    for (const text of [
+      "<function=Other><parameter=a>1</parameter></function>",
+      '<function_calls><invoke name="Other"><parameter name="a">1</parameter></invoke></function_calls>',
+      "The <tool_call> marker is an example.</tool_call>",
+      "A <function_calls> marker in prose.",
+      `\`${CALL}\``,
+      `\`\`\`xml\n${CALL}\n\`\`\``,
+      "`<function=Write><parameter=path>x</parameter></function>`",
+    ]) {
+      for (let size = 1; size < 20; size++) {
+        const fragments = feedInChunks(text, size, tools)
+        expect(fragments.filter((f) => f.kind === "call")).toHaveLength(0)
+        expect(
+          fragments
+            .filter((f) => f.kind === "text")
+            .map((f) => f.text)
+            .join(""),
+        ).toBe(text)
+      }
+    }
+  })
+
+  test("quoted examples do not hide a later real call", () => {
+    for (let size = 1; size < 20; size++) {
+      const fragments = feedInChunks(`\`example\` ${CALL}`, size, tools)
+      expect(fragments.filter((f) => f.kind === "call")).toHaveLength(1)
+      expect(
+        fragments
+          .filter((f) => f.kind === "text")
+          .map((f) => f.text)
+          .join(""),
+      ).toBe("`example` ")
+    }
+  })
+
+  test("a genuinely cut-short bare call throws rather than rendering its parameters", () => {
+    for (const text of [
+      '<invoke name="Write"><parameter name="path">partial',
+      "<function=Write><parameter=path>partial",
+    ]) {
+      expect(() => feedInChunks(text, 1, tools)).toThrow(HTTPError)
+    }
+  })
+
+  test("schema strings apply inside wrapped XML too", () => {
+    const text =
+      "<tool_call><function=Write><parameter=path>true</parameter></function></tool_call>"
+    expect(feedInChunks(text, 2, tools)).toEqual([
+      { kind: "call", call: { name: "Write", args: '{"path":"true"}' } },
+    ])
   })
 
   test("large call in tiny chunks stays linear", () => {
