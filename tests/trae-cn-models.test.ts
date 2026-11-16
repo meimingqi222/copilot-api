@@ -111,8 +111,19 @@ test("Trae discovers solo_coder and uses account-specific vision and reasoning l
   ])
   const a = traeCnChatBody(payload, "solo_coder", "kimi-k3")
   const b = traeCnChatBody(payload, "solo_coder", "kimi-k3")
-  expect(a.session_id).toBe(a.request_id)
+  // request_id 每请求一新；无会话时 session_id 也随机（与 request_id 各自独立）。
+  expect(a.session_id).not.toBe(a.request_id)
   expect(a.session_id).not.toBe(b.session_id)
+  // 给定会话时 session_id 稳定（同会话多步算一次会话），request_id 仍每请求一新。
+  const s1 = traeCnChatBody(payload, "solo_coder", "kimi-k3", undefined, {
+    session: "conv-1",
+  })
+  const s2 = traeCnChatBody(payload, "solo_coder", "kimi-k3", undefined, {
+    session: "conv-1",
+  })
+  expect(s1.session_id).toBe("conv-1")
+  expect(s1.session_id).toBe(s2.session_id)
+  expect(s1.request_id).not.toBe(s2.request_id)
 })
 
 function model(id: string, name: string, output = 16000) {
@@ -125,7 +136,7 @@ function model(id: string, name: string, output = 16000) {
   }
 }
 
-test("TRAE agent metadata wins when the same model has dev entries in multiple modes", async () => {
+test("majority model names win over an isolated solo_agent label", async () => {
   const id = "deepseek-v4.1-flash"
   const models = await traeCnListModels(
     async () => ({
@@ -160,15 +171,19 @@ test("TRAE agent metadata wins when the same model has dev entries in multiple m
   expect(models).toEqual([
     {
       id,
-      name: "DeepSeek-V4.1-Flash",
-      context: 200000,
-      maxContext: 1000000,
-      output: 64000,
+      name: "DeepSeek-V4-Flash 正式版",
+      context: undefined,
+      output: 16000,
+      fn: "chat_v3",
+      devName: `${id}__dev`,
+      most: 16000,
     },
   ])
   expect(traeCnFunctionOrder("account", id)[0]).toEqual({
-    fn: "solo_agent",
+    fn: "chat_v3",
     modelName: `${id}__dev`,
+    most: 16000,
+    max: undefined,
   })
 })
 
@@ -268,13 +283,19 @@ test("model discovery on another account cannot overwrite this account's wire co
   expect(traeCnFunctionOrder("first", "shared")[0]).toEqual({
     fn: "solo_agent",
     modelName: "first-model__dev",
+    most: 0,
+    max: undefined,
   })
   expect(traeCnFunctionOrder("second", "shared")[0]).toEqual({
     fn: "chat_v3",
     modelName: "second-model__dev",
+    most: 0,
+    max: undefined,
   })
   expect(traeCnFunctionOrder("undiscovered", "shared")[0]).toEqual({
     fn: "chat_v3",
     modelName: undefined,
+    most: undefined,
+    max: undefined,
   })
 })

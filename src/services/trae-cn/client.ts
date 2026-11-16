@@ -25,6 +25,7 @@ import { TraeCnTextTools } from "~/services/trae-cn/text-tools"
 import { normalizeTraeToolSchema } from "~/services/trae-cn/tool-schema"
 
 import { TraeCnNativeTools } from "~/services/trae-cn/native-tools"
+import { traeToolNamed, traeUnwrapped } from "~/services/trae-cn/tool-normalize"
 import {
   TOOL_CALL_CLOSE as TOOL_CLOSE,
   TOOL_CALL_OPEN as TOOL_OPEN,
@@ -37,26 +38,15 @@ import type {
 } from "~/services/protocols/chat/types"
 
 import {
-  TRAE_CN_APP_ID,
-  TRAE_CN_CLIENT_VERSION,
-  TRAE_CN_CLIENT_VERSION_CODE,
   traeCnErrorOf,
+  traeCnLapsed,
   type TraeCnAccount,
 } from "~/services/oauth/trae-cn"
+import { TRAE_SITES, type TraeSite } from "~/services/trae-cn/sites"
 
 export { TraeCnTextTools } from "~/services/trae-cn/text-tools"
 
-// IDE 的 chat function：经典 IDE agent、SOLO Work、TRAE agent
-//（solo_agent，deepseek-v4.1-flash 在这里）、SOLO Lite agent。
-const TRAE_CN_FUNCTIONS = [
-  "chat_v3",
-  "solo_work_lite",
-  "solo_agent",
-  "solo_agent_lite",
-  "solo_coder",
-] as const
-
-const TRAE_CN_DEVICE_BRAND = "ASUS TUF Gaming A15 FA507RM_FA507RM"
+const CN = TRAE_SITES["trae-cn"]
 
 // ── 请求头（IDE 指纹） ─────────────────────────────────────────
 
@@ -64,23 +54,24 @@ export function traeCnIdeHeaders(
   a: TraeCnAccount,
   extra: Record<string, string> = {},
 ): Record<string, string> {
+  const site = a.site
   return {
     "Content-Type": "application/json",
     Authorization: `Cloud-IDE-JWT ${a.token}`,
     "X-Cloudide-Token": a.token,
     "x-ide-token": a.token,
     "x-uid": a.uid,
-    "x-app-id": TRAE_CN_APP_ID,
+    "x-app-id": site.appId,
     "x-device-id": a.deviceId,
     "x-machine-id": a.machineId,
     "x-request-id": randomUUID(),
-    "x-app-version": TRAE_CN_CLIENT_VERSION,
-    "x-app-version-code": TRAE_CN_CLIENT_VERSION_CODE,
-    "x-ide-version": TRAE_CN_CLIENT_VERSION,
-    "x-ide-version-code": TRAE_CN_CLIENT_VERSION_CODE,
+    "x-app-version": site.clientVersion,
+    "x-app-version-code": site.clientVersionCode,
+    "x-ide-version": site.clientVersion,
+    "x-ide-version-code": site.clientVersionCode,
     "x-ide-version-type": "stable",
     "x-device-cpu": "AMD",
-    "x-device-brand": TRAE_CN_DEVICE_BRAND,
+    "x-device-brand": site.brand,
     "x-device-type": "windows",
     "x-os-version": "Windows 10",
     "x-system-type": "Windows",
@@ -90,11 +81,22 @@ export function traeCnIdeHeaders(
 
 // ── function 轮换状态 ──────────────────────────────────────────
 
-// [连接 id, 模型 id] → 该账号发现的 function / dev model name。
+// [连接 id, 模型 id] → 该账号发现的 function / 服务用的 model name。
 const listedByModel = new Map<string, string>()
-const devNameByModel = new Map<string, { fn: string; name: string }>()
+/** 一个模型（含其 Max 变体）真正服务它的 function 与 __dev/__max model。 */
+interface TraeServing {
+  fn: string
+  name: string
+  /** 该 model 的 max_tokens 上限（请求超过则钳制）。 */
+  most?: number
+  /** Max 变体：按 base config + __max model 请求，窗口更大。 */
+  max?: { base: string; window: number }
+}
+const devNameByModel = new Map<string, TraeServing>()
 // 账号 → 上次成功服务的 function。
 const lastFunctionByConnection = new Map<string, string>()
+// [连接 id, 模型 id] → 列表最近一次给出的能力（冷启动/按需读后供适配器还原）。
+const liveEntryByModel = new Map<string, TraeCnModelCapabilities>()
 const FUNCTION_STATE_MAX = 2048
 
 interface TraeCnModelCapabilities {
@@ -110,16 +112,20 @@ interface TraeCnModelCapabilities {
 export function traeCnModelCapabilities(
   models: ReadonlyArray<ModelMapping> | undefined,
   upstreamModel: string,
+  connectionId?: string,
 ): TraeCnModelCapabilities {
   const model = models?.find(
     (m) => m.upstreamId === upstreamModel || m.publicId === upstreamModel,
   )
   const metadata = model?.metadata ?? {}
-  const levels = metadata.reasoningLevels
+  const live =
+    connectionId ?
+      liveEntryByModel.get(JSON.stringify([connectionId, upstreamModel]))
+    : undefined
+  const multimodal = live?.multimodal ?? metadata.multimodal
+  const levels = live?.reasoningLevels ?? metadata.reasoningLevels
   return {
-    ...(typeof metadata.multimodal === "boolean" ?
-      { multimodal: metadata.multimodal }
-    : {}),
+    ...(typeof multimodal === "boolean" ? { multimodal } : {}),
     ...(Array.isArray(levels) ?
       {
         reasoningLevels: levels.filter(
@@ -174,29 +180,68 @@ export function __resetTraeCnFunctionStateForTest(): void {
   listedByModel.clear()
   devNameByModel.clear()
   lastFunctionByConnection.clear()
+  liveEntryByModel.clear()
 }
 
 /**
  * 一个请求的 function 尝试顺序：列出过该模型的 function → 这个连接上次
- * 成功的 → 其余 function 依次试。每项附带对应的 __dev model name（只有
- * 它登记的 function 才用）。
+ * 成功的 → 其余 function 依次试。每项附带服务用的 model name 与 max_tokens
+ * 上限（只有登记它的 function 才用；Max 变体则每个 function 都带 __max name）。
  */
 export function traeCnFunctionOrder(
   connectionId: string,
   model: string,
-): Array<{ fn: string; modelName?: string }> {
+  site: TraeSite = CN,
+  models: ReadonlyArray<ModelMapping> = [],
+): Array<{
+  fn: string
+  modelName?: string
+  most?: number
+  max?: { base: string; window: number }
+}> {
   const key = JSON.stringify([connectionId, model])
-  const listed = listedByModel.get(key)
+  const metadata = models.find((m) => m.upstreamId === model)?.metadata
+  const savedFunction =
+    typeof metadata?.traeFunction === "string" ?
+      metadata.traeFunction
+    : undefined
+  const listed = listedByModel.get(key) ?? savedFunction
   const last = lastFunctionByConnection.get(connectionId)
   const fns: Array<string> = []
-  for (const fn of [listed, last, ...TRAE_CN_FUNCTIONS]) {
+  for (const fn of [listed, last, ...site.functions]) {
     if (fn && !fns.includes(fn)) fns.push(fn)
   }
-  const dev = devNameByModel.get(key)
-  return fns.map((fn) => ({
-    fn,
-    modelName: dev?.fn === fn ? dev.name : undefined,
-  }))
+  const serving =
+    devNameByModel.get(key)
+    ?? (savedFunction && typeof metadata?.devModelName === "string" ?
+      {
+        fn: savedFunction,
+        name: metadata.devModelName,
+        most:
+          typeof metadata.outputCap === "number" ?
+            metadata.outputCap
+          : undefined,
+        max:
+          (
+            typeof metadata.maxBase === "string"
+            && typeof metadata.maxWindow === "number"
+          ) ?
+            {
+              base: metadata.maxBase,
+              window: metadata.maxWindow,
+            }
+          : undefined,
+      }
+    : undefined)
+  return fns.map((fn) => {
+    const named = serving && (serving.fn === fn || serving.max)
+    return {
+      fn,
+      modelName: named ? serving.name : undefined,
+      most: named ? serving.most : undefined,
+      max: serving?.max,
+    }
+  })
 }
 
 export function traeCnNoteFunction(connectionId: string, fn: string): void {
@@ -421,31 +466,49 @@ export function traeCnChatBody(
   fn: string,
   upstreamModel: string,
   modelName?: string,
-  options: TraeCnModelCapabilities = {},
+  options: TraeCnModelCapabilities & {
+    max?: { base: string; window: number }
+    most?: number
+    session?: string
+  } = {},
 ): Record<string, unknown> {
-  // The legacy endpoint groups billing by session_id. Each actual send needs
-  // its own ID, even inside one logical chat, or cache lookup mixes turns.
-  const session = randomUUID()
+  // Max 变体按 base config + __max model 请求；其余按模型自身。
+  const config = options.max?.base ?? upstreamModel
+  // session_id 是会话的（同会话每请求一致，Trae 按它计会话，避免多步一轮
+  // 被拆成多条无标题用量）；request_id 每请求一新。无会话时退回随机 id。
   const body: Record<string, unknown> = {
     messages: traeCnMessages(payload, options.multimodal !== false),
     function: fn,
-    config_name: upstreamModel,
-    model: upstreamModel,
+    config_name: config,
+    model: config,
     ...(modelName ? { model_name: modelName } : {}),
     stream: true,
-    request_id: session,
-    session_id: session,
+    request_id: randomUUID(),
+    session_id: options.session || randomUUID(),
   }
   const effort = traeEffort(
     options.reasoningLevels,
     payload.reasoning_effort ?? payload.reasoning?.effort,
   )
   if (effort) body.reasoning_effort = effort
-  const max =
+  const asked =
     (payload as { max_completion_tokens?: number }).max_completion_tokens
     ?? payload.max_tokens
-  if (Number.isFinite(max) && (max as number) > 0) {
-    body.max_tokens = Math.floor(max as number)
+  const most = options.most ?? 0
+  if (Number.isFinite(asked) && (asked as number) > 0) {
+    body.max_tokens =
+      most > 0 ?
+        Math.min(Math.floor(asked as number), most)
+      : Math.floor(asked as number)
+  }
+  // Max 模式：max_tokens 必给，prompt 留出窗口减去它的余量（如 IDE 的 Max）。
+  if (options.max?.window) {
+    if (!body.max_tokens && most > 0) body.max_tokens = most
+    body.user_message_context = {
+      model_info: {
+        prompt_max_tokens: options.max.window - (Number(body.max_tokens) || 0),
+      },
+    }
   }
   if (typeof payload.temperature === "number") {
     body.temperature = payload.temperature
@@ -457,7 +520,7 @@ export function traeCnChatBody(
   ) {
     body.tools = traeCnNativeTools(
       payload.tools as unknown as Array<Record<string, unknown>>,
-      /kimi|moonshot/i.test(`${upstreamModel} ${modelName ?? ""}`),
+      /kimi|moonshot/i.test(`${config} ${modelName ?? ""} ${upstreamModel}`),
     )
     const c = payload.tool_choice
     if (c && typeof c === "object") {
@@ -745,7 +808,7 @@ export async function* traeCnParts(
   tools: ReadonlyArray<unknown> = [],
 ): AsyncIterable<TraeChatPart> {
   const tt = new TraeCnTextTools(tools)
-  const nativeTools = new TraeCnNativeTools()
+  const nativeTools = new TraeCnNativeTools(tools)
   let finish: "length" | "content_filter" | undefined
   let completed = false
   let answered = false
@@ -773,7 +836,18 @@ export async function* traeCnParts(
       part = { reasoning }
       answered ||= Boolean(reasoning.trim())
     } else if ("text" in part) answered ||= Boolean(part.text.trim())
-    else if ("call" in part) answered = true
+    else if ("call" in part) {
+      answered = true
+      // 名字归到请求声明的工具（Read→read），参数脱掉模型多裹的一层。
+      const name = traeToolNamed(part.call.name, tools)
+      part = {
+        call: {
+          ...part.call,
+          name,
+          arguments: traeUnwrapped(part.call.arguments, name, tools),
+        },
+      }
+    }
     yield part
   }
   for await (const { event, data } of events) {
@@ -916,12 +990,15 @@ interface TraeCnModelEntry {
   usage?: string
   config_switch?: boolean
   is_custom_model?: boolean
+  is_invisible_to_user?: boolean
   display_config?: {
     display_name?: string
     is_custom_model?: boolean
+    multimodal?: boolean
   }
   display_name?: string
   display_model_name?: string
+  display_contact_config?: string | Record<string, unknown>
   context_window_tokens?: { dev?: number; max?: number | Array<number> }
   context_window_size?: { max?: number | Array<number> }
   prompt_max_tokens?: number
@@ -933,7 +1010,7 @@ interface TraeCnModelEntry {
   }>
 }
 
-function isTraeCnChatModel(m: TraeCnModelEntry): boolean {
+function isTraeCnChatModel(m: TraeCnModelEntry, site: TraeSite): boolean {
   const id = String(m?.config_name ?? "")
   if (!id || /^custom_model/i.test(id)) return false
   if (m.usage && m.usage !== "chat_completion") return false
@@ -944,18 +1021,218 @@ function isTraeCnChatModel(m: TraeCnModelEntry): boolean {
   ) {
     return false
   }
+  // Global 的列表把 Auto 路由通道与 paygo 孪生标 is_invisible_to_user，
+  // 其 picker 隐藏它们；CN 的列表整份给出。
+  if (site.hidesInvisible && m.is_invisible_to_user === true) return false
   return true
 }
 
+const modelDetails = (m: TraeCnModelEntry) =>
+  Array.isArray(m?.model_detail_list) ? m.model_detail_list : []
+
 const devModel = (m: TraeCnModelEntry) =>
-  (Array.isArray(m?.model_detail_list) ? m.model_detail_list : []).find((d) =>
-    String(d?.model_name ?? "").endsWith("__dev"),
+  modelDetails(m).find((d) => String(d?.model_name ?? "").endsWith("__dev"))
+
+/** 一个模型的 Max：__max model + 比 dev 更大的窗口；无则 null。 */
+function maxModel(...ms: Array<TraeCnModelEntry>): {
+  name: string
+  most: number
+  window: number
+  entry: TraeCnModelEntry
+} | null {
+  const at = ms.find((m) =>
+    modelDetails(m).some((d) => String(d?.model_name ?? "").endsWith("__max")),
+  )
+  if (!at) return null
+  const d = modelDetails(at).find((d) =>
+    String(d?.model_name ?? "").endsWith("__max"),
+  )
+  const first = (k: "dev" | "max") =>
+    [at, ...ms]
+      .map((m) => Number(m?.context_window_tokens?.[k]) || 0)
+      .find((n) => n > 0) || 0
+  const window = first("max")
+  return window > first("dev") ?
+      {
+        name: String(d?.model_name),
+        most: Number(d?.max_tokens) || 0,
+        window,
+        entry: at,
+      }
+    : null
+}
+
+const MAX_SUFFIX = "-max"
+
+const nameOf = (m: TraeCnModelEntry) =>
+  String(
+    m.display_config?.display_name
+      || m.display_name
+      || m.display_model_name
+      || m.config_name,
   )
 
-function modelEntryPriority(m: TraeCnModelEntry, fn: string): number {
-  // Usable wire configuration comes first. Among equivalent entries prefer
-  // TRAE agent metadata: chat_v3 can retain a pre-release display name.
-  return (devModel(m) ? 2 : 0) + (fn === "solo_agent" ? 1 : 0)
+/** 条目说的档位（Trae 拼写，仅认得的那些）；无 config 或认不得 → []。 */
+function traeLevels(m: TraeCnModelEntry): Array<string> {
+  const opts = m.reasoning_effort_config?.options
+  if (!Array.isArray(opts)) return []
+  return opts.filter(
+    (o): o is string => typeof o === "string" && Boolean(TRAE_LEVELS[o]),
+  )
+}
+
+const seesOf = (m: TraeCnModelEntry): boolean | null =>
+  typeof m?.multimodal === "boolean" ? m.multimodal
+  : typeof m?.display_config?.multimodal === "boolean" ?
+    m.display_config.multimodal
+  : null
+
+// ── 计费倍率（display_contact_config：消费倍率 + 会员折扣 + 错峰活动） ──
+
+export function traeRateOf(
+  m: Pick<TraeCnModelEntry, "display_contact_config">,
+  now = Date.now(),
+): { rate?: number; rateWas?: number } {
+  const num = (x: unknown): number | undefined =>
+    x === null || x === "" || x === undefined ? undefined
+    : Number.isFinite(Number(x)) ? Number(x)
+    : undefined
+  const inWindows = (
+    windows: Array<Record<string, unknown>>,
+    timeZone: string,
+  ): boolean => {
+    try {
+      const parts = new Intl.DateTimeFormat("en-US", {
+        timeZone,
+        weekday: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+      }).formatToParts(new Date(now))
+      const get = (t: string) => parts.find((p) => p.type === t)?.value
+      const weekday = (
+        {
+          Sun: 7,
+          Mon: 1,
+          Tue: 2,
+          Wed: 3,
+          Thu: 4,
+          Fri: 5,
+          Sat: 6,
+        } as Record<string, number>
+      )[get("weekday") ?? ""]
+      const hour = Number(get("hour"))
+      const minute = Number(get("minute"))
+      if (
+        !Number.isFinite(weekday)
+        || !Number.isFinite(hour)
+        || !Number.isFinite(minute)
+      ) {
+        return false
+      }
+      const mins = hour * 60 + minute
+      return windows.some(
+        (w) =>
+          Array.isArray(w?.weekdays)
+          && (w.weekdays as Array<number>).includes(weekday!)
+          && Number.isFinite(w.start_minute)
+          && Number.isFinite(w.end_minute)
+          && mins >= Number(w.start_minute)
+          && mins < Number(w.end_minute),
+      )
+    } catch {
+      return false
+    }
+  }
+  const read = (raw: unknown): { rate?: number; rateWas?: number } => {
+    if (!raw) return {}
+    let cfg: Record<string, unknown>
+    try {
+      cfg =
+        typeof raw === "string" ?
+          JSON.parse(raw)
+        : (raw as Record<string, unknown>)
+    } catch {
+      return {}
+    }
+    if (!cfg || typeof cfg !== "object") return {}
+    const activity = cfg.activity_discount as
+      | Record<string, unknown>
+      | undefined
+    const offPeak = (activity?.data as Record<string, unknown> | undefined)
+      ?.off_peak as Record<string, unknown> | undefined
+    const windows =
+      Array.isArray(offPeak?.time_windows) ?
+        (offPeak.time_windows as Array<Record<string, unknown>>)
+      : []
+    const consumption = cfg.consumption_rate as
+      | Record<string, unknown>
+      | undefined
+    const discount = cfg.discount as Record<string, unknown> | undefined
+    let rate =
+      consumption?.enable === false ?
+        undefined
+      : num((consumption?.data as Record<string, unknown> | undefined)?.rate)
+    if (discount?.enable) {
+      const after = num(
+        (discount.data as Record<string, unknown> | undefined)
+          ?.consumption_rate,
+      )
+      if (after !== undefined) rate = after
+    }
+    const was =
+      num(
+        (activity?.data as Record<string, unknown> | undefined)?.current
+          && (
+            (activity!.data as Record<string, unknown>).current as Record<
+              string,
+              unknown
+            >
+          )?.before_consumption_rate,
+      )
+      ?? num(offPeak?.before_consumption_rate)
+      ?? num(
+        (discount?.data as Record<string, unknown> | undefined)
+          ?.original_consumption_rate,
+      )
+    if (activity?.enable && windows.length) {
+      const zone =
+        typeof offPeak?.time_zone === "string" && offPeak.time_zone ?
+          offPeak.time_zone
+        : "Asia/Shanghai"
+      rate =
+        inWindows(windows, zone) ?
+          (num(offPeak?.after_consumption_rate) ?? rate)
+        : (num(offPeak?.before_consumption_rate) ?? rate)
+    }
+    return {
+      ...(rate !== undefined ? { rate } : {}),
+      ...(rate !== undefined && was !== undefined && was > rate ?
+        { rateWas: was }
+      : {}),
+    }
+  }
+  try {
+    return read(m?.display_contact_config)
+  } catch {
+    // 坏窗口只丢倍率：退回纯字段，别让整个列表 fallback。
+    try {
+      const raw = m?.display_contact_config
+      const cfg = typeof raw === "string" ? JSON.parse(raw) : raw
+      const consumption = (cfg as Record<string, unknown>)?.consumption_rate as
+        | Record<string, unknown>
+        | undefined
+      const plain =
+        consumption?.enable === false ?
+          undefined
+        : Number(
+            (consumption?.data as Record<string, unknown> | undefined)?.rate,
+          )
+      return Number.isFinite(plain) ? { rate: plain } : {}
+    } catch {
+      return {}
+    }
+  }
 }
 
 export interface TraeCnPostResult {
@@ -969,13 +1246,33 @@ type TraeCnPost = (
   body: Record<string, unknown>,
 ) => Promise<TraeCnPostResult>
 
+function checkModelResponse(r: TraeCnPostResult, site: TraeSite): void {
+  const e = traeCnErrorOf(r.v)
+  const lapsed = r.status === 401 || traeCnLapsed(e.code, e.message, site)
+  if (
+    lapsed
+    || r.status !== 200
+    || (e.code && !["0", "200"].includes(String(e.code)))
+  ) {
+    throw Object.assign(
+      new Error(
+        `${site.realm} models: HTTP ${r.status} ${e.message || e.code}`,
+      ),
+      {
+        traeCode: lapsed ? 401 : e.code,
+      },
+    )
+  }
+}
+
 /** 所有 chat function 的模型列表一次拿（batch_get_detail_param）。 */
 async function batchLists(
   post: TraeCnPost,
   apiHost: string,
+  site: TraeSite,
 ): Promise<Record<string, Array<TraeCnModelEntry>> | null> {
   const r = await post(`${apiHost}/api/ide/v1/batch_get_detail_param`, {
-    functions: [...TRAE_CN_FUNCTIONS],
+    functions: [...site.functions],
     agent_type: "",
     current_config_info: { config_name: "", is_custom_model: false },
     mode_type: 0,
@@ -984,15 +1281,7 @@ async function batchLists(
     ab_autotest_advanced_mode: 0,
     show_custom_model: true,
   })
-  if (r.status !== 200) {
-    const e = traeCnErrorOf(r.v)
-    throw Object.assign(
-      new Error(
-        `Trae CN models: HTTP ${r.status}${e.message ? ` ${e.message}` : ""}`,
-      ),
-      { traeCode: e.code },
-    )
-  }
+  checkModelResponse(r, site)
   const groups = (r.v.function_configs
     ?? (r.v.data as Record<string, unknown> | undefined)?.function_configs) as
     | Array<Record<string, unknown>>
@@ -1002,12 +1291,7 @@ async function batchLists(
   for (const g of groups) {
     const fn = String(g?.function ?? "")
     const list = g?.config_info_list
-    if (
-      !(TRAE_CN_FUNCTIONS as ReadonlyArray<string>).includes(fn)
-      || !Array.isArray(list)
-    ) {
-      continue
-    }
+    if (!site.functions.includes(fn) || !Array.isArray(list)) continue
     out[fn] = [
       ...(out[fn] ?? []),
       ...(list as Array<TraeCnModelEntry>).filter((m) => m?.config_name),
@@ -1021,6 +1305,7 @@ async function listOf(
   post: TraeCnPost,
   apiHost: string,
   fn: string,
+  site: TraeSite,
 ): Promise<Array<TraeCnModelEntry>> {
   const r = await post(`${apiHost}/api/ide/v1/get_detail_param`, {
     function: fn,
@@ -1031,15 +1316,7 @@ async function listOf(
     mode_type: null,
     agent_type: null,
   })
-  if (r.status !== 200) {
-    const e = traeCnErrorOf(r.v)
-    throw Object.assign(
-      new Error(
-        `Trae CN models: HTTP ${r.status}${e.message ? ` ${e.message}` : ""}`,
-      ),
-      { traeCode: e.code },
-    )
-  }
+  checkModelResponse(r, site)
   const list = (r.v.config_info_list
     ?? (r.v.data as Record<string, unknown> | undefined)?.config_info_list) as
     | Array<TraeCnModelEntry>
@@ -1047,7 +1324,7 @@ async function listOf(
   return (list ?? []).filter((m) => m?.config_name)
 }
 
-interface TraeCnListedModel extends TraeCnModelCapabilities {
+export interface TraeCnListedModel extends TraeCnModelCapabilities {
   id: string
   name: string
   context?: number
@@ -1055,78 +1332,133 @@ interface TraeCnListedModel extends TraeCnModelCapabilities {
   input?: number
   output?: number
   efforts?: Array<string>
+  /** 服务它的 function 与 __dev/__max model name（落 metadata 供适配器）。 */
+  fn?: string
+  devName?: string
+  most?: number
+  /** Max 变体：base config + 更大窗口。 */
+  max?: { base: string; window: number }
+  rate?: number
+  rateWas?: number
+  rateConfig?: string | Record<string, unknown>
 }
 
 /**
- * 账号的模型列表：batch 拿不到时逐 function 取；一个模型被多个
- * function 列出时优先记下带 __dev model 的那条（Trae 真正服务的模型），
- * 同等配置优先使用 TRAE agent 的名称与参数，避免旧模式的展示名覆盖。
- * 顺手登记 listedByModel / devNameByModel 供请求时的 function 轮换。
+ * 账号的模型列表：batch 拿不到时逐 function 取。一个模型被多个 function
+ * 列出时按 worth 选条目——带 __dev model、不被同列表别的模型借名、且带多数
+ * 列表一致的名字（Trae 用量页按服务它的列表名记账）者优先，同等再比档位。
+ * 有 __max + 更大窗口的模型额外列出其 Max 变体（<id>-max）。顺手登记
+ * listedByModel / devNameByModel（含 Max）供请求时的 function 轮换。
  */
 export async function traeCnListModels(
   post: TraeCnPost,
   apiHost: string,
   connectionId: string,
+  site: TraeSite = CN,
 ): Promise<Array<TraeCnListedModel>> {
-  let lists = await batchLists(post, apiHost).catch(() => null)
+  let lists = await batchLists(post, apiHost, site).catch((error: unknown) => {
+    if (traeCnLapsed((error as { traeCode?: unknown })?.traeCode, "", site))
+      throw error
+    return null
+  })
   if (!lists) {
     const got = await Promise.allSettled(
-      TRAE_CN_FUNCTIONS.map((fn) => listOf(post, apiHost, fn)),
+      site.functions.map((fn) => listOf(post, apiHost, fn, site)),
     )
+    const expired = got.find(
+      (g) =>
+        g.status === "rejected" && traeCnLapsed(g.reason?.traeCode, "", site),
+    )
+    if (expired?.status === "rejected") throw expired.reason
     if (got.every((g) => g.status === "rejected")) {
       throw (got[0] as PromiseRejectedResult).reason
     }
     lists = {}
     got.forEach((g, i) => {
-      if (g.status === "fulfilled") lists![TRAE_CN_FUNCTIONS[i]!] = g.value
+      if (g.status === "fulfilled") lists![site.functions[i]!] = g.value
     })
   }
-  const picked = new Map<string, { m: TraeCnModelEntry; fn: string }>()
-  for (const fn of TRAE_CN_FUNCTIONS) {
+  // 一个 function 可能给模型别的模型的名字（chat_v3 曾把 deepseek-v4.1-flash
+  // 叫成另一个的名字）：统计每个 id 各列表给的名字与票数。
+  const names = new Map<string, Map<string, number>>()
+  for (const fn of site.functions) {
     for (const m of lists[fn] ?? []) {
-      if (!isTraeCnChatModel(m)) continue
+      if (!isTraeCnChatModel(m, site)) continue
       const id = String(m.config_name)
-      const was = picked.get(id)
-      if (
-        !was
-        || modelEntryPriority(m, fn) > modelEntryPriority(was.m, was.fn)
-      ) {
-        picked.set(id, { m, fn })
-      }
+      const by = names.get(id) ?? new Map<string, number>()
+      const name = nameOf(m)
+      by.set(name, (by.get(name) ?? 0) + 1)
+      names.set(id, by)
     }
   }
-  const out: Array<TraeCnListedModel> = []
-  for (const [id, { m, fn }] of picked) {
-    const key = JSON.stringify([connectionId, id])
-    const levels =
-      m.reasoning_effort_config?.options?.filter(
-        (level) => typeof level === "string",
-      ) ?? []
-    cappedSet(listedByModel, key, fn)
-    const dev = devModel(m)
-    if (dev?.model_name) {
-      cappedSet(devNameByModel, key, { fn, name: dev.model_name })
-    } else devNameByModel.delete(key)
+  // 多数列表一致的名字（Trae 自家客户端被服务的那个）；平票留 ""。
+  const agreed = new Map<string, string>()
+  for (const [id, by] of names) {
+    const top = Math.max(...by.values())
+    const most = [...by].filter(([, n]) => n === top)
+    agreed.set(id, most.length === 1 ? most[0]![0] : "")
+  }
+  const misnamed = (fn: string, m: TraeCnModelEntry) => {
+    const id = String(m.config_name)
+    const name = nameOf(m)
+    return (
+      (names.get(id)?.size ?? 0) > 1
+      && (lists[fn] ?? []).some(
+        (o) =>
+          isTraeCnChatModel(o, site)
+          && String(o.config_name) !== id
+          && nameOf(o) === name,
+      )
+    )
+  }
+  // 与 IDE 的多数名字保持一致，避免某个模式借用另一模型名称；同等再比档位。
+  const worth = (fn: string, m: TraeCnModelEntry) =>
+    ((devModel(m) ? 2 : 0)
+      + (misnamed(fn, m) ? 0 : 1)
+      + (nameOf(m) === agreed.get(String(m.config_name)) ? 1 : 0))
+      * 2
+    + (traeLevels(m).length ? 1 : 0)
+
+  const picked = new Map<
+    string,
+    { m: TraeCnModelEntry; fn: string; worth: number }
+  >()
+  for (const fn of site.functions) {
+    for (const m of lists[fn] ?? []) {
+      if (!isTraeCnChatModel(m, site)) continue
+      const id = String(m.config_name)
+      const was = picked.get(id)
+      const w = worth(fn, m)
+      if (!was || w > was.worth) picked.set(id, { m, fn, worth: w })
+    }
+  }
+
+  const listedOf = (
+    id: string,
+    m: TraeCnModelEntry,
+    fn: string,
+    serving: {
+      name?: string
+      most?: number
+      max?: { base: string; window: number }
+    },
+  ): TraeCnListedModel => {
+    const levels = traeLevels(m)
     const ctxMax = m.context_window_size?.max
     const rawMax = m.context_window_tokens?.max ?? ctxMax
     const maxima = (Array.isArray(rawMax) ? rawMax : [rawMax]).filter(
       (value): value is number =>
         typeof value === "number" && Number.isFinite(value) && value > 0,
     )
-    out.push({
+    const sees = seesOf(m)
+    const rate = traeRateOf(m)
+    return {
       id,
-      ...(typeof m.multimodal === "boolean" ?
-        { multimodal: m.multimodal }
-      : {}),
+      ...(sees !== null ? { multimodal: sees } : {}),
       ...(m.reasoning_effort_config ?
         { reasoningLevels: levels, efforts: traeEfforts(levels) }
       : {}),
-      name: String(
-        m.display_config?.display_name
-          ?? m.display_name
-          ?? m.display_model_name
-          ?? id,
-      ),
+      name: nameOf(m),
       context:
         Number(
           m.context_window_tokens?.dev
@@ -1135,8 +1467,85 @@ export async function traeCnListModels(
         ) || undefined,
       ...(maxima.length ? { maxContext: Math.max(...maxima) } : {}),
       ...(m.prompt_max_tokens ? { input: m.prompt_max_tokens } : {}),
-      output: Number(dev?.max_tokens) || undefined,
-    })
+      output: Number(devModel(m)?.max_tokens) || undefined,
+      fn,
+      ...(serving.name ? { devName: serving.name } : {}),
+      ...(serving.most ? { most: serving.most } : {}),
+      ...(serving.max ? { max: serving.max } : {}),
+      ...(m.display_contact_config ?
+        { rateConfig: m.display_contact_config }
+      : {}),
+      ...rate,
+    }
+  }
+
+  const out: Array<TraeCnListedModel> = []
+  for (const [id, { m, fn }] of picked) {
+    const key = JSON.stringify([connectionId, id])
+    cappedSet(listedByModel, key, fn)
+    const entryCaps: TraeCnModelCapabilities = {
+      ...(seesOf(m) !== null ? { multimodal: seesOf(m)! } : {}),
+      reasoningLevels: traeLevels(m),
+    }
+    cappedSet(liveEntryByModel, key, entryCaps)
+    const dev = devModel(m)
+    const most = Number(dev?.max_tokens) || 0
+    if (dev?.model_name) {
+      cappedSet(devNameByModel, key, { fn, name: dev.model_name, most })
+    } else {
+      devNameByModel.delete(key)
+    }
+    out.push(listedOf(id, m, fn, { name: dev?.model_name, most }))
+
+    // Max 变体：Trae 自己已单列 <id>-max 时不再造。
+    if (picked.has(id + MAX_SUFFIX)) continue
+    const entries = [
+      { m, fn },
+      ...site.functions.flatMap((f) =>
+        (lists[f] ?? [])
+          .filter(
+            (o) =>
+              o !== m
+              && isTraeCnChatModel(o, site)
+              && String(o.config_name) === id,
+          )
+          .map((o) => ({ m: o, fn: f })),
+      ),
+    ].sort(
+      (a, b) =>
+        (nameOf(a.m) === agreed.get(id) ? 0 : 1)
+        - (nameOf(b.m) === agreed.get(id) ? 0 : 1),
+    )
+    const max = maxModel(...entries.map((e) => e.m))
+    const maxKey = JSON.stringify([connectionId, id + MAX_SUFFIX])
+    if (max) {
+      const by = entries.find((e) => e.m === max.entry)!.fn
+      cappedSet(listedByModel, maxKey, by)
+      cappedSet(liveEntryByModel, maxKey, entryCaps)
+      cappedSet(devNameByModel, maxKey, {
+        fn: by,
+        name: max.name,
+        most: max.most,
+        max: { base: id, window: max.window },
+      })
+      const base = listedOf(id, m, fn, {})
+      out.push({
+        ...base,
+        id: id + MAX_SUFFIX,
+        name: `${nameOf(m)} (Max)`,
+        context: max.window,
+        maxContext: max.window,
+        output: max.most || base.output,
+        fn: by,
+        devName: max.name,
+        most: max.most,
+        max: { base: id, window: max.window },
+      })
+    } else {
+      listedByModel.delete(maxKey)
+      devNameByModel.delete(maxKey)
+      liveEntryByModel.delete(maxKey)
+    }
   }
   return out
 }

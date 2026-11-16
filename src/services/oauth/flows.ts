@@ -180,6 +180,15 @@ export function hasActiveOAuthFlowForProvider(
   return getActiveOAuthFlowForProvider(provider) !== undefined
 }
 
+/** Different providers may share one loopback listener (e.g. Trae CN/Global). */
+export function hasActiveOAuthFlowForCallbackPort(port: number): boolean {
+  return PROVIDER_IDS.some(
+    (provider) =>
+      getBuiltinProviderModule(provider)?.callback?.port === port
+      && hasActiveOAuthFlowForProvider(provider),
+  )
+}
+
 /**
  * 可以安全替换掉的残留 pending flow（见 OAUTH_FLOW_REPLACE_AFTER_MS）。
  *
@@ -321,6 +330,7 @@ interface OAuthCallbackServerOptions {
   anyPath?: boolean
   /** Query param names carrying the result (default code/state). */
   queryParams?: { code: string; state: string }
+  parseQuery?: OAuthCallbackConfig["parseQuery"]
   /** Where to send the browser after a successful callback (default /success). */
   successRedirect?: string
   /** Skip the `state` match (Zed sends its own `user_id`, not our state). */
@@ -392,6 +402,7 @@ export async function startOAuthCallbackServer(
     corsOrigins = [],
     anyPath = false,
     queryParams = { code: "code", state: "state" },
+    parseQuery,
     successRedirect,
     skipStateCheck = false,
     combineIntoCode = false,
@@ -478,8 +489,11 @@ export async function startOAuthCallbackServer(
             return json({ success: true }, 200)
           }
 
-          const code = url.searchParams.get(queryParams.code)
-          const state = url.searchParams.get(queryParams.state)
+          const parsed = parseQuery?.(url.searchParams)
+          const code =
+            parseQuery ? parsed?.code : url.searchParams.get(queryParams.code)
+          const state =
+            parseQuery ? parsed?.state : url.searchParams.get(queryParams.state)
           const error = url.searchParams.get("error")
 
           if (error) {
@@ -489,7 +503,7 @@ export async function startOAuthCallbackServer(
             return new Response(`OAuth error: ${error}`, { status: 400 })
           }
 
-          if (!code || !state) {
+          if (!code || (!state && !(parseQuery && skipStateCheck))) {
             finish(() => {
               reject(
                 new Error(
@@ -509,8 +523,11 @@ export async function startOAuthCallbackServer(
 
           finish(() => {
             resolve({
-              code: combineIntoCode ? `${state}\u0000${code}` : code,
-              state,
+              code:
+                !parseQuery && combineIntoCode ?
+                  `${state ?? ""}\u0000${code}`
+                : code,
+              state: state ?? "",
             })
           })
           const redirectHost = hostname === "127.0.0.1" ? "localhost" : hostname
@@ -603,6 +620,7 @@ export async function startProviderCallbackServer(
     corsOrigins: config.corsOrigins,
     anyPath: config.anyPath,
     queryParams: config.queryParams,
+    parseQuery: config.parseQuery,
     successRedirect: config.successRedirect,
     skipStateCheck: config.skipStateCheck,
     combineIntoCode: config.combineIntoCode,

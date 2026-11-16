@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 
 import { parseXmlToolCall } from "~/services/tool-call-text"
 import type { TraeChatCall } from "~/services/trae-cn/client"
+import { traeToolNamed } from "~/services/trae-cn/tool-normalize"
 
 interface TextCall {
   name: string
@@ -25,8 +26,21 @@ const MARKS = [
   "<|DSML|",
   "</|DSML|",
   '{"reasoning_content"',
+  "<function_calls>",
+  "</function_calls>",
+  "<antml:function_calls>",
+  "</antml:function_calls>",
+  "<invoke ",
+  "<antml:invoke ",
+  "</invoke>",
+  "</antml:invoke>",
+  "<fun" + "ction=",
+  "</function>",
 ]
-const OPEN = /<tool_?call(?=[\s>{])|<\/?[｜|]DSML[｜|]/
+// 工具调用块 opener：tool_call / DSML，以及裸的 Anthropic/Qwen XML
+//（function_calls 包裹、invoke name=、function=，含 antml: 前缀）。
+const OPEN =
+  /<tool_?call(?=[\s>{])|<\/?[｜|]DSML[｜|]|<\/?(?:antml:)?function_calls\s*>|<(?:antml:)?invoke(?=[\s>])|<function=/
 const REASON = /\{\s*"reasoning_content"\s*:/
 const UNREADABLE = "Trae returned an unreadable or truncated tool call"
 
@@ -190,6 +204,31 @@ function wrappedDsmlCall(raw: string): TextCall | undefined {
   return match ? dsmlCall(match[2]!, match[1]!) : undefined
 }
 
+// Anthropic/Qwen 的 XML 调用参数（两种形态，含 antml: 前缀）。不完整参数体或
+// 参数间/尾部杂字一律拒（undefined）；字符串参数原样保留，不重解路径反斜杠。
+const XML_PARAM =
+  /<(?:antml:)?parameter(?:\s+name\s*=\s*"([^"]+)"|=([^\s>]+))\s*>([\s\S]*?)<\/(?:antml:)?parameter>/g
+
+function xmlParams(
+  raw: string,
+  name: string,
+  isStringParameter: (name: string, key: string) => boolean,
+): TextCall | undefined {
+  const args: Record<string, unknown> = {}
+  let consumed = 0
+  let found = false
+  for (const match of raw.matchAll(XML_PARAM)) {
+    if (raw.slice(consumed, match.index).trim()) return undefined
+    const key = (match[1] ?? match[2] ?? "").trim()
+    if (!key) return undefined
+    args[key] = parameter(match[3]!, isStringParameter(name, key))
+    consumed = match.index + match[0].length
+    found = true
+  }
+  if (!found || raw.slice(consumed).trim()) return undefined
+  return { name, arguments: args }
+}
+
 function inCode(text: string): boolean {
   let delimiter = 0
   for (const match of text.matchAll(/`+/g)) {
@@ -205,12 +244,16 @@ export class TraeCnTextTools {
   private sent = ""
   private failed = false
   private stringParameters = new Map<string, Set<string>>()
+  private declared = new Set<string>()
+  private tools: ReadonlyArray<unknown>
 
   constructor(tools: ReadonlyArray<unknown> = []) {
+    this.tools = tools
     for (const tool of tools) {
       const entry = object(tool)
       const fn = object(entry?.function) ?? entry
       if (typeof fn?.name !== "string") continue
+      this.declared.add(fn.name)
       const properties = object(object(fn.parameters)?.properties) ?? {}
       this.stringParameters.set(
         fn.name,
@@ -230,6 +273,25 @@ export class TraeCnTextTools {
     this.failed = true
     this.buf = ""
     return { text, calls: [], error: UNREADABLE }
+  }
+
+  private readCall(
+    raw: string,
+    dsmlName?: string,
+    xmlName?: string,
+  ): TextCall | undefined {
+    if (dsmlName) return dsmlCall(raw, dsmlName)
+    if (xmlName !== undefined) {
+      return this.declared.has(xmlName) ?
+          xmlParams(raw, xmlName, this.isStringParameter)
+        : undefined
+    }
+    return (
+      jsonCall(raw.trim())
+      ?? wrappedDsmlCall(raw)
+      ?? parseXmlToolCall(raw, this.isStringParameter)
+      ?? glmCall(raw, this.isStringParameter)
+    )
   }
 
   push(piece: string, end = false): TextResult {
@@ -285,31 +347,64 @@ export class TraeCnTextTools {
       const tagEnd = this.buf.indexOf(">")
       if (tagEnd < 0) break
       const tag = this.buf.slice(0, tagEnd + 1)
+      if (/^<(?:antml:)?function_calls\s*>$/.test(tag)) {
+        const closeGroup = /<\/(?:antml:)?function_calls\s*>/g
+        closeGroup.lastIndex = tagEnd + 1
+        const closing = closeGroup.exec(this.buf)
+        if (!closing) break
+        const inner = new TraeCnTextTools(this.tools).push(
+          this.buf.slice(tagEnd + 1, closing.index),
+          true,
+        )
+        if (inner.error) return this.failure(text)
+        const groupEnd = closing.index + closing[0].length
+        if (inner.calls.length) {
+          flushText()
+          parts.push(...(inner.parts ?? []))
+          calls.push(...inner.calls)
+          text += inner.text
+          emitted = text.length
+        } else {
+          text += this.buf.slice(0, groupEnd)
+        }
+        this.buf = this.buf.slice(groupEnd)
+        continue
+      }
       if (/^<\/?[｜|]DSML[｜|]function_calls\s*>$/.test(tag)) {
         this.buf = this.buf.slice(tagEnd + 1)
         continue
       }
       const invoke = /^<[｜|]DSML[｜|]invoke\s+name="([^"]+)"\s*>$/.exec(tag)
-      const close = invoke ? /<\/[｜|]DSML[｜|]invoke>/g : /<\/tool_?call>/g
+      const antInvoke =
+        /^<(?:antml:)?invoke\s+name\s*=\s*"([^"<>]+)"\s*>$/.exec(tag)
+      const qwenName =
+        tag.startsWith("<fun" + "ction=") && tag.endsWith(">") ?
+          tag.slice(10, -1).trim()
+        : ""
+      const isQwen = qwenName.length > 0
+      const close =
+        invoke ? /<\/[｜|]DSML[｜|]invoke>/g
+        : antInvoke ? /<\/(?:antml:)?invoke\s*>/g
+        : isQwen ? /<\/function\s*>/g
+        : /<\/tool_?call>/g
       close.lastIndex = tagEnd + 1
+      const xmlName = traeToolNamed(
+        antInvoke?.[1]?.trim() ?? qwenName,
+        this.tools,
+      )
+      const isXml = Boolean(antInvoke) || isQwen
+      // 裸 XML 只认请求声明的工具；未声明的当普通文本（agent 可告知无此工具）。
+      const xmlDeclared = isXml && this.declared.has(xmlName)
+      const looksLikeCall = (s: string) =>
+        /^\s*(?:\{|[\w.:-]+\s*<arg_key>)/.test(s)
+        || s.includes("<fun" + "ction=")
       let closing = close.exec(this.buf)
       let call: TextCall | undefined
       let raw = ""
       while (closing) {
         raw = this.buf.slice(tagEnd + 1, closing.index)
-        call =
-          invoke ?
-            dsmlCall(raw, invoke[1]!)
-          : (jsonCall(raw.trim())
-            ?? wrappedDsmlCall(raw)
-            ?? parseXmlToolCall(raw, this.isStringParameter)
-            ?? glmCall(raw, this.isStringParameter))
-        if (
-          call
-          || (!invoke
-            && !/^\s*(?:\{|<function=|[\w.:-]+\s*<arg_key>)/.test(raw))
-        )
-          break
+        call = this.readCall(raw, invoke?.[1], isXml ? xmlName : undefined)
+        if (call || (!invoke && !isXml && !looksLikeCall(raw))) break
         // A string argument may itself contain a closing tag.
         const next = close.exec(this.buf)
         if (!next) break
@@ -317,7 +412,7 @@ export class TraeCnTextTools {
       }
       if (!closing) break
       const intended = Boolean(
-        invoke || /^\s*(?:\{|<function=|[\w.:-]+\s*<arg_key>)/.test(raw),
+        invoke || xmlDeclared || (!isXml && looksLikeCall(raw)),
       )
       if (!call && intended && !end) break
       if (call) {

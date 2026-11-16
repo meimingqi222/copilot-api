@@ -40,6 +40,7 @@ const BRAND_ICON_MAP = {
   "commandcode-plan": "commandcode",
   commandcode: "commandcode",
   "trae-cn": "trae",
+  "trae-global": "trae",
   trae: "trae",
   zed: "zed",
   gemini: "gemini-color",

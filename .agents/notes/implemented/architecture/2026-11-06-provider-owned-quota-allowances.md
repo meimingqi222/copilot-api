@@ -26,6 +26,8 @@ without totals show an explicit no-data row. Complete readings keep their
 credit counts and percentage bar. Do not restore the display by treating missing
 usage as zero, or hide known totals merely because admission is unknown.
 
+Trae Global reports dollar allowances; enterprise accounts report only their own seat's currency pool, with CN consumer credits as reporting-only rows. Missing dollar/seat spend stays unknown. A confirmed zero seat pool is exhausted even if its spend page failed. After a console chat refusal switches the account to the consumer gateway, subsequent quota reads use that consumer allowance rather than constraining requests with an unrelated seat pool. The UI labels seats, dollars and supplementary credits separately (`tests/trae-global.test.ts`, `tests/quota-display-mode.test.ts`).
+
 `src/lib/quota/refresh.ts` guards connection/credential and snapshot object
 identity and cancellation before the common apply path. Events replace snapshots
 without changing the poll clock, so timestamp comparison alone cannot detect a
@@ -86,7 +88,7 @@ balances. **Treat expiry as reset.** Restores credits that were actually lost.
 
 ## Consequences
 
-All 23 built-in modules declare capabilities; 18 have numeric polling sources,
+All 24 built-in modules declare capabilities; 19 have numeric polling sources,
 including Claude's response observations. Five currently lack numeric sources;
 this is not proof that their vendors never expose one. Existing API displays,
 priority, concurrency and healthy affinity remain compatible. No external plugin

@@ -38,6 +38,7 @@ import {
   bindOAuthFlowAbortSignal,
   findReplaceableOAuthFlowForProvider,
   getOAuthFlow,
+  hasActiveOAuthFlowForCallbackPort,
   hasActiveOAuthFlowForProvider,
   pollOAuthFlow,
   registerOAuthFlow,
@@ -349,6 +350,21 @@ oauthApiRoutes.post("/:provider/start", async (c) => {
   }
   const start = await strategy.start({ proxyUrl, region })
 
+  // Check after the await and register without yielding: simultaneous starts
+  // must not both claim a shared listener, even in manual completion mode.
+  const callbackPort = getBuiltinProviderModule(provider)?.callback?.port
+  if (
+    callbackPort !== undefined
+    && hasActiveOAuthFlowForCallbackPort(callbackPort)
+  ) {
+    return c.json(
+      {
+        error: `An OAuth flow using callback port ${callbackPort} is already in progress; complete or cancel it before starting ${provider}.`,
+      },
+      409,
+    )
+  }
+
   registerOAuthFlow({
     id: flowId,
     provider,
@@ -472,7 +488,9 @@ oauthApiRoutes.post("/:provider/complete", async (c) => {
   const code =
     ((
       callbackConfig
-      && (callbackConfig.queryParams || callbackConfig.combineIntoCode)
+      && (callbackConfig.queryParams
+        || callbackConfig.combineIntoCode
+        || callbackConfig.parseQuery)
     ) ?
       parseProviderCallbackInput(callbackInput, callbackConfig)
     : undefined) ?? parseOAuthAuthorizationCode(callbackInput)

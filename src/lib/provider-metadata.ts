@@ -19,6 +19,7 @@ import { providerMetadata as minimaxMetadata } from "~/lib/provider-descriptors/
 import { providerMetadata as qoderMetadata } from "~/lib/provider-descriptors/qoder"
 import { providerMetadata as qoderCnMetadata } from "~/lib/provider-descriptors/qoder-cn"
 import { providerMetadata as traeCnMetadata } from "~/lib/provider-descriptors/trae-cn"
+import { providerMetadata as traeGlobalMetadata } from "~/lib/provider-descriptors/trae-global"
 import { providerMetadata as windsurfMetadata } from "~/lib/provider-descriptors/windsurf"
 import { providerMetadata as xaiMetadata } from "~/lib/provider-descriptors/xai"
 import { providerMetadata as zcodeMetadata } from "~/lib/provider-descriptors/zcode"
@@ -49,6 +50,7 @@ export const PROVIDER_METADATA_ENTRIES = [
   dimagentMetadata,
   geminiMetadata,
   traeCnMetadata,
+  traeGlobalMetadata,
   aistudioMetadata,
 ] as const
 

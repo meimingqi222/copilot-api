@@ -440,31 +440,11 @@ const QuotaDisplay = {
         break
       }
       case "trae-cn": {
-        rows = this.buildOAuthWindowsRows(info.details, provider, t).map(
-          (row) => ({ ...row, label: t("quota.oauth.trae-cn.credits") }),
-        )
-        if (rows.length === 0 && !info.unlimited) {
-          const total = this.normalizeNumber(
-            info.details?.[provider]?.credits?.total,
-          )
-          rows.push({
-            id: "trae-cn-credits",
-            label: t("quota.oauth.trae-cn.credits"),
-            valueText:
-              total !== undefined ?
-                t("quota.oauth.trae-cn.usageUnknown")
-              : t("quota.noData"),
-            ...(total !== undefined ?
-              {
-                amountText: t("quota.oauth.trae-cn.knownTotal", {
-                  count: this.formatCredits(total),
-                }),
-              }
-            : {}),
-            hideBar: true,
-          })
-        }
-
+        rows = this.buildTraeRows(info, provider, t)
+        break
+      }
+      case "trae-global": {
+        rows = this.buildTraeRows(info, provider, t)
         break
       }
       case "commandcode-plan":
@@ -796,6 +776,80 @@ const QuotaDisplay = {
         : undefined,
       hideBar: true,
     }
+  },
+
+  buildTraeRows(info, provider, t) {
+    const block = info.details?.[provider] || {}
+    const enterprise = block.plan === "Enterprise"
+    const labelKey =
+      enterprise ? "quota.oauth.trae.seatUsage"
+      : provider === "trae-global" ? "quota.oauth.trae.dollarUsage"
+      : "quota.oauth.trae-cn.credits"
+    const windows = Array.isArray(block.windows) ? block.windows : []
+    const rows = []
+    // Reporting-only credits must never stand in for a missing/unlimited seat pool.
+    if (
+      enterprise
+      && (info.unlimited || !windows.some((w) => w?.name === "Seat Usage"))
+    ) {
+      rows.push({
+        id: `${provider}-seat`,
+        label: t(labelKey),
+        valueText: t(info.unlimited ? "quota.unlimited" : "quota.noData"),
+        hideBar: true,
+      })
+    }
+    for (const [index, window] of windows.entries()) {
+      if (!window || typeof window !== "object") continue
+      const used = this.normalizeNumber(window.usedPercent)
+      const remaining =
+        used === undefined ? undefined : Math.max(0, Math.min(100, 100 - used))
+      rows.push({
+        id: `${provider}-${index}`,
+        label: t(
+          window.aside ? "quota.oauth.trae.asideCredits"
+          : window.name === "Credits" ? "quota.oauth.trae-cn.credits"
+          : window.name === "Seat Usage" ? "quota.oauth.trae.seatUsage"
+          : labelKey,
+        ),
+        ...(remaining === undefined ?
+          { valueText: t("quota.oauth.trae-cn.usageUnknown"), hideBar: true }
+        : {
+            remainingPercent: remaining,
+            valueText: `${Math.round(remaining)}%`,
+          }),
+        ...(typeof window.display === "string" && window.display ?
+          { amountText: window.display }
+        : {}),
+      })
+    }
+    if (rows.length > 0 || info.unlimited) return rows
+    const total =
+      !enterprise && provider === "trae-cn" ?
+        this.normalizeNumber(block.credits?.total)
+      : undefined
+    return [
+      {
+        id: `${provider}-${
+          enterprise ? "seat"
+          : provider === "trae-cn" ? "credits"
+          : "usage"
+        }`,
+        label: t(labelKey),
+        valueText:
+          total !== undefined ?
+            t("quota.oauth.trae-cn.usageUnknown")
+          : t("quota.noData"),
+        ...(total !== undefined ?
+          {
+            amountText: t("quota.oauth.trae-cn.knownTotal", {
+              count: this.formatCredits(total),
+            }),
+          }
+        : {}),
+        hideBar: true,
+      },
+    ]
   },
 
   /**
@@ -1255,7 +1309,7 @@ const QuotaDisplay = {
     if (info.unlimited) return t("quota.unlimited")
 
     const provider = account.provider || "copilot"
-    if (provider === "trae-cn") {
+    if (provider === "trae-cn" || provider === "trae-global") {
       const row = this.buildRows(account, t)[0]
       return row?.hideBar ?
           [row.amountText, row.valueText].filter(Boolean).join(" · ")

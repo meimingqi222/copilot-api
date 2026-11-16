@@ -48,6 +48,7 @@ counters to 0.
 ## Consequences
 
 Clients now show unknown rather than a false 0% hit rate for Trae turns.
+The shared Trae Global stream uses the same unknown-cache accounting rule in `src/lib/stats/cache-counting.ts`; `tests/usage-recorder.test.ts` checks both realms. Historical backfill remains CN-only because Global did not exist before this addition.
 Uncounted calls keep their tokens in the request, prompt and cost totals but
 no longer read as a miss; a period with only uncounted calls reports no hit
 rate instead of 0%. Legacy rows keep the counted default, so old data keeps

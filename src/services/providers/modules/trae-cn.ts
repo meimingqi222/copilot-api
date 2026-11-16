@@ -1,15 +1,21 @@
 /**
- * Trae CN provider module。
+ * Trae provider module（CN 与 Global 共用一套机器，按站点实例化）。
  *
- * 登录：浏览器走 trae.cn 的授权页（callback 型，回调到本地
- * 127.0.0.1:57557/authorize，query 里 userJwt + userInfo）；
- * 优先设备绑定 ExchangeToken，旧版轮换刷新作为兼容回退；
- * 模型走 trae-cn-native adapter 的 IDE agent SSE 通道。
+ * 登录：浏览器走授权页（callback 型，回调到本地 127.0.0.1:57557/authorize，
+ * query 里 userJwt + userInfo）；CN 优先设备绑定 ExchangeToken，旧版轮换刷新
+ * 作为兼容回退；Global 只有旧版交换。模型走 trae-cn-native adapter 的 IDE
+ * agent SSE 通道。每站一个模块实例（oauth/refreshAuth 需稳定同一性）。
  */
 
 import { prepareOAuthRefresh } from "~/services/providers/auth-update"
-import { traeCnCallbackConfig } from "~/services/providers/callbacks/trae-cn"
-import { getTraeCnFallbackModels } from "~/services/providers/model-catalogs/trae-cn"
+import {
+  traeCnCallbackConfig,
+  traeGlobalCallbackConfig,
+} from "~/services/providers/callbacks/trae-cn"
+import {
+  getTraeCnFallbackModels,
+  getTraeGlobalFallbackModels,
+} from "~/services/providers/model-catalogs/trae-cn"
 import { fetchTraeCnQuota } from "~/lib/quota/fetchers/trae-cn"
 import type { ModelMapping } from "~/lib/provider-connections"
 import type { ProviderModule } from "~/services/providers/module"
@@ -24,7 +30,7 @@ import {
   applyTraeCnOAuthBundle,
   applyTraeCnTokenBundle,
   exchangeTraeCnToken,
-  newTraeCnDevice,
+  newTraeDeviceFor,
   parseTraeCnCallbackCode,
   TRAE_CN_CALLBACK_PATH,
   TRAE_CN_CALLBACK_PORT,
@@ -32,139 +38,112 @@ import {
   traeCnSignInUrl,
   type TraeCnDevice,
 } from "~/services/oauth/trae-cn"
-import { ensureOAuthConnectionAccessToken } from "~/services/oauth/ensure-access-token"
-import { oauthFetch } from "~/services/oauth/fetch"
-import { getConnectionProxyUrl } from "~/lib/provider-connections"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
-import {
-  traeCnIdeHeaders,
-  traeCnListModels,
-  type TraeCnPostResult,
-} from "~/services/trae-cn/client"
+import { readTraeCnModels } from "~/services/trae-cn/discovery"
+import { TRAE_SITES, type TraeSite } from "~/services/trae-cn/sites"
 import { defineOAuthProviderModule } from "./define"
 
-// 登录时生成的设备指纹按 flow.state（login_trace_id）暂存——Trae 的授权
-// URL 与之后每个请求都用同一对 deviceId/machineId（插件实测换新的会被
-// 服务端丢请求），exchange 时取回落库。查不到不能现造新的：授权页用的
-// 是 start() 那次的指纹，换了等于签了个坏账号。
-const traeCnPendingDevices = new Map<
+// 登录时生成的设备指纹按 flow.state（login_trace_id）暂存——授权页与之后每个
+// 请求都用同一对 deviceId/machineId（换新的会被服务端丢请求），exchange 时取回
+// 落库。查不到不能现造新的：授权页用的是 start() 那次的指纹。
+const traePendingDevices = new Map<
   string,
   { device: TraeCnDevice; at: number }
 >()
 const TRAE_CN_PENDING_TTL_MS = 30 * 60 * 1000
 
-function traeCnPendingPut(state: string, device: TraeCnDevice): void {
+function traePendingPut(state: string, device: TraeCnDevice): void {
   const now = Date.now()
-  for (const [k, e] of traeCnPendingDevices) {
-    if (now - e.at > TRAE_CN_PENDING_TTL_MS) traeCnPendingDevices.delete(k)
+  for (const [k, e] of traePendingDevices) {
+    if (now - e.at > TRAE_CN_PENDING_TTL_MS) traePendingDevices.delete(k)
   }
-  traeCnPendingDevices.set(state, { device, at: now })
+  traePendingDevices.set(state, { device, at: now })
 }
 
-function traeCnPendingTake(state: string): TraeCnDevice | undefined {
-  const e = traeCnPendingDevices.get(state)
-  traeCnPendingDevices.delete(state)
+function traePendingTake(state: string): TraeCnDevice | undefined {
+  const e = traePendingDevices.get(state)
+  traePendingDevices.delete(state)
   return e?.device
 }
 
-const traeCnStrategy: OAuthProviderStrategy = {
-  flowType: "callback",
-  start() {
-    const device = newTraeCnDevice()
-    const traceId = crypto.randomUUID()
-    traeCnPendingPut(traceId, device)
-    const callback = `http://127.0.0.1:${TRAE_CN_CALLBACK_PORT}${TRAE_CN_CALLBACK_PATH}`
-    return Promise.resolve({
-      authUrl: traeCnSignInUrl(callback, device, traceId),
-      state: traceId,
-    })
-  },
-  async exchange({ flow, code }) {
-    if (!code) {
-      throw new Error("Trae CN OAuth exchange requires the callback values")
-    }
-    // 授权页发出时那一次的指纹才对得上；这里查不到说明 flow.state 丢了
-    // （重启 / TTL 过），落一个新的 device 会签出服务端不认的账号——
-    // 直接报错让用户重开 flow。
-    const device = traeCnPendingTake(flow.state ?? "")
-    if (!device) {
-      throw new Error(
-        "Trae CN sign-in lost its device fingerprint (flow restarted?); start the sign-in again",
+function traeStrategy(site: TraeSite): OAuthProviderStrategy {
+  return {
+    flowType: "callback",
+    start() {
+      const device = newTraeDeviceFor(site)
+      const traceId = crypto.randomUUID()
+      traePendingPut(traceId, device)
+      const callback = `http://127.0.0.1:${TRAE_CN_CALLBACK_PORT}${TRAE_CN_CALLBACK_PATH}`
+      return Promise.resolve({
+        authUrl: traeCnSignInUrl(callback, device, traceId, site),
+        state: traceId,
+      })
+    },
+    async exchange({ flow, code }) {
+      if (!code) {
+        throw new Error(
+          `${site.name} OAuth exchange requires the callback values`,
+        )
+      }
+      const device = traePendingTake(flow.state ?? "")
+      if (!device) {
+        throw new Error(
+          `${site.name} sign-in lost its device fingerprint (flow restarted?); start the sign-in again`,
+        )
+      }
+      const signIn = await parseTraeCnCallbackCode(
+        code,
+        device,
+        flowFetchOptions(flow),
+        site,
       )
-    }
-    const signIn = await parseTraeCnCallbackCode(
-      code,
-      device,
-      flowFetchOptions(flow),
-    )
-    const conn = createOAuthConnection("trae-cn", flow.label)
-    applyFlowSettingsToConnection(conn, flow)
-    applyTraeCnOAuthBundle(conn, signIn)
-    return conn
-  },
+      const conn = createOAuthConnection(site.id, flow.label)
+      applyFlowSettingsToConnection(conn, flow)
+      // 落库模型 host 作为站点信号（共用协议时 baseUrl 优先于有歧义的协议反查）。
+      conn.baseUrl = site.hosts.api
+      applyTraeCnOAuthBundle(conn, signIn)
+      return conn
+    },
+  }
 }
 
-const refreshAuth = prepareOAuthRefresh(
-  async (connection, refreshToken, options) => {
+function traeRefreshAuth(site: TraeSite) {
+  return prepareOAuthRefresh(async (connection, refreshToken, options) => {
     const account = traeCnAccount(connection)
     const exchanged = await exchangeTraeCnToken(
       refreshToken,
       // clientId 决定 Trae 把新 token 签给谁，不能丢。
       account.clientId,
-      { ...options, device: account, token: account.token },
+      {
+        ...options,
+        device: account,
+        token: account.token,
+        authHost: account.authHost,
+      },
+      site,
     )
     applyTraeCnTokenBundle(connection, exchanged)
-  },
-)
-
-/** IDE 指纹头的 JSON POST（模型列表用；chat 走 adapter）。 */
-async function postJson(
-  connection: Parameters<typeof traeCnAccount>[0],
-  url: string,
-  body: Record<string, unknown>,
-): Promise<TraeCnPostResult> {
-  const credential = connection.credentials[0]!
-  const token = await ensureOAuthConnectionAccessToken(connection, credential)
-  const account = traeCnAccount(connection, token)
-  const proxyUrl = getConnectionProxyUrl(connection)
-  const response = await oauthFetch(
-    url,
-    {
-      method: "POST",
-      headers: traeCnIdeHeaders(account, { Accept: "application/json" }),
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(20_000),
-    },
-    proxyUrl ? { proxyUrl } : undefined,
-  )
-  const text = await response.text()
-  let v: Record<string, unknown> = {}
-  try {
-    v = JSON.parse(text) as Record<string, unknown>
-  } catch {
-    v = {}
-  }
-  return { status: response.status, text, v }
+  })
 }
 
-async function discoverTraeCnModels(
+async function discoverTraeModels(
   connection: Parameters<typeof traeCnAccount>[0],
 ): Promise<Array<ModelMapping>> {
-  const account = traeCnAccount(connection)
-  const listed = await traeCnListModels(
-    (url, body) => postJson(connection, url, body),
-    account.apiHost,
-    connection.id,
-  )
-  return listed.map((m) => ({
+  const site = traeCnAccount(connection).site
+  // 目录刷新是 strict：缓存的登出要重读并上报，让账号被标记重新登录。
+  const { models, expired } = await readTraeCnModels(connection, {
+    strict: true,
+  })
+  if (expired) throw expired
+  return (models ?? []).map((m) => ({
     publicId: canonicalNativeModelId(m.id),
     upstreamId: m.id,
     name: m.name,
-    vendor: "trae-cn",
+    vendor: site.id,
     endpoints: ["chat"],
     enabled: true,
     pickerEnabled: true,
-    // 上游按账号声明档位；对外公布后，route-target 会按它钳制请求。
+    // 上游按账号声明档位；对外公布后 route-target 会按它钳制请求。
     ...(m.efforts?.length ? { efforts: m.efforts } : {}),
     metadata: {
       ...(m.context ? { contextWindow: m.context } : {}),
@@ -173,26 +152,56 @@ async function discoverTraeCnModels(
       : {}),
       ...(m.input ? { inputLimit: m.input } : {}),
       ...(m.output ? { outputLimit: m.output } : {}),
-      // adapter 请求时要按账号还原：能不能收图、请求的档位在 Trae 叫什么。
+      // adapter 请求时按账号还原：能不能收图、档位在 Trae 叫什么。
       ...(m.multimodal === undefined ? {} : { multimodal: m.multimodal }),
       ...(m.reasoningLevels?.length ?
         { reasoningLevels: m.reasoningLevels }
       : {}),
+      // Max 变体与计费倍率（展示/冷启动还原）。
+      ...(m.max ? { maxBase: m.max.base, maxWindow: m.max.window } : {}),
+      ...(m.devName ? { devModelName: m.devName } : {}),
+      ...(m.fn ? { traeFunction: m.fn } : {}),
+      ...(m.most ? { outputCap: m.most } : {}),
+      ...(m.rate !== undefined ? { rate: m.rate } : {}),
+      ...(m.rateWas !== undefined ? { rateWas: m.rateWas } : {}),
     },
   }))
 }
 
+// 每站一个模块实例：getBuiltinProviderModule 每次访问都调工厂，不缓存的话
+// oauth/refreshAuth 会是每次新建的对象（测试要求 getOAuthStrategy(id)===module.oauth）。
+const moduleCache = new Map<TraeSite["id"], ProviderModule>()
+
+function getTraeModuleFor(site: TraeSite): ProviderModule {
+  let module = moduleCache.get(site.id)
+  if (!module) {
+    module = defineOAuthProviderModule({
+      id: site.id,
+      quota: { source: "poll" },
+      callback:
+        site.id === "trae-global" ?
+          traeGlobalCallbackConfig
+        : traeCnCallbackConfig,
+      fetchQuota: fetchTraeCnQuota,
+      fallbackModels:
+        site.id === "trae-global" ?
+          getTraeGlobalFallbackModels
+        : getTraeCnFallbackModels,
+      discoverModels: discoverTraeModels,
+      adapter: traeCnNativeAdapter,
+      oauth: traeStrategy(site),
+      refreshAuth: traeRefreshAuth(site),
+      refreshLeadMs: 10 * 60 * 1000, // JWT 到期前 10 分钟就换
+    })
+    moduleCache.set(site.id, module)
+  }
+  return module
+}
+
 export function getTraeCnModule(): ProviderModule {
-  return defineOAuthProviderModule({
-    id: "trae-cn",
-    quota: { source: "poll" },
-    callback: traeCnCallbackConfig,
-    fetchQuota: fetchTraeCnQuota,
-    fallbackModels: getTraeCnFallbackModels,
-    discoverModels: discoverTraeCnModels,
-    adapter: traeCnNativeAdapter,
-    oauth: traeCnStrategy,
-    refreshAuth,
-    refreshLeadMs: 10 * 60 * 1000, // JWT 到期前 10 分钟就换（插件的 LEAD_MS）
-  })
+  return getTraeModuleFor(TRAE_SITES["trae-cn"])
+}
+
+export function getTraeGlobalModule(): ProviderModule {
+  return getTraeModuleFor(TRAE_SITES["trae-global"])
 }

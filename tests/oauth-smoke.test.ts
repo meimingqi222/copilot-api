@@ -213,6 +213,46 @@ describe("OAuth smoke — admin API", () => {
     expect(second.status).toBe(409)
   })
 
+  test("Trae realms sharing a callback port reject overlapping sign-ins and release it on cancel", async () => {
+    const start = (provider: string) =>
+      adminJson(`http://localhost/admin/api/oauth/${provider}/start`, {
+        method: "POST",
+        body: JSON.stringify({ manual: true }),
+      })
+    const cancel = (provider: string, flowId: string) =>
+      adminJson(`http://localhost/admin/api/oauth/${provider}/cancel`, {
+        method: "POST",
+        body: JSON.stringify({ flowId }),
+      })
+    for (const [firstProvider, secondProvider] of [
+      ["trae-cn", "trae-global"],
+      ["trae-global", "trae-cn"],
+    ]) {
+      const first = await start(firstProvider!)
+      expect(first.status).toBe(200)
+      const firstBody = (await first.json()) as { flowId: string }
+      const independent = await start("xai")
+      expect(independent.status).toBe(200)
+      const independentBody = (await independent.json()) as { flowId: string }
+      expect((await cancel("xai", independentBody.flowId)).status).toBe(200)
+      const blocked = await start(secondProvider!)
+      expect(blocked.status).toBe(409)
+      expect(((await blocked.json()) as { error: string }).error).toContain(
+        "callback port",
+      )
+      expect((await cancel(firstProvider!, firstBody.flowId)).status).toBe(200)
+      const second = await start(secondProvider!)
+      expect(second.status).toBe(200)
+      const secondBody = (await second.json()) as { flowId: string }
+      expect((await cancel(secondProvider!, secondBody.flowId)).status).toBe(
+        200,
+      )
+    }
+    // Both requests can pass the initial check before strategy.start resolves.
+    const raced = await Promise.all([start("trae-cn"), start("trae-global")])
+    expect(raced.map((response) => response.status).sort()).toEqual([200, 409])
+  })
+
   test("GET /admin/api/oauth/:provider/poll validates provider", async () => {
     globalThis.fetch = (() =>
       Promise.resolve(

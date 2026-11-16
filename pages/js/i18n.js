@@ -688,6 +688,9 @@ const i18n = {
       "accounts.provider.trae-cn.name": "Trae CN",
       "accounts.provider.trae-cn.deviceHint":
         "点击「授权」后会打开 trae.cn 授权页；登录完成后自动拿到账号的 Cloud-IDE-JWT 与刷新凭证，模型走 Trae IDE agent 通道（实验性）。",
+      "accounts.provider.trae-global.name": "Trae Global",
+      "accounts.provider.trae-global.deviceHint":
+        "点击「授权」后会打开 trae.ai 授权页；登录完成后自动拿到账号的 Cloud-IDE-JWT 与刷新凭证，按账号区域走 US/SG 部署，美元计费（实验性）。",
       "accounts.provider.commandcode-plan.name": "Command Code Plan",
       "accounts.provider.commandcode-plan.deviceHint":
         "点击「授权」后会打开 Command Code 的 Studio 授权页；在页面上确认后，铸出的 API key 会自动回传，无需手工粘贴。",
@@ -784,6 +787,11 @@ const i18n = {
       "accounts.oauth.trae-cnCallbackPlaceholder":
         "http://127.0.0.1:57557/authorize?userJwt=...&userInfo=...",
       "accounts.oauth.trae-cnCallbackHint":
+        "授权后浏览器会跳转到 127.0.0.1（远程部署时页面打不开是正常的），复制地址栏完整 URL 粘贴到这里。",
+      "accounts.oauth.trae-globalCallbackLabel": "Trae Global 回调地址",
+      "accounts.oauth.trae-globalCallbackPlaceholder":
+        "http://127.0.0.1:57557/authorize?userJwt=...&userInfo=...",
+      "accounts.oauth.trae-globalCallbackHint":
         "授权后浏览器会跳转到 127.0.0.1（远程部署时页面打不开是正常的），复制地址栏完整 URL 粘贴到这里。",
       "accounts.oauth.success": "OAuth 账户添加成功！",
       "accounts.oauth.error": "OAuth 授权失败",
@@ -1127,6 +1135,9 @@ const i18n = {
       "quota.oauth.trae-cn.credits": "积分",
       "quota.oauth.trae-cn.knownTotal": "已知额度 {count} 积分",
       "quota.oauth.trae-cn.usageUnknown": "用量未知",
+      "quota.oauth.trae.dollarUsage": "美元用量",
+      "quota.oauth.trae.seatUsage": "席位用量",
+      "quota.oauth.trae.asideCredits": "积分（仅供参考）",
       "quota.oauth.qoder.credits": "Credits",
       "quota.oauth.codebuddy.packages": "套餐数",
       "quota.oauth.xai.planLabel": "套餐",
@@ -2837,6 +2848,9 @@ const i18n = {
       "accounts.provider.trae-cn.name": "Trae CN",
       "accounts.provider.trae-cn.deviceHint":
         "Clicking Authorize opens the trae.cn authorization page; once signed in, the account's Cloud-IDE-JWT and refresh token are kept for you — models go through Trae's IDE agent channel (experimental).",
+      "accounts.provider.trae-global.name": "Trae Global",
+      "accounts.provider.trae-global.deviceHint":
+        "Clicking Authorize opens the trae.ai authorization page; once signed in, the account's Cloud-IDE-JWT and refresh token are kept for you — requests ride the US/SG deployment for the account's region, billed in dollars (experimental).",
       "accounts.provider.commandcode-plan.name": "Command Code Plan",
       "accounts.provider.commandcode-plan.deviceHint":
         "Clicking Authorize opens Command Code's Studio page; approve there and the minted API key is delivered back automatically — no token paste is needed.",
@@ -2937,6 +2951,11 @@ const i18n = {
       "accounts.oauth.trae-cnCallbackPlaceholder":
         "http://127.0.0.1:57557/authorize?userJwt=...&userInfo=...",
       "accounts.oauth.trae-cnCallbackHint":
+        "After authorization the browser jumps to 127.0.0.1 — on a remote deployment the page just fails to load; copy the full URL from the address bar and paste it here.",
+      "accounts.oauth.trae-globalCallbackLabel": "Trae Global callback URL",
+      "accounts.oauth.trae-globalCallbackPlaceholder":
+        "http://127.0.0.1:57557/authorize?userJwt=...&userInfo=...",
+      "accounts.oauth.trae-globalCallbackHint":
         "After authorization the browser jumps to 127.0.0.1 — on a remote deployment the page just fails to load; copy the full URL from the address bar and paste it here.",
       "accounts.oauth.success": "OAuth account added successfully!",
       "accounts.oauth.error": "OAuth authorization failed",
@@ -3293,6 +3312,9 @@ const i18n = {
       "quota.oauth.trae-cn.credits": "Credits",
       "quota.oauth.trae-cn.knownTotal": "Known allowance: {count} credits",
       "quota.oauth.trae-cn.usageUnknown": "Usage unknown",
+      "quota.oauth.trae.dollarUsage": "Dollar usage",
+      "quota.oauth.trae.seatUsage": "Seat usage",
+      "quota.oauth.trae.asideCredits": "Credits (reporting only)",
       "quota.oauth.qoder.credits": "Credits",
       "quota.oauth.codebuddy.credits": "Credit balance",
       "quota.oauth.codebuddy.packages": "Packages",

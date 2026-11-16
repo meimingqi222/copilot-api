@@ -50,10 +50,10 @@ describe("internal provider modules", () => {
     expect(unsupported.map((module) => module.id).sort()).toEqual(
       [...unsupportedIds].sort(),
     )
-    expect(modules).toHaveLength(23)
+    expect(modules).toHaveLength(24)
     expect(
       modules.filter((module) => module.quota?.source.includes("poll")),
-    ).toHaveLength(18)
+    ).toHaveLength(19)
     for (const module of modules) {
       expect(module.quota, module.id).toBeDefined()
       expect(getProviderRuntime(module.id).quota).toEqual(module.quota)

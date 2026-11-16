@@ -16,4 +16,33 @@ export const traeCnCallbackConfig: OAuthCallbackConfig = {
   queryParams: { code: "userJwt", state: "userInfo" },
   skipStateCheck: true,
   combineIntoCode: true,
+  parseQuery(params) {
+    const jwt = params.get("userJwt") ?? ""
+    if (!jwt && !params.get("refreshToken")) return undefined
+    const state = params.get("userInfo") ?? ""
+    const extras = Object.fromEntries(
+      [
+        "host",
+        "authHost",
+        "auth_host",
+        "refreshToken",
+        "clientId",
+        "userId",
+      ].flatMap((key) => {
+        const value = params.get(key)
+        return value ? [[key, value]] : []
+      }),
+    )
+    return {
+      code: `${state}\u0000${jwt}${Object.keys(extras).length ? "\u0000" + JSON.stringify(extras) : ""}`,
+      state,
+    }
+  },
+}
+
+// Global 的授权页（www.trae.ai/authorization）回到同一个 loopback /authorize，
+// query 形状一致；admin start 按共享端口互斥（包括手动回调），避免两站串号。
+export const traeGlobalCallbackConfig: OAuthCallbackConfig = {
+  ...traeCnCallbackConfig,
+  providerLabel: "Trae Global",
 }

@@ -66,10 +66,14 @@ export function parseProviderCallbackInput(
   config: {
     queryParams?: { code: string; state: string }
     combineIntoCode?: boolean
+    parseQuery?: (
+      params: URLSearchParams,
+    ) => { code: string; state: string } | undefined
   },
 ): string | undefined {
   const params = callbackParams(input)
   if (!params) return undefined
+  if (config.parseQuery) return config.parseQuery(params)?.code
   const codeParam = config.queryParams?.code ?? "code"
   const code = params.get(codeParam)?.trim()
   if (!code) return undefined

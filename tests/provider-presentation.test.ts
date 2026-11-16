@@ -138,6 +138,7 @@ describe("provider-owned account presentation", () => {
       "windsurf",
       "lobsterai",
       "trae-cn",
+      "trae-global",
     ])
       expect(view.needsManualOAuthCallback(id)).toBe(true)
     for (const id of ["copilot", "kimi", "gemini", "zed", "commandcode-plan"])

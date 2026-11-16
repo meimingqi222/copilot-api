@@ -501,6 +501,22 @@ test("Trae's 0/0 cache answer is recorded as uncounted; another provider's is no
   })
   expect(byProvider["trae-cn"]?.cacheUnknownPromptTokens).toBe(1000)
   expect(byProvider["copilot"]?.cacheUnknownPromptTokens).toBe(0)
+  recordUsage({
+    c,
+    accountId: "trae-global-acc",
+    provider: "trae-global",
+    model: "gpt-5.4",
+    promptTokens: 700,
+    completionTokens: 70,
+    totalTokens: 770,
+    timestamp: now + 2,
+  })
+  expect(
+    statsStore.getUsageStatsByProviderInRange({
+      startMs: now - 60_000,
+      endMs: now + 60_000,
+    })["trae-global"]?.cacheUnknownPromptTokens,
+  ).toBe(700)
 })
 
 describe("recordDirectStreamingUsage (Anthropic shape)", () => {

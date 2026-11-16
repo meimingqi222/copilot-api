@@ -46,3 +46,41 @@ const TRAE_CN_CATALOG: Array<CatalogEntry> = [
 export function getTraeCnFallbackModels(): Array<ModelMapping> {
   return toModelMappings(TRAE_CN_CATALOG)
 }
+
+// Trae Global（trae.ai）离线兜底目录：与 CN 几乎不重叠。
+const TRAE_GLOBAL_CATALOG: Array<CatalogEntry> = [
+  {
+    id: "gpt-5.4",
+    name: "GPT-5.4",
+    vendor: "openai",
+    supportedEndpoints: ["/v1/chat/completions"],
+  },
+  {
+    id: "gemini-3-flash",
+    name: "Gemini 3 Flash",
+    vendor: "gemini",
+    supportedEndpoints: ["/v1/chat/completions"],
+  },
+  {
+    id: "kimi-k2.5",
+    name: "Kimi K2.5",
+    vendor: "moonshot",
+    supportedEndpoints: ["/v1/chat/completions"],
+  },
+  {
+    id: "minimax-m2",
+    name: "MiniMax M2",
+    vendor: "minimax",
+    supportedEndpoints: ["/v1/chat/completions"],
+  },
+  {
+    id: "deepseek-v3.2",
+    name: "DeepSeek V3.2",
+    vendor: "deepseek",
+    supportedEndpoints: ["/v1/chat/completions"],
+  },
+]
+
+export function getTraeGlobalFallbackModels(): Array<ModelMapping> {
+  return toModelMappings(TRAE_GLOBAL_CATALOG)
+}

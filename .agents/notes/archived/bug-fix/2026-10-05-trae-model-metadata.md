@@ -1,6 +1,8 @@
 # Agent Note: Prefer TRAE agent model metadata on equal wire configurations
 
 Status: implemented
+Archived: 2026-11-16
+Superseded-by: 2026-11-16-trae-realm-catalog-session-parity.md
 
 ## Problem
 

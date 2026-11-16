@@ -7,7 +7,7 @@
  */
 
 /** Providers whose 0/0 cache answer means uncounted, not a measured miss. */
-const UNCACHED_ZERO_PROVIDERS = new Set(["trae-cn"])
+const UNCACHED_ZERO_PROVIDERS = new Set(["trae-cn", "trae-global"])
 
 export function cacheUncounted(
   provider: string,

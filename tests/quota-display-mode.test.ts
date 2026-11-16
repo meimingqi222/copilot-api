@@ -148,6 +148,132 @@ test("ZCode without an active plan shows a status instead of stale credit or unl
   expect(display.formatSummary(account, t)).toBe("无有效套餐")
 })
 
+test("Trae localizes dollars and enterprise seats without relabeling reporting credits", () => {
+  const i18n = runInNewContext(
+    `${readFileSync("pages/js/i18n.js", "utf8")}\nI18n`,
+    { navigator: { language: "en" }, localStorage: { getItem: () => null } },
+  ) as {
+    lang: string
+    t: (key: string, params?: Record<string, unknown>) => string
+  }
+  for (const [lang, dollarLabel, seatLabel, asideLabel, unknown, noData] of [
+    [
+      "en",
+      "Dollar usage",
+      "Seat usage",
+      "Credits (reporting only)",
+      "Usage unknown",
+      "No quota data",
+    ],
+    [
+      "zh",
+      "美元用量",
+      "席位用量",
+      "积分（仅供参考）",
+      "用量未知",
+      "暂无配额数据",
+    ],
+  ]) {
+    i18n.lang = lang!
+    const t = i18n.t.bind(i18n)
+    const dollar = {
+      provider: "trae-global",
+      quotaInfo: {
+        details: {
+          "trae-global": {
+            windows: [
+              {
+                name: "Dollar Usage",
+                usedPercent: 25,
+                display: "$5.00 / $20.00",
+              },
+            ],
+          },
+        },
+      },
+    }
+    expect(display.buildRows(dollar, t)[0]).toMatchObject({
+      label: dollarLabel,
+      remainingPercent: 75,
+      amountText: "$5.00 / $20.00",
+    })
+    expect(display.formatSummary(dollar, t)).toBe("$5.00 / $20.00")
+    expect(
+      display.buildRows({ provider: "trae-global", quotaInfo: {} }, t)[0],
+    ).toMatchObject({ label: dollarLabel, valueText: noData, hideBar: true })
+    for (const [provider, currency] of [
+      ["trae-cn", "¥"],
+      ["trae-global", "$"],
+    ]) {
+      const block = {
+        plan: "Enterprise",
+        windows: [
+          {
+            name: "Seat Usage",
+            usedPercent: 25 as number | undefined,
+            display: `${currency}25.00 / ${currency}100.00`,
+          },
+          ...(provider === "trae-cn" ?
+            [
+              {
+                name: "Credits",
+                usedPercent: 40,
+                display: "40 / 100",
+                aside: true,
+              },
+            ]
+          : []),
+        ],
+      }
+      const account = {
+        provider,
+        quotaInfo: { unlimited: false, details: { [provider!]: block } },
+      }
+      const rows = display.buildRows(account, t)
+      expect(rows[0]).toMatchObject({
+        label: seatLabel,
+        remainingPercent: 75,
+        amountText: `${currency}25.00 / ${currency}100.00`,
+      })
+      if (provider === "trae-cn") expect(rows[1]?.label).toBe(asideLabel)
+      for (const mode of ["remaining", "used"]) {
+        const row = display.applyDisplayMode(rows, mode, t)[0]
+        expect(row?.displayPercent).toBe(mode === "used" ? 25 : 75)
+        expect(row?.amountText).toBe(rows[0]?.amountText)
+      }
+      block.windows[0]!.usedPercent = undefined
+      block.windows[0]!.display = `? / ${currency}100.00`
+      const partial = display.buildRows(account, t)[0]
+      expect(partial).toMatchObject({
+        label: seatLabel,
+        valueText: unknown,
+        hideBar: true,
+        amountText: `? / ${currency}100.00`,
+      })
+      expect(partial?.remainingPercent).toBeUndefined()
+      expect(display.formatSummary(account, t)).toBe(
+        `? / ${currency}100.00 · ${unknown}`,
+      )
+      block.windows.shift()
+      expect(display.buildRows(account, t)[0]).toMatchObject({
+        label: seatLabel,
+        valueText: noData,
+        hideBar: true,
+      })
+      expect(display.formatSummary(account, t)).toBe(noData!)
+      account.quotaInfo.unlimited = true
+      expect(display.buildRows(account, t)[0]).toMatchObject({
+        label: seatLabel,
+        valueText: t("quota.unlimited"),
+        hideBar: true,
+      })
+      expect(display.formatSummary(account, t)).toBe(t("quota.unlimited"))
+      if (provider === "trae-cn")
+        expect(display.buildRows(account, t)[1]?.label).toBe(asideLabel)
+    }
+  }
+})
+
 test("legacy Codex windows without metadata retain matching cycle costs", () => {
   const rows = display.buildRows(
     {

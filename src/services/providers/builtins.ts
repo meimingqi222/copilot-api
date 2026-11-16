@@ -23,7 +23,10 @@ import { getCommandCodeModule } from "~/services/providers/modules/commandcode-p
 import { getZedModule } from "~/services/providers/modules/zed"
 import { getDimagentModule } from "~/services/providers/modules/dimagent"
 import { getGeminiModule } from "~/services/providers/modules/gemini"
-import { getTraeCnModule } from "~/services/providers/modules/trae-cn"
+import {
+  getTraeCnModule,
+  getTraeGlobalModule,
+} from "~/services/providers/modules/trae-cn"
 import { getAIStudioModule } from "~/services/providers/modules/aistudio"
 
 // Factories keep registration independent of module import order.
@@ -50,6 +53,7 @@ const modules: Record<ProviderId, () => ProviderModule> = {
   dimagent: getDimagentModule,
   gemini: getGeminiModule,
   "trae-cn": getTraeCnModule,
+  "trae-global": getTraeGlobalModule,
   aistudio: getAIStudioModule,
 }
 

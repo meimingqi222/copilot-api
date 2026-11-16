@@ -17,7 +17,12 @@ export const providerMetadata = defineProviderMetadata({
       "apiHost",
       "devicePublicKey",
       "devicePrivateKey",
+      "host",
+      "authHost",
+      "region",
+      "accountInfo",
     ],
+    contextValueKeys: ["consoleChat"],
   },
   descriptor: {
     id: "trae-cn",

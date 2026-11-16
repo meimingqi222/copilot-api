@@ -46,6 +46,7 @@ describe("provider contributions", () => {
       "dimagent",
       "gemini",
       "trae-cn",
+      "trae-global",
     ]
     expect(Object.keys(OAUTH_CALLBACK_CONFIGS).sort()).toEqual(ids.sort())
     expect("copilot" in OAUTH_CALLBACK_CONFIGS).toBe(false)

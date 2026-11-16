@@ -10,6 +10,10 @@ export interface OAuthCallbackConfig {
   /** Some providers return on whichever path their authorization page chose. */
   anyPath?: boolean
   queryParams?: { code: string; state: string }
+  /** Provider-specific query bundles, shared by loopback and pasted callbacks. */
+  parseQuery?: (
+    params: URLSearchParams,
+  ) => { code: string; state: string } | undefined
   successRedirect?: string
   /** Zed sends its own user_id instead of the client's OAuth state. */
   skipStateCheck?: boolean
