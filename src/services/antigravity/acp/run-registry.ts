@@ -59,6 +59,21 @@ function maxAgyRuns(): number {
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_MAX_RUNS
 }
 
+function positiveMs(env: string, fallback: number): number {
+  const raw = Number(process.env[env])
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : fallback
+}
+
+/** Wait for agy to record delivered MCP results before cancelling the prompt. */
+function steerCommitWaitMs(): number {
+  return positiveMs("COPILOT_API_ANTIGRAVITY_STEER_COMMIT_WAIT_MS", 5_000)
+}
+
+/** Bound on waiting for a cancelled prompt to settle before giving up the run. */
+function cancelSettleMs(): number {
+  return positiveMs("COPILOT_API_ANTIGRAVITY_CANCEL_SETTLE_MS", 15_000)
+}
+
 function cumulativeTotalTokens(usage: AcpUsage | undefined): number {
   return Math.max(
     usage?.totalTokens ?? 0,
@@ -97,11 +112,19 @@ export class AgyRun {
   lastActiveAt = Date.now()
   tainted = false
   turnUpstreamSentAt?: number
+  /** A steer is delivering tool results and cancelling the old prompt in place. */
+  steering = false
+  /** An aborted turn asked agy to cancel but keeps the session for reuse. */
+  cancelPending = false
+  sawGenerationOutput = false
 
   private idleTimer: ReturnType<typeof setTimeout> | undefined
   private readonly announcedQueue: Array<AnnouncedToolCall> = []
   private readonly parkedCalls = new Map<string, PendingToolCall>()
   private readonly turnEvents: Array<AgyTurnEvent> = []
+  private readonly activeAcpToolCalls = new Set<string>()
+  private readonly acpToolWaiters: Array<() => void> = []
+  private readonly settleWaiters: Array<() => void> = []
   private lastTurnUsage?: AcpUsage
   private reportedTurnUsage?: AcpUsage
   private usageSegmentStartedAt?: number
@@ -137,7 +160,12 @@ export class AgyRun {
   }
 
   get isIdle(): boolean {
-    return !this.activePromptInFlight && this.parkedCalls.size === 0
+    return (
+      !this.activePromptInFlight
+      && this.parkedCalls.size === 0
+      && !this.steering
+      && !this.cancelPending
+    )
   }
 
   get parkedCount(): number {
@@ -230,21 +258,28 @@ export class AgyRun {
   handleUpdate(update: AcpSessionUpdate): void {
     this.contextUsage = normalizeAcpContextUsage(update) ?? this.contextUsage
     this.updateTurnUsage(normalizeAcpUsage(update))
+    this.noteAcpToolUpdate(update)
     const kind = update.sessionUpdate
     if (kind === "usage_update") {
       return
     }
+    // While steering or preserving a cancelled turn, the old prompt's output
+    // and tool announcements belong to a response the caller no longer reads.
+    // Keep tracking tool state and usage above, but do not surface stale events.
+    const suppress = this.steering || this.cancelPending
     if (kind === "agent_message_chunk") {
       const text = update.content?.text
       if (typeof text === "string" && text.length > 0) {
-        this.pushEvent({ type: "text", text })
+        this.sawGenerationOutput = true
+        if (!suppress) this.pushEvent({ type: "text", text })
       }
       return
     }
     if (kind === "agent_thought_chunk") {
       const text = update.content?.text
       if (typeof text === "string" && text.length > 0) {
-        this.pushEvent({ type: "thinking", text })
+        this.sawGenerationOutput = true
+        if (!suppress) this.pushEvent({ type: "thinking", text })
       }
       return
     }
@@ -253,6 +288,7 @@ export class AgyRun {
       && update.toolCallId
       && update.name?.startsWith(MCP_TOOL_PREFIX)
     ) {
+      if (suppress) return
       const originalName = stripBridgeToolPrefix(update.name)
       const rawArgs = update.rawInput ?? update.args ?? {}
       // 剔除 agy 自动附加的 toolSummary，保持与调用方 schema 一致
@@ -267,6 +303,175 @@ export class AgyRun {
     }
   }
 
+  /** Track which native ACP tool calls are still executing, by agy's own IDs. */
+  private noteAcpToolUpdate(update: AcpSessionUpdate): void {
+    const id = update.toolCallId
+    if (!id) return
+    const kind = update.sessionUpdate
+    const pending =
+      !update.status
+      || update.status === "in_progress"
+      || update.status === "pending"
+    if (kind === "tool_call") {
+      if (pending) this.activeAcpToolCalls.add(id)
+      else this.activeAcpToolCalls.delete(id)
+      this.notifyAcpTools()
+      return
+    }
+    if (kind === "tool_call_update" && update.status && !pending) {
+      this.activeAcpToolCalls.delete(id)
+      this.notifyAcpTools()
+    }
+  }
+
+  private notifyAcpTools(): void {
+    for (const check of this.acpToolWaiters.slice()) check()
+  }
+
+  /**
+   * Wait until agy has recorded the delivered MCP results (terminal
+   * tool_call_update), started generating, or ended the prompt, so a following
+   * session/cancel does not abort an in-flight tool execution. Resolves false on
+   * timeout while any of `ids` is still active.
+   */
+  waitForToolsCommitted(ids: Set<string>, timeoutMs: number): Promise<boolean> {
+    const remaining = (): boolean => {
+      if (!this.activePromptInFlight || this.sawGenerationOutput) return false
+      for (const id of ids) if (this.activeAcpToolCalls.has(id)) return true
+      return false
+    }
+    if (!remaining()) return Promise.resolve(true)
+    return new Promise((resolve) => {
+      let settled = false
+      const finish = (ok: boolean) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        const idx = this.acpToolWaiters.indexOf(check)
+        if (idx >= 0) this.acpToolWaiters.splice(idx, 1)
+        resolve(ok)
+      }
+      const check = () => {
+        if (!remaining()) finish(true)
+      }
+      const timer = setTimeout(() => finish(!remaining()), timeoutMs)
+      timer.unref?.()
+      this.acpToolWaiters.push(check)
+    })
+  }
+
+  /** Called by the dispatcher when the current prompt resolves or rejects. */
+  notifyPromptSettled(): void {
+    for (const waiter of this.settleWaiters.splice(0)) waiter()
+    this.notifyAcpTools()
+  }
+
+  waitForPromptSettle(timeoutMs: number): Promise<boolean> {
+    if (!this.activePromptInFlight) return Promise.resolve(true)
+    return new Promise((resolve) => {
+      let settled = false
+      const finish = (ok: boolean) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        const idx = this.settleWaiters.indexOf(check)
+        if (idx >= 0) this.settleWaiters.splice(idx, 1)
+        resolve(ok)
+      }
+      const check = () => {
+        if (!this.activePromptInFlight) finish(true)
+      }
+      const timer = setTimeout(
+        () => finish(!this.activePromptInFlight),
+        timeoutMs,
+      )
+      timer.unref?.()
+      this.settleWaiters.push(check)
+    })
+  }
+
+  /**
+   * Deliver tool results to the parked MCP calls, then cancel the still-running
+   * prompt and hand the same native session to a new caller turn. Returns false
+   * when the session cannot be safely steered; the caller then replays fresh.
+   * `dispatch` starts the new prompt and must set activePromptInFlight synchronously.
+   */
+  async steerToNewTurn(params: {
+    results: Array<{
+      toolCallId: string
+      content: McpToolResult["content"]
+      isError: boolean
+    }>
+    newMessageCount: number
+    newMessageHash: string
+    dispatch: () => void
+  }): Promise<boolean> {
+    if (this.disposed || this.tainted || this.steering || this.cancelPending) {
+      return false
+    }
+    if (!this.activePromptInFlight) return false
+    this.steering = true
+    try {
+      for (const result of params.results) {
+        this.resolveParkedCall(result.toolCallId, {
+          content: result.content,
+          is_error: result.isError,
+        })
+      }
+      const pendingIds = new Set(this.activeAcpToolCalls)
+      if (pendingIds.size > 0) {
+        const committed = await this.waitForToolsCommitted(
+          pendingIds,
+          steerCommitWaitMs(),
+        )
+        if (!committed) return false
+      }
+      if (this.disposed || this.tainted) return false
+      this.client.cancel(this.sessionId)
+      const settled = await this.waitForPromptSettle(cancelSettleMs())
+      if (!settled || this.disposed || this.tainted) return false
+      // Drop anything the cancelled prompt queued before it stopped.
+      this.drainPendingEvents()
+      this.announcedQueue.length = 0
+      this.sawGenerationOutput = false
+      this.lastMessageCount = params.newMessageCount
+      this.lastMessageHash = params.newMessageHash
+      this.touch()
+      params.dispatch()
+      return true
+    } catch {
+      return false
+    } finally {
+      this.steering = false
+    }
+  }
+
+  /**
+   * Cancel an aborted turn but keep the session for the next request. Only safe
+   * when no MCP call is parked; otherwise the caller must dispose. The prompt
+   * settles in the background and its leftover events are discarded.
+   */
+  cancelPreserve(): void {
+    if (this.disposed || this.cancelPending) return
+    this.cancelPending = true
+    this.client.cancel(this.sessionId)
+    const timer = setTimeout(() => {
+      if (!this.disposed && this.activePromptInFlight) {
+        runRegistry.dispose(this.token)
+      }
+    }, cancelSettleMs())
+    timer.unref?.()
+  }
+
+  /** Clear preserved-cancel state once the cancelled prompt has settled. */
+  finishCancelPreserve(): void {
+    if (!this.cancelPending) return
+    this.cancelPending = false
+    this.drainPendingEvents()
+    this.announcedQueue.length = 0
+    this.sawGenerationOutput = false
+  }
+
   /**
    * 当 stdio MCP helper 收到 `tools/call` 并回调网关时调用。
    * 关联到最近一次 `session/update(tool_call)` 的 `toolCallId`，并挂起直到调用方传回 `tool_result`。
@@ -274,6 +479,14 @@ export class AgyRun {
   parkMcpToolCall(name: string, args: unknown): Promise<McpToolResult> {
     if (this.disposed) {
       return Promise.reject(new Error("Antigravity ACP run already closed"))
+    }
+    // A call that arrives after the prompt stopped (cancelled, steered, or ended)
+    // has no response to belong to; accepting it would leak a phantom tool_use
+    // into the next turn.
+    if (this.steering || this.cancelPending || !this.activePromptInFlight) {
+      return Promise.reject(
+        new Error("Antigravity ACP has no prompt in flight"),
+      )
     }
     this.touch()
 
@@ -368,6 +581,7 @@ export class AgyRun {
     this.parkedCalls.clear()
     this.client?.close()
     this.notifyWaiter()
+    this.notifyPromptSettled()
     try {
       rmSync(this.bridgeDir, { recursive: true, force: true })
     } catch {

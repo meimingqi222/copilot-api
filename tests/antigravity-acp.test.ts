@@ -578,6 +578,8 @@ describe("antigravity acp run-registry & mcp-callback", () => {
       bridgeDir: makeTempDir("ag-lazy-"),
     })
     runRegistry.register(run)
+    // MCP callbacks arrive while a prompt is running.
+    run.activePromptInFlight = true
     run.handleUpdate({
       sessionUpdate: "tool_call",
       toolCallId: "local-read",
@@ -625,6 +627,8 @@ describe("antigravity acp run-registry & mcp-callback", () => {
       bridgeDir,
     })
     runRegistry.register(run)
+    // MCP callbacks arrive while a prompt is running.
+    run.activePromptInFlight = true
 
     run.handleUpdate({
       sessionUpdate: "tool_call",

@@ -49,6 +49,7 @@ import {
   buildAcpPromptBlocks,
   computeToolsSignature,
   extractMcpTools,
+  extractToolResults,
   extractTrailingToolResults,
   hashMessages,
   type McpToolDefinition,
@@ -59,6 +60,11 @@ import {
   runRegistry,
   type AnnouncedToolCall,
 } from "./run-registry"
+import {
+  findResumable,
+  recordSession,
+  type ParkedSession,
+} from "./session-store"
 import { antigravityCallbackBaseUrl } from "./server-address"
 import { AgyStepUsage } from "~/services/antigravity/acp/step-usage"
 import { findAgyBinary } from "./transport"
@@ -252,6 +258,7 @@ async function startNewRun(params: {
   messageCount: number
   messageHash: string
   ownerKey: string
+  resumeSessionId?: string
 }): Promise<AgyRun> {
   const binaryPath = findAgyBinary()
   if (!binaryPath) {
@@ -281,6 +288,7 @@ async function startNewRun(params: {
     geminiDir,
     workspaceDir,
     connectionId: params.connection.id,
+    bridgeToolPrefix: `mcp_${BRIDGE_MCP_SERVER_NAME}_`,
     onUpdate: (update) => run.handleUpdate(update),
     onExit: (code) => {
       if (run.activePromptInFlight) {
@@ -300,10 +308,21 @@ async function startNewRun(params: {
   try {
     await client.initialize()
     const mcpServers = await createBridgeMcpSpec(token, bridgeDir, params.tools)
-    const { sessionId, availableModels } = await client.newSession(
-      workspaceDir,
-      mcpServers,
-    )
+    let opened: { sessionId: string; availableModels: Array<string> }
+    if (params.resumeSessionId && client.canResume) {
+      try {
+        opened = await client.resumeSession(
+          params.resumeSessionId,
+          workspaceDir,
+          mcpServers,
+        )
+      } catch {
+        opened = await client.newSession(workspaceDir, mcpServers)
+      }
+    } else {
+      opened = await client.newSession(workspaceDir, mcpServers)
+    }
+    const { sessionId, availableModels } = opened
     run.sessionId = sessionId
     run.stepUsage = new AgyStepUsage(
       path.join(
@@ -347,6 +366,8 @@ function dispatchPrompt(run: AgyRun, blocks: Array<AcpContentBlock>): void {
         type: "prompt_done",
         stopReason: result.stopReason ?? "end_turn",
       })
+      run.finishCancelPreserve()
+      run.notifyPromptSettled()
     })
     .catch((error: unknown) => {
       run.activePromptInFlight = false
@@ -354,7 +375,26 @@ function dispatchPrompt(run: AgyRun, blocks: Array<AcpContentBlock>): void {
         type: "error",
         message: error instanceof Error ? error.message : String(error),
       })
+      run.finishCancelPreserve()
+      run.notifyPromptSettled()
     })
+}
+
+/** Persist a completed turn's native session so a later request can resume it. */
+function recordRunSession(run: AgyRun): void {
+  if (!run.client?.canResume || !run.sessionId || run.tainted) return
+  const entry: ParkedSession = {
+    sessionId: run.sessionId,
+    connectionId: run.connectionId,
+    model: run.model,
+    toolsSignature: run.toolsSignature,
+    ownerKey: run.ownerKey,
+    messageCount: run.lastMessageCount,
+    historyHash: run.lastMessageHash,
+    assistantHash: run.lastAssistantHash,
+    updatedAt: Date.now(),
+  }
+  recordSession(entry)
 }
 
 /** Structural subset of AgyRun needed to explain a cold-replay fallback. */
@@ -564,6 +604,71 @@ async function resolveOrStartRun(
     if (parkedRun) runRegistry.dispose(parkedRun.token)
   }
 
+  // 1b. 工具结果之后又追加了新用户指令（末尾不是纯 tool）：在同一原生会话内
+  // 转向。先把真实工具结果交还挂起的 MCP 调用，等 agy 接纳后取消旧 prompt，
+  // 再用同一会话发出新指令；只有历史/工具未变且结果对齐时才转向，否则冷重放。
+  if (trailingTools.length === 0) {
+    const allResults = extractToolResults(payload.messages)
+    if (allResults.length > 0) {
+      const steerRun = candidates.find((candidate) => {
+        if (
+          candidate.isIdle
+          || !candidate.hasParkedCall(allResults[0].toolCallId)
+        ) {
+          return false
+        }
+        const match = matchRunHistory(
+          candidate,
+          payload.messages,
+          toolsSignature,
+        )
+        return match.toolsMatch && match.countPositive && match.prefixMatch
+      })
+      if (steerRun) {
+        const base = steerRun.lastMessageCount
+        const echo = payload.messages[base]
+        const ids = echo?.tool_calls?.map((call) => call.id) ?? []
+        const newStart = base + 1 + allResults.length
+        const aligned =
+          echo?.role === "assistant"
+          && ids.length === allResults.length
+          && payload.messages.length > newStart
+          && allResults.every(
+            (result, i) =>
+              payload.messages[base + 1 + i]?.role === "tool"
+              && payload.messages[base + 1 + i]?.tool_call_id
+                === result.toolCallId
+              && ids[i] === result.toolCallId
+              && steerRun.hasParkedCall(result.toolCallId),
+          )
+          && payload.messages
+            .slice(newStart)
+            .every(
+              (msg) =>
+                msg.role === "user"
+                || msg.role === "system"
+                || msg.role === "developer",
+            )
+        if (aligned) {
+          const newBlocks = measureLocalWork("adapterPreparationMs", () =>
+            buildAcpPromptBlocks(payload, newStart),
+          )
+          if (newBlocks.length > 0) {
+            const steered = await steerRun.steerToNewTurn({
+              results: allResults,
+              newMessageCount: payload.messages.length,
+              newMessageHash: hashMessages(payload.messages),
+              dispatch: () => dispatchPrompt(steerRun, newBlocks),
+            })
+            if (steered) return steerRun
+          }
+          // Unsafe to steer (commit/cancel did not settle): replay fresh below.
+          runRegistry.dispose(steerRun.token)
+        }
+      }
+    }
+  }
+
   // 2. 若是同一对话的新一轮 user 消息（上一轮非 tool 调用结束），按请求前缀续接。
   // 请求前缀逐字节匹配已足以认定同一对话；原生会话里就保存着真实的 assistant
   // 回复，无需客户端逐字节回显（客户端常会规范化/裁剪回显）。仅当多个候选会话
@@ -620,7 +725,38 @@ async function resolveOrStartRun(
     }
   }
 
-  // 3. 否则启动全新隔离会话
+  // 3. 否则启动全新隔离会话。先尝试恢复持久化的原生会话：历史前缀匹配且
+  // 增量是新一轮用户消息时，用 session/resume 接上并只发送增量，避免冷重放。
+  const resumable = findResumable({
+    connectionId: connection.id,
+    model,
+    toolsSignature,
+    ownerKey,
+    messages: payload.messages,
+  })
+  if (resumable) {
+    const deltaBlocks = measureLocalWork("adapterPreparationMs", () =>
+      buildAcpPromptBlocks(payload, resumable.messageCount + 1),
+    )
+    if (deltaBlocks.length > 0) {
+      try {
+        return await startNewRun({
+          connection,
+          credential,
+          model,
+          tools: mcpTools,
+          toolsSignature,
+          promptBlocks: deltaBlocks,
+          messageCount: payload.messages.length,
+          messageHash: hashMessages(payload.messages),
+          ownerKey,
+          resumeSessionId: resumable.sessionId,
+        })
+      } catch {
+        // Resume failed (expired/unknown session): fall through to fresh replay.
+      }
+    }
+  }
   const diagnostic = classifyColdReplay(
     candidates,
     payload,
@@ -665,9 +801,17 @@ async function* streamAcpEvents(
       toOpenAiUsage(run, c)
       usageSettled = true
     }
-    run.tainted = true
-    run.client.cancel(run.sessionId)
-    runRegistry.dispose(run.token)
+    run.lastAssistantHash = hashMessages([assistant])
+    // A parked MCP call cannot be left unanswered, and a steer owns the session;
+    // both require disposal. Otherwise cancel the prompt but keep the native
+    // session so the caller's next turn can reuse it instead of cold-replaying.
+    if (run.parkedCount > 0 || run.steering) {
+      run.tainted = true
+      run.client.cancel(run.sessionId)
+      runRegistry.dispose(run.token)
+      return
+    }
+    run.cancelPreserve()
   }
   signal?.addEventListener("abort", onAbort, { once: true })
 
@@ -784,6 +928,7 @@ async function* streamAcpEvents(
 
       if (event.type === "prompt_done") {
         run.lastAssistantHash = hashMessages([assistant])
+        recordRunSession(run)
         const finishReason =
           event.stopReason === "max_tokens" ? "length" : "stop"
         const endChunk = makeChunk(responseId, created, model, {}, finishReason)

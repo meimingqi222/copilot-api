@@ -159,6 +159,20 @@ export function hashMessages(messages: Array<Message>): string {
     .digest("hex")
 }
 
+function toolResultContent(msg: Message): McpToolResult["content"] {
+  const content: McpToolResult["content"] = []
+  if (typeof msg.content === "string") {
+    content.push({ type: "text", text: msg.content })
+  } else {
+    for (const part of msg.content ?? []) {
+      if (part && typeof part === "object" && part.type === "text")
+        content.push({ type: "text", text: part.text })
+      else content.push(...extractImageBlocks([part]))
+    }
+  }
+  return content
+}
+
 /**
  * 提取消息列表末尾连续的 `role: "tool"` 结果。
  */
@@ -170,19 +184,28 @@ export function extractTrailingToolResults(
     const msg = messages[i]
     if (msg.role !== "tool") break
     if (!msg.tool_call_id) continue
-    const content: McpToolResult["content"] = []
-    if (typeof msg.content === "string") {
-      content.push({ type: "text", text: msg.content })
-    } else {
-      for (const part of msg.content ?? []) {
-        if (part.type === "text")
-          content.push({ type: "text", text: part.text })
-        else content.push(...extractImageBlocks([part]))
-      }
-    }
     results.unshift({
       toolCallId: msg.tool_call_id,
-      content,
+      content: toolResultContent(msg),
+      isError: false,
+    })
+  }
+  return results
+}
+
+/**
+ * 提取消息列表中所有 `role: "tool"` 结果（不限末尾），用于识别工具结果之后
+ * 又追加了新用户指令的转向请求。保持调用方顺序。
+ */
+export function extractToolResults(
+  messages: Array<Message>,
+): Array<TrailingToolResult> {
+  const results: Array<TrailingToolResult> = []
+  for (const msg of messages) {
+    if (msg.role !== "tool" || !msg.tool_call_id) continue
+    results.push({
+      toolCallId: msg.tool_call_id,
+      content: toolResultContent(msg),
       isError: false,
     })
   }

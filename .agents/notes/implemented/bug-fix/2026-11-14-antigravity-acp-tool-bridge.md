@@ -141,6 +141,51 @@ TTL fields. Sanitizing copies rather than mutates accounting objects and does no
 traverse generated content or tool arguments. Downstream diagnostics record the
 sanitized bytes that were actually sent.
 
+Spec change (2026-11-16): the bridge keeps a native session across the whole
+conversation lifecycle instead of cold-replaying whenever a turn is not a pure
+idle continuation. Three additions, all ACP-only (no private HTTP replay):
+
+- In-session steering. When tool results are followed by a new caller turn
+  (the message tail is not pure `tool`), `resolveOrStartRun` delivers the real
+  results to the parked MCP calls, waits for agy to commit them
+  (`tool_call_update` terminal, generation output, or prompt end), cancels the
+  old prompt, waits for it to settle, discards its leftover events, and sends
+  the new turn as a fresh prompt in the same session (`AgyRun.steerToNewTurn`).
+  Steering requires an unchanged request prefix and tool catalog and exactly
+  the parked results aligned to the echoed `tool_calls`; a changed history or a
+  commit/cancel that does not settle falls back to fresh replay. A `steering`
+  flag bars concurrent reuse, and old-prompt output/announcements are suppressed
+  so a cancelled turn cannot leak into the new response.
+- Cancel preservation. Aborting a turn with no parked MCP call cancels the
+  prompt but keeps the session (`AgyRun.cancelPreserve`); the prompt settles in
+  the background, its events are discarded, and the next request reuses it. A
+  parked call or an active steer still requires disposal because the call cannot
+  be left unanswered. A settle timeout disposes a prompt that never stops.
+- Durable resume. After a completed turn the bridge records the session ID with
+  the request prefix and assistant echo it answered (`session-store.ts`, IDs and
+  hashes only, never message text). A later cold request whose history extends
+  that prefix reattaches via `session/resume` (capability-gated) and sends only
+  the delta. A single prefix match resumes; several are disambiguated by the
+  assistant echo; an unresolved ambiguity or a failed resume replays fresh.
+
+`parkMcpToolCall` now rejects a callback that arrives with no prompt in flight
+(cancelled, steered, or ended) so a stale call cannot leak a phantom `tool_use`
+into the next turn. Reverse `session/request_permission` requests are answered
+selectively (`selectPermissionOutcome`): only the caller's declared bridge tools
+are allowed once; agy's own local tools are denied; other reverse methods get a
+standard method-not-supported error rather than a blanket allow.
+
+Deliberately not copied from Magpie: moving tool-result images out of MCP into
+the prompt (this note's earlier decision keeps them in MCP and real tool
+round-trips passed), long-tool "still running" deferral (Magpie's deadline is for
+its `--ide-mcp-port` transport, not our stdio MCP path; no evidence of our
+deadline), estimated fallback usage (the pending contract above stays), and
+speculative history-normalization loosening (needs real-workload evidence). Full
+local-tool isolation via a dedicated agent and dropping
+`--dangerously-skip-permissions` also remains a follow-up: removing the flag
+risks breaking bridge-tool execution on agy versions that do not ask, so the
+selective response is added without it.
+
 ## Alternatives considered
 
 Allowing backend-local filesystem tools would violate the bridge boundary and
@@ -312,3 +357,28 @@ OpenAI SSE also leaked cache-write detail fields. The three failures are saved
 in `.agents/notes-evidence/public-usage-red.log`. The same tests pass after the
 change. HTTP route assertions additionally verify exact standard usage and that
 internal statistics still retain uncached input and both cache buckets.
+
+- `tests/antigravity-acp-bridge.test.ts::a new user instruction after tool results steers the same native session`
+- `tests/antigravity-acp-bridge.test.ts::changed history still replays instead of steering a mismatched session`
+- `tests/antigravity-acp-bridge.test.ts::aborting a generation turn keeps the session for the next request`
+- `tests/antigravity-acp-bridge.test.ts::a follow-up after the process is gone resumes the persisted native session`
+- `tests/antigravity-acp-bridge.test.ts::a tool callback with no prompt in flight is rejected`
+- `tests/antigravity-acp-bridge.test.ts::allows a declared bridge tool once`
+
+Proved: with the steering branch disabled (`if (false && trailingTools.length
+=== 0)`), the focused command `bun test tests/antigravity-acp-bridge.test.ts
+--test-name-pattern 'steers the same native session'` failed because the
+follow-up cold-replayed into another tool loop: `finish_reason` expected `stop`,
+received `tool_calls` (output in ignored `temp/acp-steer-red.log`). Restoring the
+branch passes. The lifecycle suite drives the real loopback RPC/MCP fixture:
+steer reuses one native session (second prompt, not `replayed:`), a changed
+opening still replays, an aborted generation turn settles idle and its follow-up
+reuses the session, a follow-up after `disposeAll` resumes the persisted session
+through the ACP resume method, a no-prompt callback rejects, and permission
+selectivity allows bridge tools while denying local tools. The two run-registry
+unit tests that park calls now set `activePromptInFlight` to reflect that MCP
+callbacks arrive during a running prompt. `bun test tests/antigravity-acp.test.ts
+tests/antigravity-acp-bridge.test.ts` passes 59; affected run 105; lint,
+typecheck, knip, format and the notes verifier pass. These are synthetic
+fixture proofs, not the original long Maka conversation; live multi-turn
+validation on production remains separate and was not performed here.

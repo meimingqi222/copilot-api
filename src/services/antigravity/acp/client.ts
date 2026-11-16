@@ -174,6 +174,31 @@ interface AcpPromptResult {
   usage?: AcpUsage
 }
 
+type AcpPermissionOutcome =
+  | { outcome: "selected"; optionId: string }
+  | { outcome: "cancelled" }
+
+/**
+ * Decide a reverse permission request. Only the caller's declared bridge tools
+ * may run (they execute on the caller's machine); agy's own local tools are
+ * denied so nothing runs on the backend. With no suitable option, cancel.
+ */
+export function selectPermissionOutcome(
+  toolName: string,
+  options: Array<{ optionId?: string; kind?: string }>,
+  bridgeToolPrefix: string,
+): AcpPermissionOutcome {
+  const isBridgeTool = toolName.startsWith(bridgeToolPrefix)
+  const chosen =
+    isBridgeTool ?
+      options.find((option) => option.kind === "allow_once")
+    : (options.find((option) => option.kind === "reject_once")
+      ?? options.find((option) => option.kind === "reject_always"))
+  return chosen?.optionId ?
+      { outcome: "selected", optionId: chosen.optionId }
+    : { outcome: "cancelled" }
+}
+
 export interface AcpSessionUpdate {
   sessionUpdate?: string
   used?: number
@@ -201,6 +226,8 @@ interface AcpSpawnOptions {
   connectionId: string
   onUpdate: (update: AcpSessionUpdate) => void
   onExit: (code: number | null, signal: NodeJS.Signals | null) => void
+  /** Prefix identifying the caller's bridge tools in permission requests. */
+  bridgeToolPrefix?: string
 }
 
 export class AgyAcpClient {
@@ -210,9 +237,12 @@ export class AgyAcpClient {
   private nextId = 1
   private closed = false
   private embeddedContext = false
+  private readonly bridgeToolPrefix: string
+  private resumable = false
 
   constructor(options: AcpSpawnOptions) {
     this.onUpdate = options.onUpdate
+    this.bridgeToolPrefix = options.bridgeToolPrefix ?? "mcp_bridge_"
     const args = [
       "acp",
       "--stdio",
@@ -318,13 +348,38 @@ export class AgyAcpClient {
       return
     }
 
-    // 若服务端反向发起 JSON-RPC 请求（例如 session/request_permission），给予兜底响应避免卡死
+    // 服务端反向发起 JSON-RPC 请求。只有权限请求需要作答，且只放行调用方声明的
+    // 桥接工具；agy 本地工具（shell/文件/浏览器）一律拒绝，避免在后端机器上执行。
+    // 其它方法（fs/terminal 等）本客户端未声明能力，返回标准方法不支持错误。
     if (typeof msg.id === "number" && typeof msg.method === "string") {
+      if (msg.method === "session/request_permission") {
+        const params = (msg.params ?? {}) as {
+          toolCall?: { name?: string; title?: string }
+          options?: Array<{ optionId?: string; kind?: string }>
+        }
+        const toolName = params.toolCall?.name ?? params.toolCall?.title ?? ""
+        this.writeLine({
+          jsonrpc: "2.0",
+          id: msg.id,
+          result: {
+            outcome: selectPermissionOutcome(
+              toolName,
+              params.options ?? [],
+              this.bridgeToolPrefix,
+            ),
+          },
+        })
+        return
+      }
       this.writeLine({
         jsonrpc: "2.0",
         id: msg.id,
-        result: { outcome: { outcome: "selected", optionId: "allow_once" } },
+        error: {
+          code: -32601,
+          message: `agy acp client does not serve ${msg.method}`,
+        },
       })
+      return
     }
   }
 
@@ -356,7 +411,11 @@ export class AgyAcpClient {
 
   async initialize(): Promise<void> {
     const result = await this.request<{
-      agentCapabilities?: { promptCapabilities?: { embeddedContext?: boolean } }
+      agentCapabilities?: {
+        promptCapabilities?: { embeddedContext?: boolean }
+        sessionCapabilities?: { resume?: boolean }
+        session_capabilities?: { resume?: boolean }
+      }
     }>("initialize", {
       protocolVersion: 1,
       clientCapabilities: {
@@ -367,6 +426,13 @@ export class AgyAcpClient {
     })
     this.embeddedContext =
       result.agentCapabilities?.promptCapabilities?.embeddedContext === true
+    this.resumable =
+      result.agentCapabilities?.sessionCapabilities?.resume === true
+      || result.agentCapabilities?.session_capabilities?.resume === true
+  }
+
+  get canResume(): boolean {
+    return this.resumable
   }
 
   async newSession(
@@ -379,6 +445,28 @@ export class AgyAcpClient {
     }>("session/new", { cwd, mcpServers })
     if (!res.sessionId) {
       throw new Error("ACP session/new did not return sessionId")
+    }
+    const availableModels = (res.models?.availableModels ?? [])
+      .map((m) => m.modelId)
+      .filter((id): id is string => typeof id === "string" && id.length > 0)
+    return { sessionId: res.sessionId, availableModels }
+  }
+
+  /**
+   * Reattach to a previously persisted native session. Rejects when agy cannot
+   * resume it (expired, unknown, or unsupported); the caller then opens fresh.
+   */
+  async resumeSession(
+    sessionId: string,
+    cwd: string,
+    mcpServers: Array<AcpMcpServerSpec>,
+  ): Promise<{ sessionId: string; availableModels: Array<string> }> {
+    const res = await this.request<{
+      sessionId?: string
+      models?: { availableModels?: Array<{ modelId?: string }> }
+    }>("session/resume", { sessionId, cwd, mcpServers })
+    if (!res.sessionId) {
+      throw new Error("ACP session/resume did not return sessionId")
     }
     const availableModels = (res.models?.availableModels ?? [])
       .map((m) => m.modelId)

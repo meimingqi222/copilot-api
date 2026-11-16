@@ -19,7 +19,8 @@ import {
   type ColdReplayCandidate,
 } from "~/services/antigravity/acp/bridge"
 import { hashMessages } from "~/services/antigravity/acp/prompt"
-import { runRegistry } from "~/services/antigravity/acp/run-registry"
+import { selectPermissionOutcome } from "~/services/antigravity/acp/client"
+import { AgyRun, runRegistry } from "~/services/antigravity/acp/run-registry"
 import {
   antigravityCallbackBaseUrl,
   setAntigravityCallbackBaseUrl,
@@ -866,5 +867,173 @@ describe("antigravity acp cold-replay diagnostics", () => {
       [{ toolCallId: "t" }],
     )
     expect(parked.candidates[0].parked).toBe(true)
+  })
+})
+
+describe("ACP session lifecycle: steer, cancel preservation, resume", () => {
+  const ownerKey = () =>
+    JSON.stringify([connection.credentials.at(0)!.id, null])
+
+  loopbackTest(
+    "a new user instruction after tool results steers the same native session",
+    async () => {
+      const initial: Message[] = [{ role: "user", content: "STEER_LOOP" }]
+      const first = await complete(initial, true)
+      const call = first.choices[0].message.tool_calls![0]
+      const session = String(
+        first.choices[0].message.reasoning_content,
+      ).replace("native-reasoning-", "")
+      const next = await complete(
+        [
+          ...initial,
+          assistant(first),
+          { role: "tool", tool_call_id: call.id, content: "tool-result" },
+          { role: "user", content: "Actually do something else now" },
+        ],
+        true,
+      )
+      expect(next.choices[0].finish_reason).toBe("stop")
+      // Same native session, second prompt; not a cold replay of the transcript.
+      expect(next.choices[0].message.content).toBe(`${session}:2`)
+      expect(next.choices[0].message.content).not.toContain("replayed:")
+    },
+  )
+
+  loopbackTest(
+    "changed history still replays instead of steering a mismatched session",
+    async () => {
+      const initial: Message[] = [{ role: "user", content: "STEER_LOOP" }]
+      const first = await complete(initial, true)
+      const call = first.choices[0].message.tool_calls![0]
+      const next = await complete(
+        [
+          { role: "user", content: "A different opening request" },
+          assistant(first),
+          { role: "tool", tool_call_id: call.id, content: "tool-result" },
+          { role: "user", content: "New instruction" },
+        ],
+        true,
+      )
+      expect(next.choices[0].message.content).toContain("replayed:")
+      expect(next.choices[0].message.content).toContain("New instruction")
+    },
+  )
+
+  loopbackTest(
+    "aborting a generation turn keeps the session for the next request",
+    async () => {
+      const initial: Message[] = [{ role: "user", content: "HOLD_GEN" }]
+      const controller = new AbortController()
+      const stream = (await createAntigravityAcpChatCompletionsOnce(
+        { connection, credential: connection.credentials.at(0)! },
+        { model: "gemini-3.8-flash", messages: initial, stream: true },
+        controller.signal,
+      )) as AsyncIterable<{ data?: string }>
+      const iterator = stream[Symbol.asyncIterator]()
+      const pending = iterator.next()
+      await Promise.resolve()
+      controller.abort()
+      expect((await pending).done).toBe(true)
+      const run = runRegistry.findCandidates(
+        connection.id,
+        "gemini-3.8-flash",
+        undefined,
+        ownerKey(),
+      )[0]!
+      expect(run).toBeTruthy()
+      expect(await run.waitForPromptSettle(3000)).toBe(true)
+      expect(run.isIdle).toBe(true)
+      const session = run.sessionId
+      const next = await complete([
+        ...initial,
+        { role: "assistant", content: "" },
+        { role: "user", content: "Continue after abort" },
+      ])
+      expect(next.choices[0].message.content).toBe(`${session}:2`)
+      expect(next.choices[0].message.content).not.toContain("replayed:")
+    },
+  )
+
+  loopbackTest(
+    "a follow-up after the process is gone resumes the persisted native session",
+    async () => {
+      const initial: Message[] = [{ role: "user", content: "Resume probe" }]
+      const first = await complete(initial)
+      const session = String(first.choices[0].message.content).split(":")[0]
+      expect(first.choices[0].message.content).toBe(`${session}:1`)
+      // Simulate a restart or pool eviction: the live process is gone.
+      runRegistry.disposeAll()
+      expect(
+        runRegistry.findCandidates(
+          connection.id,
+          "gemini-3.8-flash",
+          undefined,
+          ownerKey(),
+        ),
+      ).toHaveLength(0)
+      const next = await complete([
+        ...initial,
+        assistant(first),
+        { role: "user", content: "Continue after restart" },
+      ])
+      expect(next.choices[0].message.content).toBe(`${session}:2`)
+      expect(next.choices[0].message.content).not.toContain("replayed:")
+    },
+  )
+
+  test("a tool callback with no prompt in flight is rejected", async () => {
+    const run = new AgyRun({
+      token: "late-call",
+      connectionId: connection.id,
+      model: "gemini-3.8-flash",
+      toolsSignature: "sig",
+      bridgeDir: path.join(dataDir, "late-call"),
+    })
+    runRegistry.register(run)
+    run.activePromptInFlight = false
+    await expect(run.parkMcpToolCall("lookup_probe", {})).rejects.toThrow(
+      "no prompt in flight",
+    )
+    run.activePromptInFlight = true
+    run.steering = true
+    await expect(run.parkMcpToolCall("lookup_probe", {})).rejects.toThrow(
+      "no prompt in flight",
+    )
+  })
+})
+
+describe("ACP reverse permission selectivity", () => {
+  const options = [
+    { optionId: "allow", kind: "allow_once" },
+    { optionId: "reject", kind: "reject_once" },
+  ]
+  test("allows a declared bridge tool once", () => {
+    expect(
+      selectPermissionOutcome(
+        "mcp_bridge_lookup_probe",
+        options,
+        "mcp_bridge_",
+      ),
+    ).toEqual({ outcome: "selected", optionId: "allow" })
+  })
+  test("denies agy's own local tools", () => {
+    for (const name of ["run_command", "write_file", "read_file", ""]) {
+      expect(selectPermissionOutcome(name, options, "mcp_bridge_")).toEqual({
+        outcome: "selected",
+        optionId: "reject",
+      })
+    }
+  })
+  test("cancels when no suitable option is offered", () => {
+    expect(
+      selectPermissionOutcome(
+        "run_command",
+        [{ optionId: "a", kind: "allow_once" }],
+        "mcp_bridge_",
+      ),
+    ).toEqual({ outcome: "cancelled" })
+    expect(selectPermissionOutcome("mcp_bridge_x", [], "mcp_bridge_")).toEqual({
+      outcome: "cancelled",
+    })
   })
 })
