@@ -72,6 +72,67 @@ const base: Model = {
   version: "gpt-6-astra",
 }
 
+test("Devin discovery publishes declared vision without overriding a text-only route", () => {
+  for (const [id, supportsImages] of [
+    ["vision", true],
+    ["text", false],
+    ["unknown", undefined],
+  ] as const) {
+    const connection = managedConnectionFromInput({
+      id,
+      name: id,
+      provider: "windsurf",
+      enabled: true,
+      credentials: { apiKey: "test-key" },
+    })
+    connection.models = [
+      {
+        publicId: id,
+        upstreamId: id,
+        endpoints: ["chat", "messages"],
+        enabled: true,
+        metadata: { supportsImages },
+      },
+    ]
+    upsertProviderConnection(connection)
+  }
+  cacheModels()
+  expect(
+    state.models!.data.find((model) => model.id === "vision")?.capabilities
+      .supports.vision,
+  ).toBe(true)
+  expect(
+    state.models!.data.find((model) => model.id === "text")?.capabilities
+      .supports.vision,
+  ).toBe(false)
+  expect(
+    state.models!.data.find((model) => model.id === "unknown")?.capabilities
+      .supports.vision,
+  ).toBeUndefined()
+  const textRoute = managedConnectionFromInput({
+    id: "text-route",
+    name: "Text-only seat",
+    provider: "windsurf",
+    enabled: true,
+    credentials: { apiKey: "test-key" },
+  })
+  textRoute.models = [
+    {
+      publicId: "vision",
+      upstreamId: "vision-text-only",
+      endpoints: ["chat"],
+      enabled: true,
+      metadata: { supportsImages: false },
+    },
+  ]
+  upsertProviderConnection(textRoute)
+  cacheModels()
+  expect(
+    state.models!.data.find((model) => model.id === "vision")?.capabilities
+      .supports.vision,
+  ).toBe(false)
+})
+
 test("public model rows flatten discovery fields omp's /v1/models reader consumes", () => {
   const row = getPublicModelData(base)
   expect(row.supported_reasoning_levels).toEqual([

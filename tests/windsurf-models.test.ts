@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { afterEach, expect, test } from "bun:test"
 
 import type { ProviderConnection } from "~/lib/provider-connections"
 
@@ -8,8 +8,11 @@ import { resolveWindsurfRequestModel } from "~/services/windsurf/create-chat-com
 import {
   extractWindsurfModelMappingsFromPayload,
   extractWindsurfModelsFromPayload,
+  extractDevinCliModelMappingsFromPayload,
+  getWindsurfModelsForConnection,
+  clearWindsurfModelCacheForTest,
 } from "~/services/windsurf/get-models"
-import { ProtobufEncoder } from "~/services/windsurf/protobuf"
+import { ProtobufEncoder, parseMessage } from "~/services/windsurf/protobuf"
 import {
   WINDSURF_1M_CONTEXT_TOKENS,
   collapseWindsurfModelVariants,
@@ -18,6 +21,306 @@ import {
   readWindsurfVariants,
   windsurfContextWindow,
 } from "~/services/windsurf/variant-collapse"
+
+const originalCatalogFetch = globalThis.fetch
+const originalDateNow = Date.now
+afterEach(() => {
+  globalThis.fetch = originalCatalogFetch
+  Date.now = originalDateNow
+  clearWindsurfModelCacheForTest()
+})
+
+function cachedCatalogConnection(
+  overrides: Partial<ProviderConnection> = {},
+): ProviderConnection {
+  return {
+    id: "cached-catalog",
+    name: "Cached catalog",
+    protocol: "windsurf-native",
+    baseUrl: "https://cache.example",
+    enabled: true,
+    priority: 0,
+    createdAt: 0,
+    credentials: [
+      {
+        id: "catalog-key",
+        value: "cog_cache",
+        authMode: "bearer",
+        enabled: true,
+        status: "ready",
+        createdAt: 0,
+      },
+    ],
+    metadata: {
+      provider: "windsurf",
+      settings: { defaultModel: "fallback-model" },
+    },
+    ...overrides,
+  }
+}
+
+function cachedCatalogPayload(): Uint8Array {
+  const response = new ProtobufEncoder()
+  const model = new ProtobufEncoder()
+  model.writeString(1, "SWE-2 High")
+  model.writeString(22, "swe-2-high")
+  model.writeBool(5, true)
+  response.writeMessage(1, model)
+  return response.toUint8Array()
+}
+
+test("catalog cache coalesces requests, isolates mutations and expires success at five minutes", async () => {
+  let now = 1000
+  Date.now = () => now
+  let requests = 0
+  globalThis.fetch = (async () => {
+    requests++
+    return new Response(cachedCatalogPayload())
+  }) as unknown as typeof fetch
+  const connection = cachedCatalogConnection()
+  const [first, concurrent] = await Promise.all([
+    getWindsurfModelsForConnection(connection),
+    getWindsurfModelsForConnection(connection),
+  ])
+  expect(requests).toBe(1)
+  first[0]!.endpoints.length = 0
+  first[0]!.metadata!.supportsImages = false
+  first.push({ ...first[0]!, publicId: "caller-only" })
+  expect(concurrent[0]?.endpoints).toEqual(["chat", "messages"])
+  const repeated = await getWindsurfModelsForConnection(connection)
+  expect(repeated).toEqual(concurrent)
+  expect(repeated[0]?.metadata?.supportsImages).toBe(true)
+  now += 299_999
+  await getWindsurfModelsForConnection(connection)
+  expect(requests).toBe(1)
+  now++
+  await getWindsurfModelsForConnection(connection)
+  expect(requests).toBe(2)
+})
+
+test("catalog cache normalizes hosts and separates credentials, hosts, proxies and defaults", async () => {
+  let requests = 0
+  globalThis.fetch = (async () => {
+    requests++
+    return new Response(cachedCatalogPayload())
+  }) as unknown as typeof fetch
+  const connection = cachedCatalogConnection()
+  await getWindsurfModelsForConnection(connection)
+  await getWindsurfModelsForConnection({
+    ...connection,
+    baseUrl: "https://cache.example/",
+  })
+  expect(requests).toBe(1)
+  await getWindsurfModelsForConnection({
+    ...connection,
+    credentials: [{ ...connection.credentials[0]!, value: "cog_other_cache" }],
+  })
+  await getWindsurfModelsForConnection({
+    ...connection,
+    baseUrl: "https://other-cache.example",
+  })
+  await getWindsurfModelsForConnection({
+    ...connection,
+    proxyUrl: "http://proxy.example:8080",
+  })
+  await getWindsurfModelsForConnection({
+    ...connection,
+    metadata: {
+      provider: "windsurf",
+      settings: { defaultModel: "another-fallback" },
+    },
+  })
+  expect(requests).toBe(5)
+})
+
+test("empty catalogs cool down for one minute after both discovery paths", async () => {
+  let now = 1000
+  Date.now = () => now
+  let requests = 0
+  globalThis.fetch = (async () => {
+    requests++
+    return new Response(new Uint8Array())
+  }) as unknown as typeof fetch
+  const connection = cachedCatalogConnection()
+  expect((await getWindsurfModelsForConnection(connection))[0]?.publicId).toBe(
+    "fallback-model",
+  )
+  expect(requests).toBe(2)
+  now += 59_999
+  await getWindsurfModelsForConnection(connection)
+  expect(requests).toBe(2)
+  now++
+  await getWindsurfModelsForConnection(connection)
+  expect(requests).toBe(4)
+})
+
+test("failed and rejected probes retain error semantics with only a one-minute cooldown", async () => {
+  for (const status of [503, 401]) {
+    clearWindsurfModelCacheForTest()
+    let now = 1000
+    Date.now = () => now
+    let requests = 0
+    globalThis.fetch = (async () => {
+      requests++
+      return new Response("unavailable", { status })
+    }) as unknown as typeof fetch
+    const connection = cachedCatalogConnection()
+    await expect(
+      getWindsurfModelsForConnection(connection),
+    ).rejects.toMatchObject({ response: { status } })
+    expect(requests).toBe(2)
+    now += 59_999
+    await expect(getWindsurfModelsForConnection(connection)).rejects.toThrow(
+      "Failed to fetch",
+    )
+    expect(requests).toBe(2)
+    now++
+    await expect(getWindsurfModelsForConnection(connection)).rejects.toThrow(
+      "Failed to fetch",
+    )
+    expect(requests).toBe(4)
+  }
+})
+
+test("legacy editor discovery succeeds before rejection and caches for five minutes", async () => {
+  let now = 1000
+  Date.now = () => now
+  let requests = 0
+  const status = new ProtobufEncoder()
+  status.writeBytes(33, cachedCatalogPayload())
+  const legacyResponse = new ProtobufEncoder()
+  legacyResponse.writeMessage(1, status)
+  globalThis.fetch = (async (url) => {
+    requests++
+    return String(url).endsWith("GetCliModelConfigs") ?
+        new Response("", { status: 403 })
+      : new Response(legacyResponse.toUint8Array())
+  }) as typeof fetch
+  const connection = cachedCatalogConnection()
+  expect(
+    (await getWindsurfModelsForConnection(connection))[0]?.upstreamId,
+  ).toBe("swe-2-high")
+  expect(requests).toBe(2)
+  now += 299_999
+  await getWindsurfModelsForConnection(connection)
+  expect(requests).toBe(2)
+  now++
+  await getWindsurfModelsForConnection(connection)
+  expect(requests).toBe(4)
+})
+
+test("catalog cache evicts old scopes when its bounded capacity is exceeded", async () => {
+  let requests = 0
+  globalThis.fetch = (async () => {
+    requests++
+    return new Response(cachedCatalogPayload())
+  }) as unknown as typeof fetch
+  for (let index = 0; index < 257; index++) {
+    await getWindsurfModelsForConnection(
+      cachedCatalogConnection({ baseUrl: `https://cache-${index}.example` }),
+    )
+  }
+  expect(requests).toBe(257)
+  await getWindsurfModelsForConnection(
+    cachedCatalogConnection({ baseUrl: "https://cache-256.example" }),
+  )
+  expect(requests).toBe(257)
+  await getWindsurfModelsForConnection(
+    cachedCatalogConnection({ baseUrl: "https://cache-0.example" }),
+  )
+  expect(requests).toBe(258)
+})
+
+test("CLI catalog carries image booleans and limits through effort collapse", () => {
+  const response = new ProtobufEncoder()
+  for (const [id, images] of [
+    ["gemini-4-high", true],
+    ["glm-5-high", false],
+  ] as const) {
+    const model = new ProtobufEncoder()
+    model.writeString(1, id)
+    model.writeString(22, id)
+    if (images) model.writeBool(5, true)
+    model.writeVarint(18, 1048576)
+    const info = new ProtobufEncoder()
+    info.writeVarint(13, 64000)
+    model.writeMessage(23, info)
+    response.writeMessage(1, model)
+  }
+  const models = extractDevinCliModelMappingsFromPayload(
+    response.toUint8Array(),
+  )
+  expect(
+    models.find((m) => m.upstreamId === "gemini-4-high")?.metadata,
+  ).toMatchObject({
+    supportsImages: true,
+    contextWindow: 1048576,
+    outputLimit: 64000,
+  })
+  expect(
+    models.find((m) => m.upstreamId === "glm-5-high")?.metadata?.supportsImages,
+  ).toBe(false)
+})
+
+test("unsupported CLI discovery retains GetUserStatus's legacy editor identity and proxy", async () => {
+  const calls: string[] = []
+  globalThis.fetch = (async (url, init) => {
+    calls.push(String(url).split("/").at(-1)!)
+    expect((init as RequestInit & { proxy?: string }).proxy).toBe(
+      "http://proxy.example:8080",
+    )
+    if (calls.length === 1) return new Response("", { status: 404 })
+    const metadata = parseMessage(
+      parseMessage(init?.body as Uint8Array)[0]!.raw!,
+    )
+    expect(
+      new TextDecoder().decode(metadata.find((n) => n.field === 1)?.raw),
+    ).toBe("windsurf")
+    return new Response(new Uint8Array())
+  }) as typeof fetch
+  await getWindsurfModelsForConnection({
+    id: "catalog-test",
+    protocol: "windsurf-native",
+    baseUrl: "https://region.example",
+    proxyUrl: "http://proxy.example:8080",
+    credentials: [{ value: "cog_test" }],
+    metadata: { settings: { defaultModel: "swe-2" } },
+  } as unknown as ProviderConnection)
+  expect(calls).toEqual(["GetCliModelConfigs", "GetUserStatus"])
+})
+
+test("successful CLI catalog uses the key's host and CLI identity without editor fallback", async () => {
+  const response = new ProtobufEncoder()
+  const model = new ProtobufEncoder()
+  model.writeString(1, "SWE-2 High")
+  model.writeString(22, "swe-2-high")
+  response.writeMessage(1, model)
+  const calls: Array<{ url: string; body: Uint8Array }> = []
+  globalThis.fetch = (async (url, init) => {
+    calls.push({ url: String(url), body: init?.body as Uint8Array })
+    return new Response(response.toUint8Array())
+  }) as typeof fetch
+  const models = await getWindsurfModelsForConnection({
+    id: "cli-catalog-test",
+    protocol: "windsurf-native",
+    baseUrl: "https://region.example",
+    credentials: [{ value: "cog_catalog" }],
+  } as unknown as ProviderConnection)
+  expect(calls).toHaveLength(1)
+  expect(calls[0]?.url).toBe(
+    "https://region.example/exa.api_server_pb.ApiServerService/GetCliModelConfigs",
+  )
+  const metadata = parseMessage(parseMessage(calls[0]!.body)[0]!.raw!)
+  const textAt = (field: number) =>
+    new TextDecoder().decode(metadata.find((node) => node.field === field)?.raw)
+  expect(textAt(1)).toBe("devin-cli")
+  expect(textAt(3)).toBe("cog_catalog")
+  expect(textAt(28)).toBe("chisel")
+  expect(models[0]).toMatchObject({
+    upstreamId: "swe-2-high",
+    endpoints: ["chat", "messages"],
+  })
+})
 import { effortVariantIsExact, pickEffortVariant } from "~/lib/effort-variants"
 
 function buildCatalogEntry(options: {
@@ -174,7 +477,7 @@ test("extractWindsurfModelsFromPayload collapses thinking variants by family", (
       name: "Claude Opus 4.7",
       vendor: "Anthropic",
       pickerEnabled: true,
-      supportedEndpoints: ["/chat/completions"],
+      supportedEndpoints: ["/chat/completions", "/v1/messages"],
       provider: "windsurf",
       upstreamId: "claude-opus-4-7-medium",
     },
@@ -183,7 +486,7 @@ test("extractWindsurfModelsFromPayload collapses thinking variants by family", (
       name: "Gemini 3 Flash",
       vendor: "Google",
       pickerEnabled: true,
-      supportedEndpoints: ["/chat/completions"],
+      supportedEndpoints: ["/chat/completions", "/v1/messages"],
       provider: "windsurf",
       upstreamId: "MODEL_GOOGLE_GEMINI_3_0_FLASH_LOW",
     },
@@ -192,7 +495,7 @@ test("extractWindsurfModelsFromPayload collapses thinking variants by family", (
       name: "GPT-5.1-Codex",
       vendor: "OpenAI",
       pickerEnabled: true,
-      supportedEndpoints: ["/chat/completions"],
+      supportedEndpoints: ["/chat/completions", "/v1/messages"],
       provider: "windsurf",
       upstreamId: "MODEL_PRIVATE_9",
     },
@@ -201,7 +504,7 @@ test("extractWindsurfModelsFromPayload collapses thinking variants by family", (
       name: "SWE-1.6 Fast",
       vendor: "Windsurf",
       pickerEnabled: true,
-      supportedEndpoints: ["/chat/completions"],
+      supportedEndpoints: ["/chat/completions", "/v1/messages"],
       provider: "windsurf",
       upstreamId: "swe-1-6-fast",
     },

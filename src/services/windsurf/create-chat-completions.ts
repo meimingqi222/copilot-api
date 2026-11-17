@@ -10,15 +10,18 @@ import type {
   CopilotStreamEvent,
 } from "~/services/protocols/chat/types"
 import type { RequestExecutionContext } from "~/services/providers/runtime"
+import type { AnthropicMessagesPayload } from "~/services/protocols/anthropic/types"
 
-import { HTTPError } from "~/lib/error"
+import { HTTPError, LocalPayloadUnsupportedError } from "~/lib/error"
 import { currentLogContext } from "~/lib/log-context"
 import { WindsurfAttemptDiagnostics } from "~/services/windsurf/diagnostics"
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { isDebugLoggingEnabled, logger } from "~/lib/logger"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
 import { getRemainingCooldownSeconds } from "~/lib/rate-limit"
+import { state } from "~/lib/state"
 import { patchRequestLog } from "~/lib/request-log"
+import { connectionFetchInit } from "~/services/protocols/shared"
 import { isAbortError, sleep } from "~/lib/utils"
 import {
   resolveEffortRequestModel,
@@ -181,6 +184,8 @@ async function* decodeWindsurfFrames(
 }
 
 interface FetchOptions {
+  connection?: ProviderConnection
+  onSent?: (at: number) => void
   url: string
   headers: Record<string, string>
   body: Uint8Array
@@ -198,12 +203,17 @@ export async function fetchWithRetry(opts: FetchOptions): Promise<Response> {
       wireBytes: opts.body.byteLength,
     })
     try {
-      response = await fetch(opts.url, {
+      const init: RequestInit = {
         method: "POST",
         headers: opts.headers,
         body: opts.body,
         signal: opts.signal,
-      })
+      }
+      opts.onSent?.(Date.now())
+      response = await fetch(
+        opts.url,
+        opts.connection ? connectionFetchInit(opts.connection, init) : init,
+      )
     } catch (error) {
       opts.signal?.throwIfAborted()
       if (isAbortError(error)) throw error
@@ -311,6 +321,8 @@ async function* streamToOpenAI(
   let decodedDeltaCount = 0
   let nextCheckpointBytes = 1024 * 1024
   const thinkingSignatures = new WindsurfThinkingSignatures()
+  let replyText = ""
+  let replyTextOverflow = false
 
   // Hoisted: this is checked once per stream, not once per frame.
   const debugLogging = isDebugLoggingEnabled()
@@ -365,6 +377,9 @@ async function* streamToOpenAI(
       thinkingSignatures.accept(delta.kind, "text" in delta ? delta.text : "")
       switch (delta.kind) {
         case "content": {
+          if (replyText.length + delta.text.length <= 1024 * 1024)
+            replyText += delta.text
+          else replyTextOverflow = true
           yield emitEvent(
             chunkFromText({
               requestId,
@@ -491,6 +506,13 @@ async function* streamToOpenAI(
   }
 
   thinkingSignatures.accept("end")
+  if (cacheDebug && sawEndStream)
+    thinkingSignatures.rememberReply(
+      cacheDebug.cascadeId,
+      cacheDebug.requestModel ?? model,
+      [...toolIdToIndex.keys()],
+      replyTextOverflow ? "" : replyText,
+    )
   updateMemoryTrace(memoryTraceId, "windsurf_stream_decoded", {
     upstreamFrameCount,
     upstreamFrameBytes,
@@ -598,14 +620,32 @@ export async function createWindsurfChatCompletionsOnce(
   {
     connection,
     credential,
+    messagesPayload,
   }: {
     connection: ProviderConnection
     credential: ApiCredential
+    messagesPayload?: AnthropicMessagesPayload
   },
   payload: ChatCompletionsPayload,
   signal?: AbortSignal,
   ctx?: RequestExecutionContext,
 ): Promise<AsyncIterable<CopilotStreamEvent> | ChatCompletionResponse> {
+  // Messages may fall back to this Chat endpoint after native preflight fails.
+  if (
+    payload.messages.some(
+      (message) =>
+        Array.isArray(message.content)
+        && message.content.some(
+          (part) =>
+            part.type === "image_url"
+            && !part.image_url.url.startsWith("data:"),
+        ),
+    )
+  ) {
+    throw new LocalPayloadUnsupportedError(
+      "Devin does not support URL images; send base64 image blocks instead.",
+    )
+  }
   if (
     payload.response_format?.type === "json_object"
     || payload.response_format?.type === "json_schema"
@@ -614,7 +654,31 @@ export async function createWindsurfChatCompletionsOnce(
       payload,
       async (nativePayload) =>
         (await createWindsurfChatCompletionsOnce(
-          { connection, credential },
+          {
+            connection,
+            credential,
+            messagesPayload:
+              messagesPayload ?
+                {
+                  ...messagesPayload,
+                  tools: nativePayload.tools?.map((tool) => ({
+                    name: tool.function.name,
+                    description: tool.function.description,
+                    input_schema: tool.function.parameters ?? {},
+                  })),
+                  tool_choice:
+                    (
+                      nativePayload.tool_choice
+                      && typeof nativePayload.tool_choice === "object"
+                    ) ?
+                      {
+                        type: "tool",
+                        name: nativePayload.tool_choice.function.name,
+                      }
+                    : { type: "auto" },
+                }
+              : undefined,
+          },
           nativePayload,
           signal,
           ctx,
@@ -676,6 +740,8 @@ export async function createWindsurfChatCompletionsOnce(
   // same-turn retries reuse the first attempt's index instead of advancing
   // the counter with an identical payload.
   let attemptTurnIndex: number | undefined
+  let unsigned = false
+  let encoded = { signedThinking: false, estimatedTokens: 0 }
   const requestId = currentLogContext()?.req ?? randomUUID()
 
   try {
@@ -702,6 +768,12 @@ export async function createWindsurfChatCompletionsOnce(
               attempt = await createWindsurfAttempt({
                 connection,
                 payload,
+                messagesPayload,
+                unsigned,
+                onEncoded: (metrics) => {
+                  encoded = metrics
+                  attemptTurnIndex ??= metrics.turnIndex
+                },
                 signal: attemptSignal,
                 ctx,
                 settings: { apiKey, baseUrl: settings.baseUrl },
@@ -772,6 +844,41 @@ export async function createWindsurfChatCompletionsOnce(
       } catch (error) {
         attempt?.dispose()
         if (attempt) invalidateWindsurfAttemptAuthOnError(error, attempt)
+        if (
+          error instanceof WindsurfUpstreamError
+          && error.code === "invalid_argument"
+          && !signal?.aborted
+        ) {
+          if (!unsigned && encoded.signedThinking) {
+            unsigned = true
+            logger.warn(
+              "[windsurf] rejected thinking signature; retrying once without historical reasoning",
+              { accountId: connection.id, model: requestModel },
+            )
+            continue
+          }
+          const mapping = connection.models?.find(
+            (entry) =>
+              entry.publicId === payload.model
+              || entry.upstreamId === requestModel,
+          )
+          const window = Number(
+            mapping?.metadata?.contextWindow
+              ?? state.models?.data.find((entry) => entry.id === payload.model)
+                ?.capabilities.limits?.max_context_window_tokens
+              ?? 0,
+          )
+          if (window > 0 && encoded.estimatedTokens >= window / 2) {
+            throw new WindsurfUpstreamError(
+              {
+                kind: "invalid_request",
+                code: "invalid_argument",
+                message: `input is too long for the model's context: about ${encoded.estimatedTokens} tokens or more, for ${requestModel}'s window of ${window}; compact the conversation. ${error.message}`,
+              },
+              error.rawFrame,
+            )
+          }
+        }
         if (
           error instanceof WindsurfFirstFrameTimeoutError
           && attemptNumber <= firstFrameRetries

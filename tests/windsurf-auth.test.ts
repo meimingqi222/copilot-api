@@ -6,7 +6,7 @@ import {
   fetchDevinUserJwt,
   invalidateDevinUserJwtCache,
 } from "~/services/windsurf/auth"
-import { ProtobufEncoder } from "~/services/windsurf/protobuf"
+import { ProtobufEncoder, parseMessage } from "~/services/windsurf/protobuf"
 
 // Build a GetUserJwtResponse proto: { user_jwt=1, custom_api_server_url=2 }.
 function encodeGetUserJwtResponse(
@@ -42,6 +42,49 @@ function mockFetch(payload: Uint8Array, status = 200) {
 }
 
 describe("fetchDevinUserJwt", () => {
+  test("JWT cache isolates proxy scopes and invalidation", async () => {
+    const proxies: Array<unknown> = []
+    globalThis.fetch = (async (_url, init) => {
+      proxies.push((init as RequestInit & { proxy?: string }).proxy)
+      return new Response(encodeGetUserJwtResponse(`jwt-${proxies.length}`))
+    }) as typeof fetch
+    const base = { apiKey: "scoped-key", baseUrl: "https://auth.test" }
+    const first = { ...base, proxyUrl: "http://first.test" }
+    const second = { ...base, proxyUrl: "http://second.test" }
+    expect((await fetchDevinUserJwt(first)).userJwt).toBe("jwt-1")
+    expect((await fetchDevinUserJwt(second)).userJwt).toBe("jwt-2")
+    expect((await fetchDevinUserJwt(first)).userJwt).toBe("jwt-1")
+    invalidateDevinUserJwtCache(first)
+    expect((await fetchDevinUserJwt(second)).userJwt).toBe("jwt-2")
+    expect((await fetchDevinUserJwt(first)).userJwt).toBe("jwt-3")
+    expect(proxies).toEqual([first.proxyUrl, second.proxyUrl, first.proxyUrl])
+  })
+
+  test("GetUserJwt keeps service keys raw and uses the shared Connect identity", async () => {
+    globalThis.fetch = (async (_url, init) => {
+      const metadata = parseMessage(
+        parseMessage(init?.body as Uint8Array)[0]!.raw!,
+      )
+      expect(
+        new TextDecoder().decode(
+          metadata.find((node) => node.field === 3)?.raw,
+        ),
+      ).toBe("cog_auth_test")
+      expect(new Headers(init?.headers).get("user-agent")).toBe(
+        "connect-go/1.18.1 (go1.26.3)",
+      )
+      return new Response(encodeGetUserJwtResponse("service-jwt"))
+    }) as typeof fetch
+    expect(
+      (
+        await fetchDevinUserJwt({
+          apiKey: "cog_auth_test",
+          baseUrl: "https://server.codeium.com",
+        })
+      ).userJwt,
+    ).toBe("service-jwt")
+  })
+
   test("returns the userJwt from the response", async () => {
     mockFetch(encodeGetUserJwtResponse("short-lived-jwt"))
     const auth = await fetchDevinUserJwt({

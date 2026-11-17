@@ -19,6 +19,7 @@ import { createWindsurfChatCompletionsOnce } from "~/services/windsurf/create-ch
 import {
   ProtobufEncoder,
   encodeConnectFrame,
+  parseMessage,
 } from "~/services/windsurf/protobuf"
 import { loopbackTest } from "./helpers/loopback-test"
 
@@ -150,6 +151,146 @@ async function collectEvents(
 }
 
 describe("Windsurf first-frame resilience", () => {
+  test("connection proxy covers both JWT exchange and chat sends", async () => {
+    const sends: Array<{ url: string; proxy: unknown }> = []
+    globalThis.fetch = (async (url, init) => {
+      sends.push({
+        url: requestUrl(url),
+        proxy: (init as RequestInit & { proxy?: string }).proxy,
+      })
+      return new Response(
+        requestUrl(url).includes("GetUserJwt") ?
+          encodeAuthResponse("proxy-jwt")
+        : encodeTextFrame("proxied answer"),
+      )
+    }) as typeof fetch
+    const result = await createWindsurfChatCompletionsOnce(
+      {
+        connection: { ...connection, proxyUrl: "http://proxy.test:8123" },
+        credential,
+      },
+      { ...payload, stream: false },
+    )
+    expect(JSON.stringify(result)).toContain("proxied answer")
+    expect(sends.map((send) => send.url.split("/").at(-1))).toEqual([
+      "GetUserJwt",
+      "GetChatMessage",
+    ])
+    expect(sends.map((send) => send.proxy)).toEqual([
+      "http://proxy.test:8123",
+      "http://proxy.test:8123",
+    ])
+  })
+
+  test.each([false, true])(
+    "retries rejected signed thinking only once before output (stream=%s)",
+    async (stream) => {
+      const packets: Array<ReturnType<typeof parseMessage>> = []
+      globalThis.fetch = (async (url, init) => {
+        if (requestUrl(url).includes("GetUserJwt"))
+          return new Response(encodeAuthResponse("jwt"))
+        const framed = init!.body as Uint8Array
+        packets.push(
+          parseMessage(
+            framed[0] === 1 ?
+              Bun.gunzipSync(Buffer.from(framed.subarray(5)))
+            : framed.subarray(5),
+            0,
+            6,
+          ),
+        )
+        return packets.length === 1 ?
+            Response.json(
+              { code: "invalid_argument", message: "try a different model" },
+              { status: 400 },
+            )
+          : new Response(encodeTextFrame("recovered"))
+      }) as typeof fetch
+      const result = await createWindsurfChatCompletionsOnce(
+        { connection, credential },
+        {
+          ...payload,
+          stream,
+          messages: [
+            {
+              role: "assistant",
+              content: "Prior answer",
+              reasoning_text: "Unchanged thought",
+              signature: "foreign-signature",
+            },
+            { role: "user", content: "Next" },
+          ],
+        },
+      )
+      const output =
+        Symbol.asyncIterator in result ?
+          (await collectEvents(result)).join("")
+        : JSON.stringify(result)
+      expect(output).toContain("recovered")
+      expect(packets).toHaveLength(2)
+      const prompts = packets.map((nodes) =>
+        nodes
+          .filter((node) => node.field === 3)
+          .flatMap((node) => node.sub ?? []),
+      )
+      expect(prompts[0].some((node) => node.field === 12)).toBe(true)
+      expect(
+        prompts[1].some((node) => node.field === 11 || node.field === 12),
+      ).toBe(false)
+      const turnIndexes = packets.map(
+        (nodes) =>
+          nodes
+            .find((node) => node.field === 15)
+            ?.sub?.find((node) => node.field === 2)?.varint,
+      )
+      expect(turnIndexes[1]).toBe(turnIndexes[0])
+    },
+  )
+
+  test.each([1800, 2200])(
+    "only labels an invalid request as context-too-long near its known window (%s bytes)",
+    async (bytes) => {
+      let calls = 0
+      globalThis.fetch = (async (url) => {
+        if (requestUrl(url).includes("GetUserJwt"))
+          return new Response(encodeAuthResponse("jwt"))
+        calls++
+        const error = encodeConnectFrame(
+          new TextEncoder().encode(
+            JSON.stringify({
+              error: {
+                code: "invalid_argument",
+                message: "try a different model",
+              },
+            }),
+          ),
+          false,
+        )
+        error[0] = 2
+        return new Response(error)
+      }) as typeof fetch
+      const scoped = structuredClone(connection)
+      scoped.models![0].metadata = { contextWindow: 1000 }
+      let failure: unknown
+      try {
+        await createWindsurfChatCompletionsOnce(
+          { connection: scoped, credential },
+          {
+            ...payload,
+            messages: [{ role: "user", content: "a".repeat(bytes) }],
+          },
+        )
+      } catch (error) {
+        failure = error
+      }
+      expect(failure).toBeInstanceOf(Error)
+      expect((failure as Error).message.includes("input is too long")).toBe(
+        bytes === 2200,
+      )
+      expect(calls).toBe(1)
+    },
+  )
+
   for (const stream of [false, true]) {
     for (const stage of [
       "auth",

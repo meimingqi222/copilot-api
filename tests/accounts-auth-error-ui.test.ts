@@ -82,3 +82,201 @@ describe("账号卡片:认证失败可见", () => {
     }
   })
 })
+
+interface WindsurfAccount {
+  id: string
+  settings?: Record<string, unknown>
+}
+
+function windsurfView() {
+  const requests: Array<{ action: string; payload: unknown }> = []
+  let failUpdate = false
+  let timer: (() => Promise<void>) | undefined
+  const view = runInNewContext(
+    readFileSync(join(ROOT, "pages/js/usage-auto-refresh.js"), "utf8")
+      + "\n"
+      + readFileSync(join(ROOT, "pages/js/views/accounts.js"), "utf8")
+      + "\naccountsView()",
+    {
+      ViewHelpers: {},
+      I18n: { t: (key: string) => key },
+      setTimeout: (callback: () => Promise<void>) => {
+        timer = callback
+      },
+      clearTimeout: () => undefined,
+      API: {
+        accounts: {
+          create: (payload: unknown) => {
+            requests.push({ action: "create", payload })
+            return { status: "complete" }
+          },
+          update: (
+            id: string,
+            payload: { settings: Record<string, unknown> },
+          ) => {
+            requests.push({ action: id, payload })
+            if (failUpdate) throw new Error("Synthetic update failure")
+            return {
+              account: {
+                settings: { proxyUrl: "synthetic-proxy", ...payload.settings },
+              },
+            }
+          },
+        },
+        oauth: {
+          start: (_provider: string, payload: unknown) => {
+            requests.push({ action: "oauth", payload })
+            return { flowId: "synthetic-flow" }
+          },
+          complete: () => ({ status: "complete", accountId: "synthetic" }),
+          poll: () => ({ status: "complete", account: { id: "synthetic" } }),
+        },
+      },
+    },
+  ) as {
+    newAccount: {
+      provider: string
+      label: string
+      credentials: Record<string, unknown>
+      settings: Record<string, unknown>
+    }
+    providers: Array<{ id: string; authMode: string }>
+    reauthAccount: WindsurfAccount | null
+    deviceFlowStep: string
+    oauthFlowData: { flowId: string }
+    oauthCallbackInput: string
+    showToast: () => void
+    load: () => Promise<void>
+    startOAuthFlow: () => Promise<void>
+    setAccountFieldValue(
+      field: { key: string; type: string },
+      value: unknown,
+    ): void
+    getSubmitButtonText(): string
+    submitAccount(): Promise<void>
+    submitOAuthCallback(): Promise<void>
+    pollOAuthFlow(): void
+    setWindsurfCacheKeepalive(
+      account: WindsurfAccount,
+      enabled: boolean,
+    ): Promise<void>
+  }
+  view.newAccount.provider = "windsurf"
+  view.providers = [{ id: "windsurf", authMode: "oauth" }]
+  view.showToast = () => undefined
+  view.load = () => Promise.resolve()
+  return {
+    view,
+    requests,
+    fail: () => {
+      failUpdate = true
+    },
+    poll: async () => {
+      await timer?.()
+    },
+  }
+}
+
+test("Windsurf CLI import bypasses OAuth and preserves proxy and explicit keepalive", async () => {
+  const { view, requests } = windsurfView()
+  view.setAccountFieldValue({ key: "importCli", type: "checkbox" }, true)
+  view.setAccountFieldValue({ key: "cacheKeepalive", type: "checkbox" }, true)
+  view.newAccount.settings.proxyUrl = "synthetic-proxy"
+  expect(view.getSubmitButtonText()).toBe("accounts.saveAndImport")
+  await view.submitAccount()
+  expect(requests).toEqual([
+    {
+      action: "create",
+      payload: {
+        provider: "windsurf",
+        label: undefined,
+        credentials: { importCli: true },
+        settings: {
+          importCli: true,
+          cacheKeepalive: true,
+          proxyUrl: "synthetic-proxy",
+        },
+      },
+    },
+  ])
+  expect(view.deviceFlowStep).toBe("success")
+})
+
+test("Windsurf defaults to OAuth with keepalive off; reauth cannot import CLI", async () => {
+  const { view, requests } = windsurfView()
+  expect(view.newAccount.settings.cacheKeepalive).toBeUndefined()
+  view.newAccount.settings.proxyUrl = "  synthetic-proxy  "
+  await view.submitAccount()
+  expect(requests[0]?.payload).toMatchObject({ proxyUrl: "synthetic-proxy" })
+  view.newAccount.settings.importCli = true
+  view.reauthAccount = { id: "synthetic" }
+  await view.submitAccount()
+  expect(requests.map(({ action }) => action)).toEqual(["oauth", "oauth"])
+})
+
+test.each([false, true])(
+  "manual and polled OAuth preserve proxy and keepalive (%s)",
+  async (keepalive) => {
+    for (const manual of [false, true]) {
+      const { view, requests, poll } = windsurfView()
+      view.newAccount.settings = {
+        proxyUrl: "synthetic-proxy",
+        cacheKeepalive: keepalive,
+        importCli: false,
+      }
+      view.oauthFlowData = { flowId: "synthetic-flow" }
+      view.oauthCallbackInput = "synthetic-callback"
+      view.deviceFlowStep = "pending"
+      if (manual) await view.submitOAuthCallback()
+      else {
+        view.pollOAuthFlow()
+        await poll()
+      }
+      expect(requests).toEqual([
+        {
+          action: "synthetic",
+          payload: {
+            settings: {
+              proxyUrl: "synthetic-proxy",
+              cacheKeepalive: keepalive,
+            },
+          },
+        },
+      ])
+      expect(view.deviceFlowStep).toBe("success")
+    }
+  },
+)
+
+test("existing Windsurf account keepalive is opt-in and failed saves retain settings", async () => {
+  const { view, requests, fail } = windsurfView()
+  const account: WindsurfAccount = { id: "synthetic" }
+  await view.setWindsurfCacheKeepalive(account, true)
+  expect(account.settings).toEqual({
+    proxyUrl: "synthetic-proxy",
+    cacheKeepalive: true,
+  })
+  await view.setWindsurfCacheKeepalive(account, false)
+  expect(account.settings?.cacheKeepalive).toBe(false)
+  fail()
+  await view.setWindsurfCacheKeepalive(account, true)
+  expect(account.settings?.cacheKeepalive).toBe(false)
+  expect(requests).toHaveLength(3)
+})
+
+test("Windsurf controls render strict opt-in with bilingual safety hints", () => {
+  expect(html).toContain(':checked="account.settings?.cacheKeepalive === true"')
+  expect(html).toContain(
+    "x-text=\"field.descriptionKey ? t(field.descriptionKey) : ''\"",
+  )
+  for (const suffix of [
+    "importCli",
+    "importCliHint",
+    "cacheKeepalive",
+    "cacheKeepaliveHint",
+  ]) {
+    expect(i18n.split(`"accounts.provider.windsurf.${suffix}"`)).toHaveLength(3)
+  }
+  expect(i18n).toContain("consume real upstream tokens")
+  expect(i18n).toContain("usage is recorded")
+})

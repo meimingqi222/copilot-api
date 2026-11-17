@@ -8,7 +8,7 @@ Status: implemented
 
 ## Decision
 
-The test mocks `globalThis.fetch` for the duration of the request: any call to `api.windsurf.com` answers `503` immediately, every other call passes through to the original fetch, and the original is restored in a `finally`. A 503 is the documented path where `refreshModelsForConnection` keeps the connection's fallback models — exactly the state this test asserts on — so the mock removes the network dependency without changing what the test covers.
+The test mocks `globalThis.fetch` for the duration of the request. JSON `GetUserStatus` identity returns a synthetic profile; protobuf `GetCliModelConfigs` and the legacy editor `GetUserStatus` catalog probes return `503` immediately. Unexpected RPCs fail rather than escaping to the real network, and the original fetch is restored in `finally`. A failed catalog refresh keeps the connection's fallback models, exactly the state this test asserts on.
 
 ## Alternatives considered
 

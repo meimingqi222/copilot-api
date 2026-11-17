@@ -15,6 +15,13 @@ describe("normalizeDevinApiKey", () => {
     expect(normalizeDevinApiKey("abc123")).toBe("devin-session-token$abc123")
   })
 
+  test("service keys stay raw in the wire metadata", () => {
+    expect(normalizeDevinApiKey("cog_test")).toBe("cog_test")
+    expect(
+      metadataFields(buildWindsurfClientMetadata("cog_test")),
+    ).toContainEqual({ field: 3, text: "cog_test" })
+  })
+
   test("leaves an already-prefixed token unchanged", () => {
     expect(normalizeDevinApiKey("devin-session-token$abc123")).toBe(
       "devin-session-token$abc123",
@@ -39,11 +46,11 @@ describe("buildWindsurfClientMetadata", () => {
     const fields = metadataFields(buildWindsurfClientMetadata("tok"))
     const byField = new Map(fields.map((f) => [f.field, f.text]))
     expect(byField.get(1)).toBe("devin-cli") // ide_name
-    expect(byField.get(2)).toBe("3000.10.21") // extension_version
+    expect(byField.get(2)).toBe("3000.11.3") // extension_version
     expect(byField.get(3)).toBe("devin-session-token$tok") // api_key
     expect(byField.get(4)).toBe("en") // locale
     expect(byField.get(5)).toBe(DEVIN_CLI_IDENTITY.os) // os
-    expect(byField.get(7)).toBe("3000.10.21") // ide_version
+    expect(byField.get(7)).toBe("3000.11.3") // ide_version
     expect(byField.get(12)).toBe("chisel") // extension_name
     expect(byField.get(28)).toBe("chisel") // ide_type
   })

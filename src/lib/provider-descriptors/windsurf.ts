@@ -20,13 +20,31 @@ export const providerMetadata = defineProviderMetadata({
     name: "Windsurf",
     icon: "wind",
     authMode: "oauth",
-    features: ["quota", "cooldown", "oauth", "model_discovery"],
+    features: [
+      "quota",
+      "cooldown",
+      "oauth",
+      "model_discovery",
+      "native_messages",
+    ],
     // Devin/Windsurf sign-in is the primary path (PKCE OAuth against
     // app.devin.ai). The provider deliberately stays out of
     // `OAUTH_PROVIDER_IDS` (see `provider-strategies.ts`) so legacy
     // direct-token classification is untouched; a session token can still be
     // pasted through the OAuth flow's manual completion.
     accountFields: [
+      {
+        key: "importCli",
+        type: "checkbox",
+        labelKey: "accounts.provider.windsurf.importCli",
+        descriptionKey: "accounts.provider.windsurf.importCliHint",
+      },
+      {
+        key: "cacheKeepalive",
+        type: "checkbox",
+        labelKey: "accounts.provider.windsurf.cacheKeepalive",
+        descriptionKey: "accounts.provider.windsurf.cacheKeepaliveHint",
+      },
       {
         key: "proxyUrl",
         type: "url",

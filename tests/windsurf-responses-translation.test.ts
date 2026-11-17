@@ -116,6 +116,61 @@ const connection: ProviderConnection = {
   ],
 }
 
+test.each([
+  { stream: false, toolResult: false },
+  { stream: true, toolResult: false },
+  { stream: false, toolResult: true },
+  { stream: true, toolResult: true },
+])(
+  "native Messages rejects URL images before auth (stream=$stream toolResult=$toolResult)",
+  async ({ stream, toolResult }) => {
+    upsertProviderConnection({
+      ...structuredClone(connection),
+      models: connection.models!.map((model) => ({
+        ...model,
+        endpoints: ["chat", "messages"],
+      })),
+    })
+    cacheModels()
+    let fetches = 0
+    globalThis.fetch = (async () => {
+      fetches++
+      throw new Error("URL images must not reach upstream")
+    }) as unknown as typeof fetch
+    const image = {
+      type: "image" as const,
+      source: { type: "url" as const, url: "https://images.invalid/test.png" },
+    }
+    const response = await server.request("http://localhost/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "deepseek-v4-1-flash",
+        max_tokens: 100,
+        stream,
+        messages: [
+          {
+            role: "user",
+            content:
+              toolResult ?
+                [
+                  {
+                    type: "tool_result",
+                    tool_use_id: "call_image",
+                    content: [image],
+                  },
+                ]
+              : [{ type: "text", text: "Describe this image" }, image],
+          },
+        ],
+      }),
+    })
+    expect(response.status).toBe(422)
+    expect(await response.text()).toContain("Devin does not support URL images")
+    expect(fetches).toBe(0)
+  },
+)
+
 beforeEach(async () => {
   await fs.mkdir("temp", { recursive: true })
   testDir = await fs.mkdtemp(path.resolve("temp/windsurf-responses-"))
@@ -210,16 +265,21 @@ afterEach(async () => {
   await fs.rm(testDir, { recursive: true, force: true })
 })
 
-test.each([false, true])(
-  "Messages preserves Devin thinking blocks and their signature types through tool replay (stream=%s)",
-  async (stream) => {
+test.each([
+  { stream: false, native: false },
+  { stream: true, native: false },
+  { stream: false, native: true },
+  { stream: true, native: true },
+])(
+  "Messages preserves Devin thinking blocks and their signature types through tool replay (stream=$stream native=$native)",
+  async ({ stream, native }) => {
     const claude = structuredClone(connection)
     claude.models = [
       {
         ...connection.models![0],
         publicId: "claude-opus-5-5",
         upstreamId: "claude-opus-5-5",
-        endpoints: ["chat"],
+        endpoints: native ? ["chat", "messages"] : ["chat"],
       },
     ]
     upsertProviderConnection(claude)
@@ -254,6 +314,13 @@ test.each([false, true])(
     const request = {
       model: "claude-opus-5-5",
       max_tokens: 1024,
+      system: [
+        {
+          type: "text",
+          text: "Stable instructions",
+          cache_control: { type: "ephemeral" },
+        },
+      ],
       tools: [
         {
           name: "read_file",
@@ -271,6 +338,18 @@ test.each([false, true])(
       body: JSON.stringify({ ...request, stream }),
     })
     expect(response.status).toBe(200)
+    if (native) {
+      const upstreamPrompts = packets[0]
+        .filter((node) => node.field === 3)
+        .map((node) => node.sub!)
+      expect(
+        upstreamPrompts.some(
+          (fields) =>
+            fieldText(fields, 3) === "Stable instructions"
+            && fields.some((node) => node.field === 8),
+        ),
+      ).toBe(true)
+    }
     let content: Array<Record<string, unknown>>
     if (!stream)
       content = (
@@ -381,6 +460,87 @@ test.each([false, true])(
     ).toBe(true)
   },
 )
+
+test("Gemini tool replay restores an omitted thought only for the original conversation and model", async () => {
+  const gemini = structuredClone(connection)
+  gemini.models = [
+    {
+      ...connection.models![0],
+      publicId: "gemini-test",
+      upstreamId: "gemini-test",
+    },
+  ]
+  upsertProviderConnection(gemini)
+  cacheModels()
+  const thought = new ProtobufEncoder()
+  thought.writeString(21, "gemini")
+  thought.writeString(10, "gemini-signed-tool")
+  const call = new ProtobufEncoder()
+  call.writeString(1, "gemini-call")
+  call.writeString(2, "read_file")
+  call.writeString(3, "{}")
+  thought.writeMessage(6, call)
+  thought.writeVarint(5, 10)
+  const eos = encodeConnectFrame(new TextEncoder().encode("{}"), false)
+  eos[0] = 2
+  thinkingReply = Buffer.concat([
+    encodeConnectFrame(thought.toUint8Array(), false),
+    eos,
+  ])
+  const response = await server.request(
+    "http://localhost/v1/chat/completions",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "gemini-test",
+        messages: [{ role: "user", content: "Read" }],
+      }),
+    },
+  )
+  expect(response.status).toBe(200)
+  await response.text()
+  const cascadeId = fieldText(packets[0], 16)!
+  for (const [scope, model, expected] of [
+    [cascadeId, "gemini-test", "gemini-signed-tool"],
+    ["other-account-conversation", "gemini-test", undefined],
+    [cascadeId, "gemini-other", undefined],
+  ] as const) {
+    const framed = await buildRequest({
+      apiKey: "test-key",
+      requestModel: model,
+      cascadeId: scope,
+      payload: {
+        model,
+        messages: [
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "gemini-call",
+                type: "function",
+                function: { name: "read_file", arguments: "{}" },
+              },
+            ],
+          },
+          { role: "tool", tool_call_id: "gemini-call", content: "file" },
+        ],
+      },
+    })
+    const fields = parseMessage(
+      framed[0] === 1 ?
+        Bun.gunzipSync(Buffer.from(framed.subarray(5)))
+      : framed.subarray(5),
+      0,
+      6,
+    )
+    const assistant = fields.find((node) => node.field === 3)!.sub!
+    expect(fieldText(assistant, 12)).toBe(expected)
+    expect(fieldText(assistant, 18)).toBe(expected ? "gemini" : undefined)
+    expect(fieldText(assistant, 22)).toBe(expected ? model : undefined)
+  }
+})
 
 test("chained Responses deltas are rejected before a stateless Windsurf request", async () => {
   const response = await server.request("http://localhost/v1/responses", {

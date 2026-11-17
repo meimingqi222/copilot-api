@@ -1,4 +1,4 @@
-import { ProtobufEncoder } from "./protobuf"
+import { ProtobufEncoder } from "~/services/windsurf/protobuf"
 
 const DEVIN_SESSION_TOKEN_PREFIX = "devin-session-token$"
 
@@ -61,9 +61,9 @@ interface WindsurfClientIdentity {
  */
 export const DEVIN_CLI_IDENTITY: WindsurfClientIdentity = {
   ideName: "devin-cli",
-  ideVersion: "3000.10.21",
+  ideVersion: "3000.11.3",
   extensionName: "chisel",
-  extensionVersion: "3000.10.21",
+  extensionVersion: "3000.11.3",
   ideType: "chisel",
   os: devinOs(),
 }
@@ -71,12 +71,9 @@ export const DEVIN_CLI_IDENTITY: WindsurfClientIdentity = {
 /**
  * Legacy Windsurf editor identity, used for the model catalog only.
  *
- * Catalog reads stay on this tuple because this proxy gets its roster from
- * `GetUserStatus` rather than from `GetCliModelConfigs` (the RPC the reference
- * implementations gate on the CLI identity), and the editor identity is the
- * one that has always returned the full credential-scoped roster here — legacy
- * Enterprise seats are documented to publish theirs only to it (oh-my-pi
- * `packages/catalog/src/discovery/devin.ts`). Chat and quota use
+ * The fallback `GetUserStatus` catalog stays on this tuple: legacy
+ * Enterprise seats can publish their roster only to the editor identity.
+ * Primary `GetCliModelConfigs` discovery, chat and quota use
  * `DEVIN_CLI_IDENTITY` instead.
  */
 export const WINDSURF_EDITOR_IDENTITY: WindsurfClientIdentity = {
@@ -87,11 +84,15 @@ export const WINDSURF_EDITOR_IDENTITY: WindsurfClientIdentity = {
 }
 
 /**
- * Normalize a Windsurf/Devin API key to the `devin-session-token$<jwt>` format
- * that the Codeium server expects in Metadata.api_key (field 3).
+ * Session tokens use `devin-session-token$<jwt>` in Metadata.api_key (field 3).
+ * Devin service API keys (`cog_`) are already complete and must remain raw.
  */
 export function normalizeDevinApiKey(apiKey: string): string {
-  if (apiKey.startsWith(DEVIN_SESSION_TOKEN_PREFIX)) return apiKey
+  if (
+    apiKey.startsWith(DEVIN_SESSION_TOKEN_PREFIX)
+    || apiKey.startsWith("cog_")
+  )
+    return apiKey
   return `${DEVIN_SESSION_TOKEN_PREFIX}${apiKey}`
 }
 

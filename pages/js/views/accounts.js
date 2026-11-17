@@ -591,6 +591,9 @@ function accountsView() {
     },
 
     getSubmitButtonText() {
+      if (this.isWindsurfCliImport()) {
+        return I18n.t("accounts.saveAndImport")
+      }
       const meta = this.getProviderMeta(this.newAccount.provider)
       if (meta.hasManualMode && this.authMethodTab === "manual") {
         if (meta.importMethod === "pat") return I18n.t("accounts.pat.login")
@@ -690,6 +693,14 @@ function accountsView() {
       return Boolean(this.reauthAccount)
     },
 
+    isWindsurfCliImport() {
+      return (
+        this.newAccount.provider === "windsurf"
+        && !this.isReauthFlow()
+        && this.getAccountFieldValue({ key: "importCli" }) === true
+      )
+    },
+
     async closeAddModal() {
       if (this.deviceFlowStep === "pending") {
         await this.cancelOAuthFlow()
@@ -703,7 +714,8 @@ function accountsView() {
       this.pollTimer = null
       try {
         const authMode = this.selectedProvider()?.authMode
-        if (authMode === "oauth" && !forceManual) {
+        const importCli = this.isWindsurfCliImport()
+        if (authMode === "oauth" && !forceManual && !importCli) {
           try {
             await this.startOAuthFlow()
           } catch (error) {
@@ -729,6 +741,7 @@ function accountsView() {
             ),
           ),
         }
+        if (importCli) payload.credentials.importCli = true
         const res = await API.accounts.create(payload)
         if (this.selectedProvider()?.authMode === "device_flow") {
           if (!res?.flowId || !res?.userCode || !res?.verificationUri) {
@@ -822,6 +835,25 @@ function accountsView() {
       this.pollOAuthFlow()
     },
 
+    async finishOAuthAccount(result) {
+      // OAuth start accepts proxyUrl, not arbitrary settings. Apply the paid
+      // opt-in only after authentication, for both manual and polled completion.
+      if (this.newAccount.provider === "windsurf") {
+        const accountId = result.accountId || result.account?.id
+        if (!accountId) throw new Error("Missing OAuth account ID")
+        const { importCli: _importCli, ...settings } =
+          this.newAccount.settings || {}
+        await API.accounts.update(accountId, {
+          settings: {
+            ...settings,
+            cacheKeepalive: settings.cacheKeepalive === true,
+          },
+        })
+      }
+      this.deviceFlowStep = "success"
+      await this.load()
+    },
+
     async submitOAuthCallback() {
       const provider = this.newAccount.provider
       const flowId = this.oauthFlowData?.flowId
@@ -843,8 +875,7 @@ function accountsView() {
           callback,
         })
         if (res.status === "complete") {
-          this.deviceFlowStep = "success"
-          await this.load()
+          await this.finishOAuthAccount(res)
           return
         }
         throw new Error(res.error || "OAuth completion failed")
@@ -871,8 +902,7 @@ function accountsView() {
         try {
           const res = await API.oauth.poll(provider, flowId)
           if (res.status === "complete") {
-            this.deviceFlowStep = "success"
-            await this.load()
+            await this.finishOAuthAccount(res)
             return
           }
           if (res.status === "error") {
@@ -963,6 +993,18 @@ function accountsView() {
      */
     isXaiUsingApi(account) {
       return account.settings?.useApi === true
+    },
+
+    async setWindsurfCacheKeepalive(account, enabled) {
+      try {
+        const result = await API.accounts.update(account.id, {
+          settings: { cacheKeepalive: enabled === true },
+        })
+        account.settings = result.account.settings
+        this.showToast(I18n.t("accounts.updateSuccess"), "success")
+      } catch {
+        this.showToast(I18n.t("error.update"), "error")
+      }
     },
 
     /**

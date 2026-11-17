@@ -6,6 +6,7 @@
  */
 
 import { createWindsurfChatCompletionsOnce } from "~/services/windsurf/create-chat-completions"
+import { createWindsurfMessagesOnce } from "~/services/windsurf/create-messages"
 
 import { createOnceAdapter } from "./once-adapter"
 
@@ -13,4 +14,5 @@ export const windsurfNativeAdapter = createOnceAdapter({
   protocol: "windsurf-native",
   resolveDispatchModel: (target) => target.publicModelId,
   chat: createWindsurfChatCompletionsOnce,
+  messages: createWindsurfMessagesOnce,
 })

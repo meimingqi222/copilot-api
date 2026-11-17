@@ -14,11 +14,15 @@
 import { gunzipSync } from "node:zlib"
 
 import { readResponseBytes } from "~/lib/request-body"
+import { oauthFetch } from "~/services/oauth/fetch"
 
-import { normalizeWindsurfBaseUrl } from "./base-url"
-import { getWindsurfUserJwtCacheTtlMs } from "./config"
-import { buildWindsurfClientMetadata } from "./metadata"
-import { ProtobufEncoder, parseMessage } from "./protobuf"
+import { normalizeWindsurfBaseUrl } from "~/services/windsurf/base-url"
+import { getWindsurfUserJwtCacheTtlMs } from "~/services/windsurf/config"
+import {
+  buildWindsurfClientMetadata,
+  WINDSURF_CONNECT_USER_AGENT,
+} from "~/services/windsurf/metadata"
+import { ProtobufEncoder, parseMessage } from "~/services/windsurf/protobuf"
 
 const DEVIN_AUTH_PATH = "/exa.auth_pb.AuthService/GetUserJwt"
 const MAX_AUTH_RESPONSE_BYTES = 1024 * 1024
@@ -41,11 +45,19 @@ const JWT_EXPIRY_SKEW_MS = 30_000
 const MAX_AUTH_CACHE_ENTRIES = 1024
 const authCache = new Map<string, CachedDevinAuth>()
 
-function authCacheKey(apiKey: string, baseUrl: string): string {
+function authCacheKey(
+  apiKey: string,
+  baseUrl: string,
+  proxyUrl?: string,
+): string {
   // Raw composite key: the apiKey already lives in memory on the connection,
   // so hashing it per request (a SHA256 on every chat call) only burns CPU
   // to avoid holding a string we already hold.
-  return `${normalizeWindsurfBaseUrl(baseUrl)}\0${apiKey}`
+  return JSON.stringify([
+    normalizeWindsurfBaseUrl(baseUrl),
+    apiKey,
+    proxyUrl ?? "",
+  ])
 }
 
 function readJwtExpiryMs(jwt: string): number | undefined {
@@ -99,8 +111,9 @@ function cacheAuthResult(
 export function invalidateDevinUserJwtCache(opts: {
   apiKey: string
   baseUrl: string
+  proxyUrl?: string
 }): void {
-  authCache.delete(authCacheKey(opts.apiKey, opts.baseUrl))
+  authCache.delete(authCacheKey(opts.apiKey, opts.baseUrl, opts.proxyUrl))
 }
 
 export function clearDevinUserJwtCacheForTest(): void {
@@ -138,6 +151,7 @@ function decodeGetUserJwtResponse(payload: Uint8Array): {
 async function fetchDevinUserJwtUncached(opts: {
   apiKey: string
   baseUrl: string
+  proxyUrl?: string
   signal?: AbortSignal
 }): Promise<DevinAuthMetadata> {
   const { apiKey, signal } = opts
@@ -148,16 +162,21 @@ async function fetchDevinUserJwtUncached(opts: {
   outer.writeMessage(1, requestMetadata)
   const requestBody = outer.toUint8Array()
 
-  const response = await fetch(`${baseUrl}${DEVIN_AUTH_PATH}`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/proto",
-      "connect-protocol-version": "1",
-      accept: "*/*",
+  const response = await oauthFetch(
+    `${baseUrl}${DEVIN_AUTH_PATH}`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/proto",
+        "connect-protocol-version": "1",
+        "user-agent": WINDSURF_CONNECT_USER_AGENT,
+        accept: "*/*",
+      },
+      body: requestBody,
+      signal,
     },
-    body: requestBody,
-    signal,
-  })
+    { proxyUrl: opts.proxyUrl },
+  )
 
   const payload = await readResponseBytes(response, MAX_AUTH_RESPONSE_BYTES)
   if (!response.ok) {
@@ -192,6 +211,7 @@ async function fetchDevinUserJwtUncached(opts: {
 export async function fetchDevinUserJwt(opts: {
   apiKey: string
   baseUrl: string
+  proxyUrl?: string
   signal?: AbortSignal
 }): Promise<DevinAuthMetadata> {
   const ttlMs = getWindsurfUserJwtCacheTtlMs()
@@ -200,7 +220,7 @@ export async function fetchDevinUserJwt(opts: {
     return { ...value, cacheStatus: "miss" }
   }
 
-  const key = authCacheKey(opts.apiKey, opts.baseUrl)
+  const key = authCacheKey(opts.apiKey, opts.baseUrl, opts.proxyUrl)
   const cached = authCache.get(key)
   if (cached && cached.expiresAt > Date.now()) {
     return { ...cached.value, cacheStatus: "hit" }

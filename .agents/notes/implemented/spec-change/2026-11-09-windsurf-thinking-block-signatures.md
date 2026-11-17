@@ -49,11 +49,30 @@ non-default signature types; defaulting matches Magpie but is not a promise of
 cross-process lossless replay. Tests use synthetic Connect frames through the
 real adapter/routes, not live vendor acceptance or measured reasoning quality.
 
+Gemini tool thought signatures are also retained by call ID (or normalized text
+for replies without calls), scoped to the account-derived cascade and exact
+upstream SKU. Replay writes the signature, `gemini` type and model UID together;
+different conversations/models cannot borrow them. Retention remains bounded by
+entries and bytes and requires a completed upstream EOS. It does not persist
+across restarts. Native Messages bypasses flattened Chat request history while
+still using the shared ordered response codecs.
+
+If an actually encoded signed history is rejected with `invalid_argument`
+before output, the adapter retries once without that history's reasoning or
+signatures. It reuses the turn ordinal captured before fetch, including HTTP
+rejections. This explicit recovery does not relax normal signature matching.
+A further invalid request estimated at least half a known context window is
+reported as context-too-long for client compaction; unknown windows and smaller
+requests keep their original rejection. Estimates are not usage accounting.
+
 ## Verification
 
 - `tests/windsurf-proto-compare.test.ts::keeps interleaved thinking signatures on separate upstream prompts`
 - `tests/windsurf-collect-parity.test.ts::actual adapter preserves per-block thinking signatures`
 - `tests/windsurf-responses-translation.test.ts::Messages preserves Devin thinking blocks and their signature types through tool replay`
+- `tests/windsurf-responses-translation.test.ts::Gemini tool replay restores an omitted thought only for the original conversation and model`
+- `tests/windsurf-first-frame.test.ts::retries rejected signed thinking only once before output`
+- `tests/windsurf-first-frame.test.ts::only labels an invalid request as context-too-long near its known window`
 
 Proved: Pre-fix request regression received merged text and concatenated
 signature instead of two prompts; output is saved in

@@ -330,26 +330,27 @@ test("GET /admin/api/providers returns registered provider descriptors", async (
 test("POST /admin/api/accounts creates a windsurf account with direct credentials", async () => {
   const originalFetch = globalThis.fetch
   let catalogRequests = 0
-  // Creating the account refreshes the model catalog against Windsurf's real
-  // `GetUserStatus` endpoint. Under full-suite load that network attempt is
-  // what overran the 5s test budget — and it made the result depend on
-  // reachability. Mock it: an upstream error is the documented path where
-  // `refreshModelsForConnection` keeps the connection's fallback models, which
-  // is exactly the state this test asserts on.
-  globalThis.fetch = (async (input: string | URL | Request) => {
+  // Identity and both catalog probes stay offline. A failed catalog refresh
+  // keeps fallback models, which is the creation behavior this test covers.
+  globalThis.fetch = (async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => {
     const url =
       typeof input === "string" ? input
       : input instanceof URL ? input.href
       : input.url
-    // Match the RPC, since Windsurf may use codeium.com or a regional host.
+    const rpc = new URL(url).pathname.split("/").at(-1)
     if (
-      new URL(url).pathname
-      === "/exa.seat_management_pb.SeatManagementService/GetUserStatus"
-    ) {
+      rpc === "GetUserStatus"
+      && new Headers(init?.headers).get("Content-Type") === "application/json"
+    )
+      return Response.json({ userStatus: { email: "test@example.invalid" } })
+    if (rpc === "GetUserStatus" || rpc === "GetCliModelConfigs") {
       catalogRequests++
       return new Response("unreachable in tests", { status: 503 })
     }
-    return originalFetch(input as never)
+    throw new Error(`Unexpected upstream RPC: ${rpc}`)
   }) as typeof fetch
 
   try {
@@ -371,7 +372,7 @@ test("POST /admin/api/accounts creates a windsurf account with direct credential
     )
 
     expect(response.status).toBe(200)
-    expect(catalogRequests).toBe(1)
+    expect(catalogRequests).toBe(2)
     const body = (await response.json()) as {
       status: string
       account: { provider: string; label: string }

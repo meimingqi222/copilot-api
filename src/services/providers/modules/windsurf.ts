@@ -1,6 +1,7 @@
 import { windsurfCallbackConfig } from "~/services/providers/callbacks/windsurf"
 import { windsurfAccountCreation } from "~/services/providers/account-creation/windsurf"
 import { getProviderDescriptor } from "~/lib/provider-descriptors"
+import { getConnectionSettings } from "~/lib/provider-connections"
 import type { ProviderModule } from "~/services/providers/module"
 import { windsurfNativeAdapter } from "~/services/protocols/windsurf-native"
 import { windsurfProviderRuntime } from "~/services/providers/windsurf"
@@ -42,21 +43,25 @@ const windsurfStrategy: OAuthProviderStrategy = {
     // Headless manual paste may carry a session token directly
     // (CPA `parseDevinManualPaste` parity): skip the code exchange.
     const pasted = code.trim()
-    const sessionToken =
+    const bundle =
       isWindsurfSessionToken(pasted) ?
-        formatWindsurfSessionToken(pasted)
-      : formatWindsurfSessionToken(
-          await exchangeWindsurfCodeForToken(
-            pasted,
-            flow.pkce.codeVerifier,
-            flowFetchOptions(flow),
-          ),
+        { sessionToken: formatWindsurfSessionToken(pasted) }
+      : await exchangeWindsurfCodeForToken(
+          pasted,
+          flow.pkce.codeVerifier,
+          flowFetchOptions(flow),
+          flow.redirectUri,
         )
+    const settings = getConnectionSettings(conn) as
+      | { baseUrl?: string }
+      | undefined
     const profile = await fetchWindsurfSelfProfile(
-      sessionToken,
+      bundle.sessionToken,
       flowFetchOptions(flow),
+      settings?.baseUrl,
     )
-    applyWindsurfOAuthBundle(conn, { sessionToken, ...profile })
+    applyWindsurfOAuthBundle(conn, { ...bundle, ...profile })
+    if (flow.label) conn.name = flow.label
     return conn
   },
 }

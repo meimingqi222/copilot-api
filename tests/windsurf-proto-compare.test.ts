@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test"
 
 import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
+import type { AnthropicMessagesPayload } from "~/services/protocols/anthropic/types"
 
 import { parseMessage } from "~/services/windsurf/protobuf"
 import {
@@ -61,6 +62,157 @@ function assistantMessageString(
   const node = message?.sub?.find((n) => n.field === field)
   return node?.raw ? new TextDecoder().decode(node.raw) : undefined
 }
+
+describe("Devin Messages prompt boundaries", () => {
+  test("keeps mid-history notices behind pending results and sniffs image bytes", async () => {
+    const framed = await buildRequest({
+      apiKey: "test",
+      requestModel: "gemini-test",
+      cascadeId: "notice",
+      payload: {
+        model: "gemini-test",
+        messages: [
+          { role: "system", content: "Initial instruction" },
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "read",
+                type: "function",
+                function: { name: "read", arguments: "{}" },
+              },
+            ],
+          },
+          { role: "system", content: "Notice after call" },
+          {
+            role: "tool",
+            tool_call_id: "read",
+            content: [
+              { type: "text", text: "File result" },
+              {
+                type: "image_url",
+                image_url: { url: "data:image/jpeg;base64,iVBORw0KGgo=" },
+              },
+            ],
+          },
+          { role: "user", content: "Next" },
+        ],
+      },
+    })
+    const fields = parseMessage(decodeFramedPayload(framed), 0, 0)
+    const prompts = fields
+      .filter((node) => node.field === 3)
+      .map((node) => parseMessage(node.raw!, 0, 0))
+    const text = (nodes: typeof fields, field: number) =>
+      new TextDecoder().decode(nodes.find((node) => node.field === field)?.raw)
+    expect(text(fields, 2)).toBe("Initial instruction")
+    expect(prompts.map((nodes) => text(nodes, 3))).toEqual([
+      "",
+      "File result",
+      "Notice after call",
+      "Next",
+    ])
+    const image = parseMessage(
+      prompts[1].find((node) => node.field === 10)!.raw!,
+      0,
+      0,
+    )
+    expect(text(image, 2)).toBe("image/png")
+  })
+
+  test("retains system and text cache boundaries and repairs interrupted tools in order", async () => {
+    const messagesPayload: AnthropicMessagesPayload = {
+      model: "claude-test",
+      max_tokens: 77,
+      system: [
+        {
+          type: "text",
+          text: "x-anthropic-billing-header: changing\n\nStable",
+          cache_control: { type: "ephemeral" },
+        },
+        { type: "text", text: "Second instruction" },
+      ],
+      tools: [
+        {
+          name: "read",
+          description: "Long description ".repeat(700),
+          input_schema: { type: "object" },
+        },
+      ],
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "First" },
+            {
+              type: "text",
+              text: "Second",
+              cache_control: { type: "ephemeral" },
+            },
+          ],
+        },
+        {
+          role: "assistant",
+          content: [
+            { type: "tool_use", id: "call-A", name: "read", input: {} },
+            { type: "tool_use", id: "call-B", name: "read", input: {} },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "call-B",
+              content: "denied",
+              is_error: true,
+            },
+            { type: "text", text: "Continue" },
+          ],
+        },
+      ],
+    }
+    const framed = await buildRequest({
+      payload: {
+        model: "claude-test",
+        messages: [{ role: "user", content: "flattened fallback" }],
+      },
+      messagesPayload,
+      apiKey: "test-key",
+      requestModel: "claude-test",
+      cascadeId: "native-boundaries",
+      turnIndex: 0,
+    })
+    const fields = parseMessage(decodeFramedPayload(framed), 0, 0)
+    const prompts = fields
+      .filter((node) => node.field === 3)
+      .map((node) => parseMessage(node.raw!, 0, 0))
+    const text = (nodes: typeof fields, field: number) =>
+      new TextDecoder().decode(nodes.find((node) => node.field === field)?.raw)
+    expect(prompts.map((nodes) => text(nodes, 3))).toEqual([
+      expect.stringContaining("Long description ".repeat(700).trim()),
+      "Stable",
+      "Second instruction",
+      "First",
+      "Second",
+      "",
+      "Error: denied",
+      "Tool use was interrupted and did not produce a result.",
+      "Continue",
+    ])
+    expect(
+      prompts.map((nodes) => nodes.some((node) => node.field === 8)),
+    ).toEqual([false, true, false, false, true, false, false, false, false])
+    expect(text(prompts[6], 7)).toBe("call-B")
+    expect(text(prompts[7], 7)).toBe("call-A")
+    const tools = fields.filter((node) => node.field === 10)
+    expect(text(parseMessage(tools[0].raw!, 0, 0), 2)).toContain(
+      "<tool_descriptions>",
+    )
+    expect(JSON.stringify(messagesPayload)).toContain("changing")
+  })
+})
 
 describe("Windsurf proto — buildRequest fingerprint", () => {
   const basePayload: ChatCompletionsPayload = {
@@ -497,11 +649,17 @@ describe("Windsurf proto — buildRequest fingerprint", () => {
     ).toEqual([
       ["Reading alpha.", "inspect alpha", "sig-a", "anthropic"],
       [undefined, "then beta", "sig-b", "anthropic"],
+      [
+        "Tool use was interrupted and did not produce a result.",
+        undefined,
+        undefined,
+        undefined,
+      ],
     ])
     expect(
       prompts.map((fields) => fields.filter((node) => node.field === 6).length),
-    ).toEqual([0, 1])
-    expect(new Set(prompts.map((fields) => text(fields, 1))).size).toBe(2)
+    ).toEqual([0, 1, 0])
+    expect(new Set(prompts.map((fields) => text(fields, 1))).size).toBe(3)
   })
 
   test("keeps consecutive signed reasoning blocks separate", async () => {

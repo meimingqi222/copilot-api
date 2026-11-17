@@ -22,7 +22,18 @@ import {
 import { buildWindsurfClientMetadata } from "./metadata"
 import { ProtobufEncoder, encodeConnectRequest } from "./protobuf"
 import { nextWindsurfSessionTurnIndex } from "./session-turn"
-import { getWindsurfSignatureType } from "~/services/windsurf/thinking-signatures"
+import {
+  getWindsurfSignatureType,
+  getWindsurfGeminiThought,
+} from "~/services/windsurf/thinking-signatures"
+import type { AnthropicMessagesPayload } from "~/services/protocols/anthropic/types"
+import { normalizeWindsurfToolSchema } from "~/services/windsurf/tool-schema"
+import {
+  orderWindsurfPrompts,
+  windsurfInstruction,
+  windsurfMessagesPrompts,
+  type WindsurfPrompt,
+} from "~/services/windsurf/messages-prompts"
 
 // ── Enum constants (aligned with oh-my-pi generated protobuf) ──────────────────
 
@@ -95,8 +106,22 @@ function extractImageBase64(url: string): string | undefined {
 }
 
 function extractImageMimeType(url: string): string | undefined {
-  const match = url.match(/^data:([^;]+);base64,/)
-  return match?.[1]
+  const base64 = extractImageBase64(url)
+  if (!base64) return undefined
+  const bytes = Buffer.from(base64.slice(0, 32), "base64")
+  if (
+    bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+  )
+    return "image/png"
+  if (bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255)
+    return "image/jpeg"
+  if (/^GIF8[79]a/.test(bytes.toString("ascii", 0, 6))) return "image/gif"
+  if (
+    bytes.toString("ascii", 0, 4) === "RIFF"
+    && bytes.toString("ascii", 8, 12) === "WEBP"
+  )
+    return "image/webp"
+  return undefined
 }
 
 function serializeMessageContent(content: Message["content"]): {
@@ -228,12 +253,13 @@ function writeImages(
 function writeChatMessagePrompt(
   request: ProtobufEncoder,
   opts: {
-    message: Message
+    message: WindsurfPrompt
     index: number
     cascadeId: string
+    requestModel: string
   },
 ): boolean {
-  const { message, index, cascadeId } = opts
+  const { message, index, cascadeId, requestModel } = opts
 
   if (message.role === "user") {
     const { text, images } = serializeMessageContent(message.content)
@@ -247,6 +273,7 @@ function writeChatMessagePrompt(
       prompt.writeVarint(2, ChatMessageSource.USER)
       if (text) prompt.writeString(3, text)
       writeImages(prompt, images)
+      if (message.cache) prompt.writeMessage(8, buildSystemPromptCacheOptions())
     })
     return true
   }
@@ -255,7 +282,14 @@ function writeChatMessagePrompt(
     const content = serializeMessageContent(message.content)
     const toolCalls = message.tool_calls ?? []
     const reasoningText = resolveAssistantReasoning(message)
-    const reasoningSignature = resolveAssistantSignature(message, reasoningText)
+    const geminiSignature = getWindsurfGeminiThought(
+      cascadeId,
+      requestModel,
+      toolCalls.map((call) => call.id),
+      content.text,
+    )
+    const reasoningSignature =
+      geminiSignature ?? resolveAssistantSignature(message, reasoningText)
     // `reasoningSignature` is only ever set alongside `reasoningText`, so it
     // cannot on its own keep an otherwise empty turn alive.
     if (!hasText(content.text) && !reasoningText && toolCalls.length === 0) {
@@ -283,8 +317,14 @@ function writeChatMessagePrompt(
       }
       if (reasoningSignature) {
         prompt.writeString(12, reasoningSignature)
-        prompt.writeString(18, getWindsurfSignatureType(reasoningSignature))
+        const signatureType =
+          geminiSignature ? "gemini" : (
+            getWindsurfSignatureType(reasoningSignature)
+          )
+        prompt.writeString(18, signatureType)
+        if (signatureType === "gemini") prompt.writeString(22, requestModel)
       }
+      if (message.cache) prompt.writeMessage(8, buildSystemPromptCacheOptions())
     })
     return true
   }
@@ -305,6 +345,7 @@ function writeChatMessagePrompt(
       if (text) prompt.writeString(3, text)
       prompt.writeString(7, toolCallId)
       writeImages(prompt, images)
+      if (message.cache) prompt.writeMessage(8, buildSystemPromptCacheOptions())
     })
     return true
   }
@@ -438,9 +479,12 @@ function resolveAssistantSignature(
 }
 
 export function resolveSystemPrompt(payload: ChatCompletionsPayload): string {
+  const firstTurn = payload.messages.findIndex(
+    (message) => message.role !== "system",
+  )
   const texts = payload.messages
-    .filter((m) => m.role === "system")
-    .map((m) => serializeMessageContent(m.content).text)
+    .slice(0, firstTurn < 0 ? undefined : firstTurn)
+    .map((m) => windsurfInstruction(serializeMessageContent(m.content).text))
     .filter((text) => hasText(text))
   const joined = texts.join("\n\n") || DEFAULT_WINDSURF_SYSTEM_PROMPT
   return sanitizeWindsurfSystemPrompt(joined)
@@ -448,22 +492,23 @@ export function resolveSystemPrompt(payload: ChatCompletionsPayload): string {
 
 // ── Tool-definition builder ────────────────────────────────────────────────────
 
-/** Cloud rejects tool descriptions ≥7000 chars with a misleading MCP error. */
-const MAX_TOOL_DESC_LEN = 6998
-
-function buildToolDef(tool: Tool): ProtobufEncoder {
-  const rawDesc = sanitizeWindsurfToolDescription(
-    tool.function.name,
-    tool.function.description ?? "",
-  )
-  const desc =
-    rawDesc.length > MAX_TOOL_DESC_LEN ?
-      `${rawDesc.slice(0, MAX_TOOL_DESC_LEN - 24)}\n…(truncated for cloud)`
-    : rawDesc
+function buildToolDef(tool: Tool, requestModel: string): ProtobufEncoder {
   const t = new ProtobufEncoder()
   t.writeString(1, tool.function.name)
-  t.writeString(2, desc)
-  t.writeString(3, JSON.stringify(tool.function.parameters))
+  // Native tool descriptions have a 7000-char limit; complete instructions live
+  // in a prompt so long descriptions are not silently truncated.
+  t.writeString(
+    2,
+    tool.function.description ?
+      `Described under <tool name="${tool.function.name}"> in <tool_descriptions>, in the instructions.`
+    : tool.function.name,
+  )
+  t.writeString(
+    3,
+    JSON.stringify(
+      normalizeWindsurfToolSchema(tool.function.parameters, requestModel),
+    ),
+  )
   t.writeBool(12, tool.function.strict ?? false)
   return t
 }
@@ -604,6 +649,8 @@ function isUserTurnBoundary(
 
 export async function buildRequest(opts: {
   payload: ChatCompletionsPayload
+  messagesPayload?: AnthropicMessagesPayload
+  unsigned?: boolean
   apiKey: string
   requestModel: string
   /** Stable cascade_id (field 16) - reuse across turns for prompt cache. */
@@ -627,6 +674,8 @@ export async function buildRequest(opts: {
     protobufBytes: number
     wireBytes: number
     turnIndex: number
+    signedThinking: boolean
+    estimatedTokens: number
   }) => void
 }): Promise<Uint8Array> {
   opts.signal?.throwIfAborted()
@@ -648,28 +697,108 @@ export async function buildRequest(opts: {
   const request = new ProtobufEncoder(estimateRequestBytes(payload))
 
   request.writeMessage(1, buildWindsurfClientMetadata(apiKey, userJwt))
-  request.writeString(2, resolveSystemPrompt(payload))
-
-  for (const [messageIndex, message] of payload.messages.entries()) {
-    if (message.role === "system") continue
-    const prompts = splitAssistantThinking(message)
-    for (const [partIndex, prompt] of prompts.entries()) {
-      writeChatMessagePrompt(request, {
-        message: prompt,
-        index: messageIndex,
-        cascadeId:
-          partIndex === 0 ? cascadeId : `${cascadeId}\0part-${partIndex}`,
-      })
-    }
+  const nativeTools: Array<Tool> | undefined = opts.messagesPayload?.tools
+    ?.filter((tool) => "input_schema" in tool)
+    .map((tool) => ({
+      type: "function",
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.input_schema,
+      },
+    }))
+  const tools =
+    (
+      payload.tool_choice === "none"
+      || opts.messagesPayload?.tool_choice?.type === "none"
+    ) ?
+      []
+    : (nativeTools ?? payload.tools?.filter(Boolean) ?? [])
+  const described = tools
+    .filter((tool) => tool.function.description)
+    .map(
+      (tool) =>
+        `<tool name="${tool.function.name}">\n${sanitizeWindsurfToolDescription(tool.function.name, tool.function.description!).trim()}\n</tool>`,
+    )
+  const toolInstructions =
+    described.length ?
+      `<tool_descriptions>\n${described.join("\n")}\n</tool_descriptions>`
+    : ""
+  let prompts: Array<WindsurfPrompt>
+  if (opts.messagesPayload) {
+    const native = windsurfMessagesPrompts(opts.messagesPayload)
+    prompts = orderWindsurfPrompts(native.messages)
+    const at = prompts.findIndex((message) => message.role === "user")
+    const instructions =
+      toolInstructions ?
+        [
+          { role: "user" as const, content: toolInstructions },
+          ...native.instructions,
+        ]
+      : native.instructions
+    prompts.splice(at < 0 ? 0 : at, 0, ...instructions)
+  } else {
+    request.writeString(
+      2,
+      [toolInstructions, resolveSystemPrompt(payload)]
+        .filter(Boolean)
+        .join("\n\n"),
+    )
+    const firstTurn = payload.messages.findIndex(
+      (message) => message.role !== "system",
+    )
+    prompts = orderWindsurfPrompts(
+      firstTurn < 0 ?
+        []
+      : payload.messages.slice(firstTurn).flatMap(splitAssistantThinking),
+    )
+  }
+  if (opts.unsigned) prompts = prompts.map(withoutWindsurfSignature)
+  let signedThinking = false
+  let estimatedTokens = 0
+  for (const [index, message] of prompts.entries()) {
+    const { text, images } = serializeMessageContent(message.content)
+    estimatedTokens +=
+      Math.ceil(
+        (Buffer.byteLength(text)
+          + Buffer.byteLength(resolveAssistantReasoning(message)))
+          / 4,
+      )
+      + images.length * 1600
+    for (const call of message.tool_calls ?? [])
+      estimatedTokens += Math.ceil(
+        Buffer.byteLength(call.function.name + call.function.arguments) / 4,
+      )
+    signedThinking ||= Boolean(
+      resolveAssistantSignature(message, resolveAssistantReasoning(message))
+        || (!opts.unsigned
+          && getWindsurfGeminiThought(
+            cascadeId,
+            requestModel,
+            (message.tool_calls ?? []).map((call) => call.id),
+            text,
+          )),
+    )
+    writeChatMessagePrompt(request, {
+      message,
+      index,
+      cascadeId,
+      requestModel: opts.unsigned ? "" : requestModel,
+    })
   }
 
   request.writeVarint(7, ChatMessageRequestType.CASCADE)
   request.writeMessage(8, buildConfiguration(payload))
 
-  const tools = payload.tools?.filter(Boolean) ?? []
   for (const tool of tools) {
-    request.writeMessage(10, buildToolDef(tool))
+    const definition = buildToolDef(tool, requestModel)
+    request.writeMessage(10, definition)
+    estimatedTokens += Math.ceil(definition.toUint8Array().byteLength / 4)
   }
+  if (!opts.messagesPayload)
+    estimatedTokens += Math.ceil(
+      Buffer.byteLength(toolInstructions + resolveSystemPrompt(payload)) / 4,
+    )
 
   request.writeBool(11, true) // disable_parallel_tool_calls
   request.writeMessage(12, buildToolChoice(payload))
@@ -699,6 +828,31 @@ export async function buildRequest(opts: {
     protobufBytes: protobuf.byteLength,
     wireBytes: framed.byteLength,
     turnIndex: usedTurnIndex,
+    signedThinking,
+    estimatedTokens,
   })
   return framed
+}
+
+function withoutWindsurfSignature(message: WindsurfPrompt): WindsurfPrompt {
+  if (message.role !== "assistant") return message
+  // Retrying unsigned drops the rejected reasoning too, never pairing an old
+  // signature with edited text or loosening replay integrity for other requests.
+  return {
+    ...message,
+    reasoning_text: undefined,
+    reasoning_content: undefined,
+    reasoning: undefined,
+    reasoning_details: undefined,
+    signature: undefined,
+    reasoning_signature: undefined,
+    thinking_signature: undefined,
+    reasoning_opaque: undefined,
+    content:
+      Array.isArray(message.content) ?
+        message.content.filter(
+          (part) => part.type !== "thinking" && part.type !== "reasoning",
+        )
+      : message.content,
+  }
 }

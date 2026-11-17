@@ -82,6 +82,7 @@ export function cacheModels(): void {
         limits?: ModelLimits
         /** 同一 publicId 各连接档位的交集;任一连接未知时按“未知”处理。 */
         efforts?: Array<string>
+        vision?: boolean
       }
     >()
     for (const entry of connectionModels) {
@@ -105,15 +106,26 @@ export function cacheModels(): void {
           publicId,
           limits,
           efforts: levels && levels.length > 0 ? [...levels] : undefined,
+          vision:
+            typeof entry.model.metadata?.supportsImages === "boolean" ?
+              entry.model.metadata.supportsImages
+            : undefined,
         })
         continue
       }
       existing.efforts = intersectEfforts(existing.efforts, levels)
       existing.limits = mergeModelLimits(existing.limits, limits)
+      if (entry.model.metadata?.supportsImages === false)
+        existing.vision = false
+      else if (
+        existing.vision === undefined
+        && entry.model.metadata?.supportsImages === true
+      )
+        existing.vision = true
     }
 
     accountData = Array.from(merged.values()).map(
-      ({ model, conn, publicId, efforts, limits }) =>
+      ({ model, conn, publicId, efforts, limits, vision }) =>
         buildModelEntry({
           id: publicId,
           name: model.name ?? publicId,
@@ -124,6 +136,7 @@ export function cacheModels(): void {
           endpoints: model.endpoints ?? [],
           limits,
           efforts,
+          vision,
         }),
     )
   }
@@ -279,6 +292,7 @@ function buildModelEntry(input: {
   limits?: ModelLimits
   /** 该 publicId 背后所有连接都能接受的档位（provider 声明的交集）。 */
   efforts?: Array<string>
+  vision?: boolean
 }): NonNullable<typeof state.models>["data"][number] {
   return {
     id: input.id,
@@ -298,7 +312,10 @@ function buildModelEntry(input: {
       ...(input.limits === undefined || Object.keys(input.limits).length === 0 ?
         {}
       : { limits: input.limits }),
-      supports: modelSupports(input.efforts),
+      supports: {
+        ...modelSupports(input.efforts),
+        ...(input.vision !== undefined && { vision: input.vision }),
+      },
       tokenizer: "unknown",
       type: "chat",
     },

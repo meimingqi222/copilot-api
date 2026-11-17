@@ -1,15 +1,28 @@
+import { createHash } from "node:crypto"
+import { readFile } from "node:fs/promises"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import type { ProviderConnection } from "~/lib/provider-connections"
+import { setConnectionSetting } from "~/lib/provider-connections"
 
-import { normalizeDevinApiKey } from "~/services/windsurf/metadata"
+import {
+  DEVIN_CLI_IDENTITY,
+  normalizeDevinApiKey,
+} from "~/services/windsurf/metadata"
 
-import { applyOAuthBundleToCredential } from "./apply-bundle"
-import { oauthFetch, type OAuthFetchOptions } from "./fetch"
-import { generateOAuthState, generatePkceCodes, type PkceCodes } from "./pkce"
+import { applyOAuthBundleToCredential } from "~/services/oauth/apply-bundle"
+import { oauthFetch, type OAuthFetchOptions } from "~/services/oauth/fetch"
+import {
+  generateOAuthState,
+  generatePkceCodes,
+  type PkceCodes,
+} from "~/services/oauth/pkce"
 
 const WINDSURF_APP_BASE_URL = "https://app.devin.ai"
 const WINDSURF_API_BASE_URL = "https://api.devin.ai"
-const WINDSURF_TOKEN_PATH = "/auth/cli/token"
-const WINDSURF_SELF_PATH = "/v3/self"
+const WINDSURF_SERVER = "https://server.codeium.com"
+const WINDSURF_TOKEN_PATH =
+  "/exa.seat_management_pb.SeatManagementService/ExchangeDevinCLIPKCECode"
 
 /**
  * Loopback callback the Devin CLI itself listens on (oh-my-pi
@@ -30,6 +43,9 @@ interface WindsurfOAuthBundle {
   userId?: string
   orgId?: string
   email?: string
+  baseUrl?: string
+  devinWebappHost?: string
+  devinApiUrl?: string
 }
 
 export function formatWindsurfSessionToken(rawToken: string): string {
@@ -42,6 +58,7 @@ export function formatWindsurfSessionToken(rawToken: string): string {
 
 export function isWindsurfSessionToken(value: string): boolean {
   const trimmed = value.trim()
+  if (trimmed.startsWith("cog_")) return true
   if (trimmed.startsWith(WINDSURF_SESSION_TOKEN_PREFIX)) return true
   // Bare JWTs are JWT-shaped (`eyJ` + dot-separated segments). A plain
   // `eyJ` prefix alone is not enough: an opaque authorization code could
@@ -101,16 +118,20 @@ export function createWindsurfOAuthStart(
 }
 
 interface WindsurfTokenResponse {
-  token?: string
+  sessionToken?: string
+  session_token?: string
+  devinWebappHost?: string
+  devinApiUrl?: string
 }
 
 export async function exchangeWindsurfCodeForToken(
   code: string,
   codeVerifier: string,
   options?: OAuthFetchOptions,
-): Promise<string> {
+  redirectUri: string = WINDSURF_REDIRECT_URI,
+): Promise<WindsurfOAuthBundle> {
   const response = await oauthFetch(
-    `${WINDSURF_API_BASE_URL}${WINDSURF_TOKEN_PATH}`,
+    `${WINDSURF_SERVER}${WINDSURF_TOKEN_PATH}`,
     {
       method: "POST",
       headers: {
@@ -120,7 +141,9 @@ export async function exchangeWindsurfCodeForToken(
       body: JSON.stringify({
         code: code.trim(),
         code_verifier: codeVerifier.trim(),
+        redirect_uri: redirectUri,
       }),
+      signal: AbortSignal.timeout(30_000),
     },
     options,
   )
@@ -130,72 +153,155 @@ export async function exchangeWindsurfCodeForToken(
       `Windsurf OAuth token exchange failed with status ${response.status}: ${text.slice(0, 500)}`,
     )
   }
-  let token: string
+  let result: WindsurfTokenResponse
   try {
-    token = (JSON.parse(text) as WindsurfTokenResponse).token?.trim() ?? ""
+    result = JSON.parse(text) as WindsurfTokenResponse
   } catch {
-    token = ""
+    result = {}
   }
+  const rawToken = result?.sessionToken || result?.session_token
+  const token = typeof rawToken === "string" ? rawToken.trim() : ""
   if (!token) {
     throw new Error("Windsurf OAuth token exchange did not return a token")
   }
-  return token
+  return {
+    sessionToken: formatWindsurfSessionToken(token),
+    devinWebappHost:
+      typeof result.devinWebappHost === "string" ?
+        result.devinWebappHost
+      : undefined,
+    devinApiUrl:
+      typeof result.devinApiUrl === "string" ? result.devinApiUrl : undefined,
+  }
 }
 
 interface WindsurfSelfResponse {
-  user_name?: string
-  user_id?: string
-  org_id?: string
+  name?: string
+  userId?: string
+  teamId?: string
+  teamName?: string
   email?: string
+  planStatus?: {
+    planInfo?: {
+      teamName?: string
+      devinInfo?: { orgId?: string; accountDisplayName?: string }
+    }
+  }
 }
 
 /**
- * Best-effort profile fetch for account labeling. Never throws: login must
- * succeed even when the profile endpoint is unreachable.
- *
- * Sends the formatted session token verbatim (CPA `CreateAuthRecord` passes
- * the `devin-session-token$`-prefixed token to `FetchSelfProfile`, which
- * forwards it as the Bearer value unchanged).
+ * Ask Devin for the key's own identity, never the CLI's current account.
+ * Transient failures get a stable private fingerprint; rejected keys fail.
  */
 export async function fetchWindsurfSelfProfile(
   sessionToken: string,
   options?: OAuthFetchOptions,
+  baseUrl: string = WINDSURF_SERVER,
 ): Promise<
   Pick<WindsurfOAuthBundle, "userName" | "userId" | "orgId" | "email">
 > {
+  const fallback = {
+    userName: `Devin · ${createHash("sha256").update(baseUrl.replace(/\/+$/, "")).update("\0").update(sessionToken).digest("hex").slice(0, 12)}`,
+  }
   try {
     const response = await oauthFetch(
-      `${WINDSURF_API_BASE_URL}${WINDSURF_SELF_PATH}`,
+      `${baseUrl.replace(/\/+$/, "")}/exa.seat_management_pb.SeatManagementService/GetUserStatus`,
       {
-        method: "GET",
+        method: "POST",
         headers: {
-          Authorization: `Bearer ${sessionToken.trim()}`,
+          "Content-Type": "application/json",
+          "Connect-Protocol-Version": "1",
           Accept: "application/json",
         },
+        body: JSON.stringify({
+          metadata: {
+            ideName: "devin-cli",
+            ideVersion: DEVIN_CLI_IDENTITY.ideVersion,
+            extensionName: "devin-cli",
+            extensionVersion: DEVIN_CLI_IDENTITY.extensionVersion,
+            apiKey: normalizeDevinApiKey(sessionToken),
+            locale: "en",
+            os: DEVIN_CLI_IDENTITY.os,
+          },
+        }),
+        signal: AbortSignal.timeout(15_000),
       },
       options,
     )
-    if (!response.ok) return {}
-    const body = (await response
-      .json()
-      .catch(() => null)) as WindsurfSelfResponse | null
-    if (!body || typeof body !== "object") return {}
+    if (response.status === 401) throw new WindsurfRejectedCredential()
+    const text = await response.text()
+    if (
+      !response.ok
+      && /unauthenticated|invalid api key|invalid token/i.test(text)
+    )
+      throw new WindsurfRejectedCredential()
+    // Enterprise seats can deny the CLI identity while allowing the editor;
+    // permission alone must not reject an otherwise usable credential.
+    if (!response.ok) return fallback
+    const result = JSON.parse(text) as {
+      userStatus?: WindsurfSelfResponse
+    } | null
+    const body = result?.userStatus
+    if (!body || typeof body !== "object") return fallback
+    const info = body.planStatus?.planInfo
+    const orgId = info?.devinInfo?.orgId || body.teamId
+    const rawOrgName =
+      info?.devinInfo?.accountDisplayName || info?.teamName || body.teamName
+    const orgName = typeof rawOrgName === "string" ? rawOrgName.trim() : ""
+    const rawName = body.email || body.name
+    const name = typeof rawName === "string" ? rawName.trim() : ""
     return {
-      ...(typeof body.user_name === "string" && body.user_name ?
-        { userName: body.user_name }
+      userName:
+        name ?
+          `${name}${orgName && orgName.toLowerCase() !== name.toLowerCase() ? ` · ${orgName}` : ""}`
+        : fallback.userName,
+      ...(typeof body.userId === "string" && body.userId ?
+        { userId: body.userId }
       : {}),
-      ...(typeof body.user_id === "string" && body.user_id ?
-        { userId: body.user_id }
-      : {}),
-      ...(typeof body.org_id === "string" && body.org_id ?
-        { orgId: body.org_id }
-      : {}),
+      ...(typeof orgId === "string" && orgId ? { orgId } : {}),
       ...(typeof body.email === "string" && body.email ?
         { email: body.email }
       : {}),
     }
-  } catch {
-    return {}
+  } catch (error) {
+    if (error instanceof WindsurfRejectedCredential) throw error
+    return fallback
+  }
+}
+
+class WindsurfRejectedCredential extends Error {
+  constructor() {
+    super("Devin rejected the credential")
+  }
+}
+
+/** Read the server's CLI sign-in only; no caller-supplied paths or CLI execution. */
+export async function readWindsurfCliCredentials(): Promise<WindsurfOAuthBundle> {
+  const data =
+    process.platform === "win32" && process.env.APPDATA ?
+      process.env.APPDATA
+    : process.env.XDG_DATA_HOME || join(homedir(), ".local", "share")
+  const parsed: unknown = Bun.TOML.parse(
+    await readFile(join(data, "devin", "credentials.toml"), "utf8"),
+  )
+  const values = parsed as Record<string, unknown>
+  const key = values.windsurf_api_key
+  if (typeof key !== "string" || !key.trim())
+    throw new Error("Devin CLI credentials contain no windsurf_api_key")
+  return {
+    sessionToken: formatWindsurfSessionToken(key),
+    baseUrl:
+      typeof values.api_server_url === "string" ?
+        values.api_server_url
+      : WINDSURF_SERVER,
+    devinWebappHost:
+      typeof values.devin_webapp_host === "string" ?
+        values.devin_webapp_host
+      : undefined,
+    devinApiUrl:
+      typeof values.devin_api_url === "string" ?
+        values.devin_api_url
+      : WINDSURF_API_BASE_URL,
   }
 }
 
@@ -209,6 +315,13 @@ export function applyWindsurfOAuthBundle(
   connection: ProviderConnection,
   bundle: WindsurfOAuthBundle,
 ): void {
+  if (bundle.baseUrl)
+    setConnectionSetting(connection, "baseUrl", bundle.baseUrl)
+  if (bundle.devinWebappHost)
+    setConnectionSetting(connection, "devinWebappHost", bundle.devinWebappHost)
+  if (bundle.devinApiUrl)
+    setConnectionSetting(connection, "devinApiUrl", bundle.devinApiUrl)
+  if (bundle.userName) connection.name = bundle.userName
   applyOAuthBundleToCredential(
     connection,
     { accessToken: bundle.sessionToken },

@@ -41,7 +41,7 @@
         }, FAILSAFE_MS)
       })()
     </script>
-    <script src="/admin/static/js/i18n.js?v=0.7.35"></script>
+    <script src="/admin/static/js/i18n.js?v=0.7.36"></script>
     <script src="/admin/static/js/api.js?v=0.7.5"></script>
     <script src="/admin/static/js/admin-icons.js?v=0.7.0"></script>
     <script src="/admin/static/js/view-helpers.js?v=0.7.6"></script>
@@ -1902,6 +1902,29 @@
                             x-text="t('accounts.proxyUrlHint')"
                           ></p>
                         </div>
+                        <div
+                          x-show="account.provider === 'windsurf'"
+                          class="mb-4 p-3 bg-[var(--apple-bg-secondary)] rounded-lg"
+                        >
+                          <label
+                            class="flex items-center justify-between gap-3"
+                          >
+                            <span
+                              class="text-sm text-[var(--apple-text-secondary)]"
+                              x-text="t('accounts.provider.windsurf.cacheKeepalive')"
+                            ></span>
+                            <input
+                              type="checkbox"
+                              class="w-4 h-4"
+                              :checked="account.settings?.cacheKeepalive === true"
+                              @change="setWindsurfCacheKeepalive(account, $event.target.checked).then(() => { $el.checked = account.settings?.cacheKeepalive === true })"
+                            />
+                          </label>
+                          <p
+                            class="text-xs text-[var(--apple-text-tertiary)] mt-1"
+                            x-text="t('accounts.provider.windsurf.cacheKeepaliveHint')"
+                          ></p>
+                        </div>
                         <!-- xAI Endpoint Toggle (CLI chat-proxy vs official API) -->
                         <div
                           x-show="(account.provider || 'copilot') === 'xai'"
@@ -2448,21 +2471,26 @@
                       x-for="field in selectedProviderFields()"
                       :key="field.key"
                     >
-                      <div>
+                      <div
+                        x-show="!(isReauthFlow() && field.key === 'importCli')"
+                      >
                         <label
                           class="form-label"
+                          :for="'account-field-' + field.key"
                           x-text="fieldLabel(field)"
                         ></label>
                         <template x-if="field.type === 'checkbox'">
                           <input
                             type="checkbox"
+                            :id="'account-field-' + field.key"
                             class="w-4 h-4"
-                            :checked="Boolean(getAccountFieldValue(field))"
+                            :checked="getAccountFieldValue(field) === true"
                             @change="setAccountFieldValue(field, $event.target.checked)"
                           />
                         </template>
                         <template x-if="field.type === 'select'">
                           <select
+                            :id="'account-field-' + field.key"
                             class="form-input"
                             :value="getAccountFieldValue(field) ?? ''"
                             @change="setAccountFieldValue(field, $event.target.value)"
@@ -2482,6 +2510,7 @@
                           x-if="field.type !== 'checkbox' && field.type !== 'select'"
                         >
                           <input
+                            :id="'account-field-' + field.key"
                             :type="field.type === 'secret' ? 'password' : 'text'"
                             class="form-input"
                             :placeholder="field.placeholder || ''"
@@ -2489,6 +2518,11 @@
                             @input="setAccountFieldValue(field, $event.target.value)"
                           />
                         </template>
+                        <p
+                          x-show="field.descriptionKey"
+                          class="text-xs text-[var(--apple-text-tertiary)] mt-1"
+                          x-text="field.descriptionKey ? t(field.descriptionKey) : ''"
+                        ></p>
                       </div>
                     </template>
                   </div>
@@ -8665,7 +8699,7 @@
     <script src="/admin/static/js/views/redaction.js?v=0.8.13"></script>
     <script src="/admin/static/js/views/dashboard.js?v=0.7.4"></script>
     <script src="/admin/static/js/views/users.js?v=0.7.3"></script>
-    <script src="/admin/static/js/views/accounts.js?v=0.7.6"></script>
+    <script src="/admin/static/js/views/accounts.js?v=0.7.7"></script>
     <script src="/admin/static/js/views/connections.js?v=0.7.9"></script>
     <script src="/admin/static/js/views/model-aliases.js?v=0.7.3"></script>
     <script src="/admin/static/js/views/routing-groups.js?v=0.7.7"></script>

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto"
+import { logger } from "~/lib/logger"
 import type { AccountModel } from "~/lib/provider-connections"
 import type {
   ModelMapping,
@@ -11,19 +13,26 @@ import {
 } from "~/lib/provider-connections"
 import { readResponseBytes } from "~/lib/request-body"
 import { state } from "~/lib/state"
+import { oauthFetch } from "~/services/oauth/fetch"
+import { getConnectionProxyUrl } from "~/lib/provider-connections"
 
-import { normalizeWindsurfBaseUrl } from "./base-url"
+import { normalizeWindsurfBaseUrl } from "~/services/windsurf/base-url"
 import {
   buildWindsurfClientMetadata,
   WINDSURF_CONNECT_USER_AGENT,
   WINDSURF_EDITOR_IDENTITY,
   wrapWindsurfMetadataMessage,
-} from "./metadata"
-import { type ProtobufNode, parseMessage, walkNodes } from "./protobuf"
+} from "~/services/windsurf/metadata"
+import {
+  ProtobufEncoder,
+  type ProtobufNode,
+  parseMessage,
+  walkNodes,
+} from "~/services/windsurf/protobuf"
 import {
   collapseWindsurfModelVariants,
   type RawWindsurfCatalogEntry,
-} from "./variant-collapse"
+} from "~/services/windsurf/variant-collapse"
 
 function buildGetUserStatusRequest(apiKey: string): Uint8Array {
   return wrapWindsurfMetadataMessage(
@@ -184,9 +193,7 @@ function extractProviderDisplayMap(
 }
 
 const WINDSURF_CONNECTION_ENDPOINTS: Array<ModelMapping["endpoints"][number]> =
-  // Adapter implements chat only. Declaring messages would 501; omitting it
-  // lets route-target fall messages→chat through the existing translation.
-  ["chat"]
+  ["chat", "messages"]
 
 export function extractWindsurfModelsFromPayload(
   payload: Uint8Array,
@@ -209,6 +216,7 @@ export function extractWindsurfModelMappingsFromPayload(
   const rows = walkNodes(parseMessage(payload))
   const vendorByDisplayName = extractProviderDisplayMap(rows)
   const entries = new Map<string, RawWindsurfCatalogEntry>()
+  const details = new Map<string, Record<string, unknown>>()
 
   for (const { path, node } of rows) {
     if (path !== "/1/33/1" || !node.sub) {
@@ -236,6 +244,14 @@ export function extractWindsurfModelMappingsFromPayload(
       continue
     }
 
+    const numberAt = (path: string) =>
+      entryRows.find((row) => row.path === path && row.node.wire === 0)?.node
+        .varint
+    details.set(upstreamId, {
+      supportsImages: Number(numberAt("/5") ?? 0) !== 0,
+      contextWindow: Number(numberAt("/18") ?? 0),
+      outputLimit: Number(numberAt("/23/13") ?? 0),
+    })
     entries.set(publicId, {
       publicId,
       name: displayName,
@@ -249,7 +265,12 @@ export function extractWindsurfModelMappingsFromPayload(
   }
 
   if (entries.size === 0) return []
-  return collapseWindsurfModelVariants(Array.from(entries.values()))
+  return collapseWindsurfModelVariants(Array.from(entries.values())).map(
+    (model) => ({
+      ...model,
+      metadata: { ...model.metadata, ...details.get(model.upstreamId) },
+    }),
+  )
 }
 
 function modelMappingsToAccountModels(
@@ -269,6 +290,27 @@ function modelMappingsToAccountModels(
   }))
 }
 
+/** The CLI publishes the same ClientModelConfig messages directly in field 1. */
+export function extractDevinCliModelMappingsFromPayload(
+  payload: Uint8Array,
+): Array<ModelMapping> {
+  const catalog = new ProtobufEncoder()
+  for (const node of parseMessage(payload)) {
+    if (node.field !== 1 || !node.raw) continue
+    const rows = walkNodes(parseMessage(node.raw))
+    const id = firstTextValue(rows, ["/22"])
+    if (!id) continue
+    const family = firstTextValue(rows, ["/23/23", "/30/1", "/1"]) ?? id
+    if (/^(adaptive|fusion)$/i.test(family)) continue
+    catalog.writeBytes(1, node.raw)
+  }
+  const status = new ProtobufEncoder()
+  status.writeMessage(33, catalog)
+  const response = new ProtobufEncoder()
+  response.writeMessage(1, status)
+  return extractWindsurfModelMappingsFromPayload(response.toUint8Array())
+}
+
 function endpointToSupportedPath(
   endpoint: ModelMapping["endpoints"][number],
 ): string {
@@ -285,6 +327,26 @@ function endpointToSupportedPath(
   }
 }
 
+const CATALOG_SUCCESS_TTL_MS = 5 * 60_000
+const CATALOG_FAILURE_TTL_MS = 60_000
+const MAX_CATALOG_CACHE_ENTRIES = 256
+
+type CatalogResult =
+  | { models: Array<ModelMapping>; discovered: boolean }
+  | { errorStatus: number }
+
+const catalogCache = new Map<
+  string,
+  {
+    expiresAt: number
+    result: Promise<CatalogResult>
+  }
+>()
+
+export function clearWindsurfModelCacheForTest(): void {
+  catalogCache.clear()
+}
+
 export async function getWindsurfModelsForConnection(
   connection: ProviderConnection,
 ): Promise<Array<ModelMapping>> {
@@ -298,16 +360,121 @@ export async function getWindsurfModelsForConnection(
     return fallbackWindsurfConnectionModels(defaultModel ?? "")
   }
 
-  const baseUrl = normalizeWindsurfBaseUrl(settings?.baseUrl)
-  // Catalog reads stay on the legacy editor identity on purpose. This proxy
-  // gets its roster from `GetUserStatus`, not from `GetCliModelConfigs` (the
-  // RPC the reference implementations gate on the CLI identity), and the
-  // editor identity is the one that has always returned the full
-  // credential-scoped roster here — legacy Enterprise seats are documented to
-  // publish theirs only to it (oh-my-pi
-  // `packages/catalog/src/discovery/devin.ts`). Chat and quota do use the CLI
-  // identity; see `DEVIN_CLI_IDENTITY`.
-  const response = await fetch(
+  const baseUrl = normalizeWindsurfBaseUrl(
+    settings?.baseUrl || connection.baseUrl,
+  )
+  const proxyUrl = getConnectionProxyUrl(connection)
+  // Hash the complete scope, including proxy credentials, rather than retain
+  // any secret in a long-lived cache key. The cache itself is process-local.
+  const key = createHash("sha256")
+    .update(
+      JSON.stringify([
+        baseUrl,
+        createHash("sha256").update(apiKey).digest("hex"),
+        proxyUrl ?? "",
+        defaultModel ?? "",
+      ]),
+    )
+    .digest("hex")
+  let cached = catalogCache.get(key)
+  if (!cached || cached.expiresAt <= Date.now()) {
+    if (cached) catalogCache.delete(key)
+    if (catalogCache.size >= MAX_CATALOG_CACHE_ENTRIES) {
+      const oldest = catalogCache.keys().next().value
+      if (oldest !== undefined) catalogCache.delete(oldest)
+    }
+    const entry = {
+      expiresAt: Number.POSITIVE_INFINITY,
+      result: Promise.resolve<CatalogResult>({ errorStatus: 502 }),
+    }
+    entry.result = fetchWindsurfCatalog({
+      apiKey,
+      baseUrl,
+      proxyUrl,
+      defaultModel: defaultModel ?? "",
+    })
+      .catch((error: unknown): CatalogResult => {
+        logger.debug(
+          "Windsurf model discovery failed",
+          error instanceof Error ? error.name : "unknown error",
+        )
+        // Cache only the failure status, never upstream bodies or credentials.
+        return {
+          errorStatus: error instanceof HTTPError ? error.response.status : 502,
+        }
+      })
+      .then((result) => {
+        entry.expiresAt =
+          Date.now()
+          + ("models" in result && result.discovered ?
+            CATALOG_SUCCESS_TTL_MS
+          : CATALOG_FAILURE_TTL_MS)
+        return result
+      })
+    catalogCache.set(key, entry)
+    cached = entry
+  }
+  const result = await cached.result
+  if ("errorStatus" in result) {
+    throw new HTTPError(
+      "Failed to fetch Windsurf model catalog",
+      new Response(null, { status: result.errorStatus }),
+    )
+  }
+  // Callers mutate mappings during merge/persistence; never lend the cache's copy.
+  return structuredClone(result.models)
+}
+
+async function fetchWindsurfCatalog({
+  apiKey,
+  baseUrl,
+  proxyUrl,
+  defaultModel,
+}: {
+  apiKey: string
+  baseUrl: string
+  proxyUrl?: string
+  defaultModel: string
+}): Promise<CatalogResult> {
+  let rejectedStatus: number | undefined
+  // Prefer the account-scoped current CLI catalog; legacy Enterprise seats
+  // can expose only the editor's GetUserStatus catalog, so keep that fallback.
+  try {
+    const cliResponse = await oauthFetch(
+      `${baseUrl}/exa.api_server_pb.ApiServerService/GetCliModelConfigs`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/proto",
+          "Connect-Protocol-Version": "1",
+          "User-Agent": WINDSURF_CONNECT_USER_AGENT,
+        },
+        body: wrapWindsurfMetadataMessage(buildWindsurfClientMetadata(apiKey)),
+        signal: AbortSignal.timeout(15_000),
+      },
+      { proxyUrl },
+    )
+    if (cliResponse.ok) {
+      const models = extractDevinCliModelMappingsFromPayload(
+        await readResponseBytes(cliResponse, 16 * 1024 * 1024),
+      )
+      if (models.length)
+        return {
+          models: collapsedMappingsToConnectionModels(models),
+          discovered: true,
+        }
+    }
+    if (cliResponse.status === 401 || cliResponse.status === 403)
+      rejectedStatus = cliResponse.status
+  } catch (error) {
+    // Failed/unsupported CLI discovery must not hide legacy editor models.
+    logger.debug(
+      "Devin CLI catalog unavailable; trying the legacy editor catalog",
+      error instanceof Error ? error.name : "unknown error",
+    )
+  }
+  // Enterprise seats can publish their roster only to this editor identity.
+  const response = await oauthFetch(
     `${baseUrl}/exa.seat_management_pb.SeatManagementService/GetUserStatus`,
     {
       method: "POST",
@@ -319,7 +486,9 @@ export async function getWindsurfModelsForConnection(
         "Connect-Timeout-Ms": "5000",
       },
       body: buildGetUserStatusRequest(apiKey),
+      signal: AbortSignal.timeout(15_000),
     },
+    { proxyUrl },
   )
 
   if (!response.ok) {
@@ -334,9 +503,16 @@ export async function getWindsurfModelsForConnection(
     await readResponseBytes(response, 16 * 1024 * 1024),
   )
   if (collapsed.length > 0) {
-    return collapsedMappingsToConnectionModels(collapsed)
+    return {
+      models: collapsedMappingsToConnectionModels(collapsed),
+      discovered: true,
+    }
   }
-  return fallbackWindsurfConnectionModels(defaultModel ?? "")
+  if (rejectedStatus) return { errorStatus: rejectedStatus }
+  return {
+    models: fallbackWindsurfConnectionModels(defaultModel),
+    discovered: false,
+  }
 }
 
 /**

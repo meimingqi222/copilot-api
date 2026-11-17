@@ -80,46 +80,58 @@ describe("provider contributions", () => {
   })
 
   test("nested credentials keep precedence and explicit empty values fail validation", async () => {
-    for (const [id, key, legacy, error] of [
-      [
-        "codebuff",
-        "authToken",
-        "authToken",
-        "Codebuff auth token is required.",
-      ],
-      ["windsurf", "apiKey", "apiKey", "Windsurf API key is required."],
-      [
-        "codebuddy",
-        "accessToken",
-        "authToken",
-        "CodeBuddy accessToken is required.",
-      ],
-      [
-        "codebuddy-cn",
-        "accessToken",
-        "authToken",
-        "CodeBuddy accessToken is required.",
-      ],
-    ] as const) {
-      const creation = getBuiltinProviderModule(id)!.accountCreation!
-      const result = await creation.prepare(
-        context({
-          [legacy]: "legacy",
-          credentials: { [key]: "  active  " },
-          settings: { proxyUrl: "http://proxy.test" },
-        }),
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async (url) => {
+      expect(String(url)).toEndWith(
+        "/exa.seat_management_pb.SeatManagementService/GetUserStatus",
       )
-      expect(result).toMatchObject({
-        name: "prepared-account",
-        provider: id,
-        credentials: { [key]: "active" },
-        settings: { proxyUrl: "http://proxy.test" },
-      })
-      expect(
-        await creation.prepare(
-          context({ [legacy]: "legacy", credentials: { [key]: "  " } }),
-        ),
-      ).toEqual({ error })
+      return Response.json({ userStatus: { email: "test@example.invalid" } })
+    }) as typeof fetch
+    try {
+      for (const [id, key, legacy, error] of [
+        [
+          "codebuff",
+          "authToken",
+          "authToken",
+          "Codebuff auth token is required.",
+        ],
+        ["windsurf", "apiKey", "apiKey", "Windsurf API key is required."],
+        [
+          "codebuddy",
+          "accessToken",
+          "authToken",
+          "CodeBuddy accessToken is required.",
+        ],
+        [
+          "codebuddy-cn",
+          "accessToken",
+          "authToken",
+          "CodeBuddy accessToken is required.",
+        ],
+      ] as const) {
+        const creation = getBuiltinProviderModule(id)!.accountCreation!
+        const result = await creation.prepare(
+          context({
+            label: "prepared-account",
+            [legacy]: "legacy",
+            credentials: { [key]: "  active  " },
+            settings: { proxyUrl: "http://proxy.test" },
+          }),
+        )
+        expect(result).toMatchObject({
+          name: "prepared-account",
+          provider: id,
+          credentials: { [key]: "active" },
+          settings: { proxyUrl: "http://proxy.test" },
+        })
+        expect(
+          await creation.prepare(
+            context({ [legacy]: "legacy", credentials: { [key]: "  " } }),
+          ),
+        ).toEqual({ error })
+      }
+    } finally {
+      globalThis.fetch = originalFetch
     }
   })
 

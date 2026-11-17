@@ -1,10 +1,16 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
+import { windsurfAccountCreation } from "~/services/providers/account-creation/windsurf"
 
 import {
   buildWindsurfAuthUrl,
   createWindsurfOAuthStart,
   formatWindsurfSessionToken,
   isWindsurfSessionToken,
+  exchangeWindsurfCodeForToken,
+  fetchWindsurfSelfProfile,
   WINDSURF_CALLBACK_PATH,
   WINDSURF_CALLBACK_PORT,
   WINDSURF_REDIRECT_URI,
@@ -15,6 +21,148 @@ import {
   isCallbackOAuthCapableProvider,
 } from "~/services/oauth/provider-strategies"
 import { classifyWindsurfErrorText } from "~/services/windsurf/error-classifier"
+
+const realFetch = globalThis.fetch
+afterEach(() => {
+  globalThis.fetch = realFetch
+})
+
+test("current PKCE exchange sends redirect and preserves account hosts", async () => {
+  globalThis.fetch = (async (url, init) => {
+    expect(String(url)).toBe(
+      "https://server.codeium.com/exa.seat_management_pb.SeatManagementService/ExchangeDevinCLIPKCECode",
+    )
+    expect(JSON.parse(String(init?.body))).toEqual({
+      code: "code",
+      code_verifier: "verifier",
+      redirect_uri: "http://127.0.0.1:123/callback",
+    })
+    return Response.json({
+      session_token: "cog_test",
+      devinWebappHost: "app.example",
+      devinApiUrl: "https://api.example",
+    })
+  }) as typeof fetch
+  expect(
+    await exchangeWindsurfCodeForToken(
+      "code",
+      "verifier",
+      undefined,
+      "http://127.0.0.1:123/callback",
+    ),
+  ).toMatchObject({
+    sessionToken: "cog_test",
+    devinWebappHost: "app.example",
+    devinApiUrl: "https://api.example",
+  })
+})
+
+test("identity comes from the key, organizations stay distinct and rejection fails", async () => {
+  globalThis.fetch = (async (_url, init) => {
+    expect(JSON.parse(String(init?.body)).metadata.apiKey).toBe("cog_identity")
+    return Response.json({
+      userStatus: {
+        email: "me@example.com",
+        teamId: "team",
+        planStatus: {
+          planInfo: { devinInfo: { orgId: "org", accountDisplayName: "Lab" } },
+        },
+      },
+    })
+  }) as typeof fetch
+  expect(await fetchWindsurfSelfProfile("cog_identity")).toMatchObject({
+    userName: "me@example.com · Lab",
+    email: "me@example.com",
+    orgId: "org",
+  })
+  globalThis.fetch = (async () =>
+    new Response("", { status: 503 })) as unknown as typeof fetch
+  const first = await fetchWindsurfSelfProfile("cog_identity")
+  expect(first.userName).toMatch(/^Devin · [0-9a-f]{12}$/)
+  expect(await fetchWindsurfSelfProfile("cog_identity")).toEqual(first)
+  expect(await fetchWindsurfSelfProfile("cog_other")).not.toEqual(first)
+  globalThis.fetch = (async () =>
+    new Response("", { status: 401 })) as unknown as typeof fetch
+  await expect(fetchWindsurfSelfProfile("cog_identity")).rejects.toThrow(
+    "rejected",
+  )
+})
+
+test("permission-only identity rejection permits enterprise creation but invalid keys still fail", async () => {
+  let status = 403
+  let message = "CLI identity is not allowed for this enterprise seat"
+  globalThis.fetch = (async () =>
+    new Response(message, { status })) as unknown as typeof fetch
+  const context = {
+    body: { credentials: { apiKey: "cog_enterprise" } },
+    label: "Windsurf",
+    registerDeviceFlow() {},
+  }
+  const created = await windsurfAccountCreation.prepare(context)
+  expect(created).toMatchObject({
+    provider: "windsurf",
+    credentials: { apiKey: "cog_enterprise" },
+    name: expect.stringMatching(/^Devin · [0-9a-f]{12}$/),
+  })
+  for (const [code, body] of [
+    [401, "unauthorized"],
+    [403, '{"code":"unauthenticated","message":"expired credential"}'],
+    [403, "invalid api key"],
+  ] as const) {
+    status = code
+    message = body
+    expect(await windsurfAccountCreation.prepare(context)).toMatchObject({
+      error: "Devin rejected the credential.",
+      status: 400,
+    })
+  }
+})
+
+test("CLI import snapshots only the server credentials without writing them", async () => {
+  const root = await mkdtemp(join(tmpdir(), "devin-import-"))
+  const previous = process.env.XDG_DATA_HOME
+  const previousAppData = process.env.APPDATA
+  process.env.XDG_DATA_HOME = root
+  process.env.APPDATA = root
+  try {
+    await mkdir(join(root, "devin"))
+    const file = join(root, "devin", "credentials.toml")
+    const source =
+      'windsurf_api_key = "cog_import"\napi_server_url = "https://region.example"\ndevin_webapp_host = "app.example"\ndevin_api_url = "https://api.example"\n'
+    await writeFile(file, source)
+    globalThis.fetch = (async (url) => {
+      expect(String(url)).toStartWith("https://region.example/")
+      return Response.json({ userStatus: { email: "import@example.com" } })
+    }) as typeof fetch
+    for (const body of [
+      { credentials: { importCli: true, path: "/must/not/read" } },
+      { settings: { importCli: true } },
+    ]) {
+      const result = await windsurfAccountCreation.prepare({
+        body,
+        label: "Windsurf",
+        registerDeviceFlow() {},
+      })
+      expect(result).toMatchObject({
+        provider: "windsurf",
+        credentials: { apiKey: "cog_import" },
+        settings: {
+          baseUrl: "https://region.example",
+          devinWebappHost: "app.example",
+          devinApiUrl: "https://api.example",
+        },
+      })
+      expect("settings" in result && result.settings?.importCli).toBeUndefined()
+    }
+    expect(await readFile(file, "utf8")).toBe(source)
+  } finally {
+    if (previous === undefined) delete process.env.XDG_DATA_HOME
+    else process.env.XDG_DATA_HOME = previous
+    if (previousAppData === undefined) delete process.env.APPDATA
+    else process.env.APPDATA = previousAppData
+    await rm(root, { recursive: true, force: true })
+  }
+})
 
 describe("windsurf error classifier (CPA trailer-code parity)", () => {
   test("resource_exhausted maps to rate_limited", () => {

@@ -580,6 +580,14 @@ const i18n = {
       "accounts.provider.codebuff.fields.allowFallbacks": "允许回退模型",
       "accounts.provider.windsurf.fields.apiKey": "Windsurf API Key",
       "accounts.provider.windsurf.oauthLogin": "浏览器登录 (OAuth)",
+      "accounts.provider.windsurf.importCli":
+        "导入服务器上的 Devin CLI 登录凭证",
+      "accounts.provider.windsurf.importCliHint":
+        "只读导入运行 copilot-api 的机器上的 Devin CLI 凭证，跳过 OAuth；不会修改 CLI 登录状态。不支持指定凭证路径。",
+      "accounts.provider.windsurf.cacheKeepalive":
+        "启用付费后台缓存保活（默认关闭）",
+      "accounts.provider.windsurf.cacheKeepaliveHint":
+        "仅主动勾选后才发送后台请求以保留缓存；这会消耗真实的上游 token，可能产生费用，用量会记录在统计中。关闭不会影响正常请求。",
       "accounts.provider.windsurf.fields.baseUrl": "Windsurf Base URL",
       "accounts.provider.windsurf.fields.defaultModel": "Windsurf 默认模型",
       "accounts.provider.windsurf.fields.appVersion": "Windsurf App 版本",
@@ -2737,6 +2745,14 @@ const i18n = {
         "Allow Fallback Models",
       "accounts.provider.windsurf.fields.apiKey": "Windsurf API Key",
       "accounts.provider.windsurf.oauthLogin": "Browser login (OAuth)",
+      "accounts.provider.windsurf.importCli":
+        "Import Devin CLI credentials from the server",
+      "accounts.provider.windsurf.importCliHint":
+        "Read-only import from the machine running copilot-api, bypassing OAuth. Does not change the CLI login. Custom credential paths are not supported.",
+      "accounts.provider.windsurf.cacheKeepalive":
+        "Enable paid background cache keepalive (off by default)",
+      "accounts.provider.windsurf.cacheKeepaliveHint":
+        "Only opt in to send background requests that retain the cache. These consume real upstream tokens and may incur charges; usage is recorded in statistics. Disabling does not affect normal requests.",
       "accounts.provider.windsurf.fields.baseUrl": "Windsurf Base URL",
       "accounts.provider.windsurf.fields.defaultModel":
         "Windsurf Default Model",
