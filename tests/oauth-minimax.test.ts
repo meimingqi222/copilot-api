@@ -456,6 +456,143 @@ describe("MiniMax Code protocol adapter", () => {
       "msg_1",
     )
   })
+
+  test("moves a tool's argument tail back from a thinking block MiniMax opened after it", async () => {
+    initializeProtocolAdapters()
+    const adapter = getProtocolAdapter("minimax-native")
+    // Event order captured from MiniMax: the second tool stops, a thinking
+    // block opens, and the tool's closing brace arrives on the thinking index.
+    const upstream = [
+      {
+        type: "message_start",
+        message: { id: "msg_1", model: "MiniMax-M3.1-Flash" },
+      },
+      {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "tool_use", id: "a", name: "exec", input: {} },
+      },
+      {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "input_json_delta", partial_json: '{"command":"ls"}' },
+      },
+      { type: "content_block_stop", index: 0 },
+      {
+        type: "content_block_start",
+        index: 1,
+        content_block: { type: "tool_use", id: "b", name: "read", input: {} },
+      },
+      {
+        type: "content_block_delta",
+        index: 1,
+        delta: {
+          type: "input_json_delta",
+          partial_json: '{"path":"D:\\\\code',
+        },
+      },
+      { type: "content_block_stop", index: 1 },
+      { type: "ping" },
+      {
+        type: "content_block_start",
+        index: 2,
+        content_block: { type: "thinking", thinking: "" },
+      },
+      {
+        type: "content_block_delta",
+        index: 2,
+        delta: { type: "thinking_delta", thinking: "0." },
+      },
+      {
+        type: "content_block_delta",
+        index: 2,
+        delta: { type: "input_json_delta", partial_json: '\\\\seqstone"}' },
+      },
+      { type: "content_block_stop", index: 2 },
+      {
+        type: "message_delta",
+        delta: { stop_reason: "tool_use" },
+        usage: { output_tokens: 9 },
+      },
+      { type: "message_stop" },
+    ]
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(
+          upstream
+            .map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`)
+            .join(""),
+          {
+            headers: { "content-type": "text/event-stream" },
+          },
+        ),
+      )) as unknown as typeof fetch
+
+    const connection = createConnection()
+    const credential = connection.credentials[0]!
+    const result = await adapter!.createMessages!({
+      target: {
+        connectionId: connection.id,
+        connectionName: connection.name,
+        protocol: "minimax-native",
+        credentialId: credential.id,
+        publicModelId: "minimax-m3",
+        upstreamModelId: "MiniMax-M3",
+        endpoint: "messages",
+        connectionPriority: 0,
+        connectionWeight: 1,
+        credentialPriority: 0,
+        credentialWeight: 1,
+      },
+      connection,
+      credential,
+      payload: {
+        model: "x",
+        max_tokens: 16,
+        stream: true,
+        messages: [{ role: "user", content: "ping" }],
+      },
+    })
+
+    const events: Array<{
+      type: string
+      index?: number
+      delta?: { type?: string; partial_json?: string }
+    }> = []
+    for await (const frame of (
+      result as { response: AsyncIterable<{ data?: string }> }
+    ).response) {
+      if (frame.data) events.push(JSON.parse(frame.data))
+    }
+    const args = new Map<number, string>()
+    const stopped = new Set<number>()
+    for (const e of events) {
+      if (e.type === "content_block_stop") stopped.add(e.index!)
+      if (e.delta?.type !== "input_json_delta") continue
+      expect(stopped.has(e.index!)).toBe(false)
+      args.set(e.index!, (args.get(e.index!) ?? "") + e.delta.partial_json)
+    }
+    expect(JSON.parse(args.get(1)!)).toEqual({ path: "D:\\code\\seqstone" })
+    expect(JSON.parse(args.get(0)!)).toEqual({ command: "ls" })
+    expect(args.has(2)).toBe(false)
+    // The thinking block itself still arrives, after the tool it followed.
+    expect(events.map((e) => e.type)).toEqual([
+      "message_start",
+      "content_block_start",
+      "content_block_delta",
+      "content_block_stop",
+      "content_block_start",
+      "content_block_delta",
+      "content_block_delta",
+      "content_block_stop",
+      "ping",
+      "content_block_start",
+      "content_block_delta",
+      "content_block_stop",
+      "message_delta",
+      "message_stop",
+    ])
+  })
 })
 
 describe("MiniMax Code quota", () => {

@@ -38,6 +38,111 @@ import {
 
 import type { AdapterMessagesResult, ProtocolAdapter } from "./types"
 
+type SseFrame = { data?: string; event?: string }
+
+function rewriteIndex(frame: SseFrame, event: object, index: number): SseFrame {
+  return { ...frame, data: JSON.stringify({ ...event, index }) }
+}
+
+/**
+ * MiniMax 有时在一个已结束的 tool_use 之后再开一个 thinking 块，并把该工具参数
+ * 的结尾作为 `input_json_delta` 挂在 thinking 块的 index 上。按 index 拼参数的
+ * 客户端于是拿到截断的 JSON（少一个 `}`，或从字符串中间断开）。
+ *
+ * 这里先扣住每个 tool_use 的 `content_block_stop`，直到后面的 thinking 块结束
+ * 或出现别的事件；期间挂错位置的参数片段改回工具的 index，放在 stop 之前。
+ */
+export async function* repairMinimaxToolArguments(
+  stream: AsyncIterable<SseFrame>,
+): AsyncGenerator<SseFrame> {
+  const types = new Map<number, string>()
+  let toolIndex: number | undefined
+  let held: Array<SseFrame> = []
+  let moved: Array<SseFrame> = []
+  const release = () => {
+    const frames = [...moved, ...held]
+    held = []
+    moved = []
+    return frames
+  }
+
+  for await (const frame of stream) {
+    let event:
+      | {
+          type?: string
+          index?: number
+          content_block?: { type?: string }
+          delta?: { type?: string }
+        }
+      | undefined
+    try {
+      event = frame.data ? JSON.parse(frame.data) : undefined
+    } catch {
+      event = undefined
+    }
+    if (!event || typeof event !== "object") {
+      yield* release()
+      yield frame
+      continue
+    }
+    const index = event.index ?? -1
+    const strayArguments =
+      event.type === "content_block_delta"
+      && event.delta?.type === "input_json_delta"
+      && types.get(index) !== "tool_use"
+      && toolIndex !== undefined
+
+    if (held.length > 0) {
+      if (strayArguments) {
+        moved.push(rewriteIndex(frame, event, toolIndex!))
+        continue
+      }
+      if (
+        event.type === "content_block_start"
+        && event.content_block?.type === "thinking"
+      ) {
+        types.set(index, "thinking")
+        held.push(frame)
+        continue
+      }
+      if (
+        event.type === "ping"
+        || (event.type === "content_block_delta"
+          && types.get(index) === "thinking")
+      ) {
+        held.push(frame)
+        continue
+      }
+      if (
+        event.type === "content_block_stop"
+        && types.get(index) === "thinking"
+      ) {
+        held.push(frame)
+        yield* release()
+        continue
+      }
+      yield* release()
+    }
+
+    if (event.type === "content_block_start") {
+      types.set(index, event.content_block?.type ?? "text")
+      if (event.content_block?.type === "tool_use") toolIndex = index
+    } else if (strayArguments) {
+      // The tool block is still open (or already released): keep the tail on it.
+      yield rewriteIndex(frame, event, toolIndex!)
+      continue
+    } else if (
+      event.type === "content_block_stop"
+      && types.get(index) === "tool_use"
+    ) {
+      held.push(frame)
+      continue
+    }
+    yield frame
+  }
+  yield* release()
+}
+
 /** MiniMax 的 Messages baseUrl（`.../llm/v1`），缺失时按 region 兜底。 */
 function resolveMinimaxBaseUrl(connection: ProviderConnection): string {
   const configured = connection.baseUrl?.trim()
@@ -99,7 +204,9 @@ export const minimaxNativeAdapter: ProtocolAdapter = {
       const stream = await safeSseStream(response, detectAnthropicStreamError)
       return {
         credentialId: credential.id,
-        response: stream as unknown as AsyncIterable<unknown>,
+        response: repairMinimaxToolArguments(
+          stream as unknown as AsyncIterable<SseFrame>,
+        ) as AsyncIterable<unknown>,
       } satisfies AdapterMessagesResult
     }
 
