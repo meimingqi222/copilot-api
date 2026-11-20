@@ -112,6 +112,7 @@ function decodeJwtPayload(token: string): JwtPayload | null {
 }
 
 function credentialExpiryMs(credential: ApiCredential): number | undefined {
+  if (isCodebuddyApiKey(credential)) return undefined
   const expiresAt = credential.context?.expiresAt
   if (typeof expiresAt === "number") return expiresAt
   const jwtExpiry =
@@ -120,8 +121,13 @@ function credentialExpiryMs(credential: ApiCredential): number | undefined {
 }
 
 function hasRefreshToken(credential: ApiCredential): boolean {
+  if (isCodebuddyApiKey(credential)) return false
   const refreshToken = credential.context?.refreshToken
   return typeof refreshToken === "string" && refreshToken.length > 0
+}
+
+export function isCodebuddyApiKey(credential: ApiCredential): boolean {
+  return credential.context?.signIn === "api-key"
 }
 
 /**
@@ -138,6 +144,7 @@ export async function refreshCodebuddyTokenForConnection(
     logger.warn(`[codebuddy] connection "${conn.name}" has no credential`)
     return false
   }
+  if (isCodebuddyApiKey(credential)) return false
 
   const ctx = credential.context as
     | { refreshToken?: string; accountId?: string }
@@ -253,7 +260,10 @@ export async function refreshCodebuddyTokenForConnection(
  * 在过期前 5 分钟触发。
  */
 export function codebuddyNeedsRefresh(credential: ApiCredential): boolean {
-  return needsRefreshAt(credentialExpiryMs(credential))
+  return (
+    !isCodebuddyApiKey(credential)
+    && needsRefreshAt(credentialExpiryMs(credential))
+  )
 }
 
 const scheduler = createTokenRefreshScheduler({
@@ -289,6 +299,11 @@ export function ensureCodebuddyAccessToken(
   credential: ApiCredential,
   signal?: AbortSignal,
 ): Promise<string | undefined> {
+  if (isCodebuddyApiKey(credential)) {
+    return signal?.aborted ?
+        Promise.reject(signal.reason)
+      : Promise.resolve(credential.value)
+  }
   return scheduler.ensureAccessToken(conn, credential, signal)
 }
 

@@ -23,6 +23,10 @@ export default defineConfig({
       to: "dist/MAGPIE-LICENSE.txt",
     },
     {
+      from: "src/services/doubao-work/MAGPIE-LICENSE",
+      to: "dist/MAGPIE-COMMUNITY-LICENSE.txt",
+    },
+    {
       from: "src/services/aistudio/waa/LICENSE",
       to: "dist/AIStudio2API-LICENSE.txt",
     },

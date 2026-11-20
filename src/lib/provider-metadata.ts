@@ -1,6 +1,8 @@
 import { providerMetadata as antigravityMetadata } from "~/lib/provider-descriptors/antigravity"
 import { providerMetadata as aistudioMetadata } from "~/lib/provider-descriptors/aistudio"
+import { providerMetadata as astudioMetadata } from "~/lib/provider-descriptors/astudio"
 import { providerMetadata as claudeMetadata } from "~/lib/provider-descriptors/claude"
+import { providerMetadata as codeartsMetadata } from "~/lib/provider-descriptors/codearts"
 import {
   codebuddyCnMetadata,
   codebuddyMetadata,
@@ -10,17 +12,23 @@ import { providerMetadata as codexMetadata } from "~/lib/provider-descriptors/co
 import { providerMetadata as commandCodePlanMetadata } from "~/lib/provider-descriptors/commandcode-plan"
 import { providerMetadata as copilotMetadata } from "~/lib/provider-descriptors/copilot"
 import { providerMetadata as dimagentMetadata } from "~/lib/provider-descriptors/dimagent"
+import { providerMetadata as doubaoWorkMetadata } from "~/lib/provider-descriptors/doubao-work"
+import { providerMetadata as dumateMetadata } from "~/lib/provider-descriptors/dumate"
 import { providerMetadata as factoryMetadata } from "~/lib/provider-descriptors/factory"
 import { providerMetadata as geminiMetadata } from "~/lib/provider-descriptors/gemini"
+import { providerMetadata as inkstoneMetadata } from "~/lib/provider-descriptors/inkstone"
 import { providerMetadata as kimiMetadata } from "~/lib/provider-descriptors/kimi"
 import { providerMetadata as lobsteraiMetadata } from "~/lib/provider-descriptors/lobsterai"
+import { providerMetadata as meooMetadata } from "~/lib/provider-descriptors/meoo"
 import { providerMetadata as mimoMetadata } from "~/lib/provider-descriptors/mimo-aistudio"
 import { providerMetadata as minimaxMetadata } from "~/lib/provider-descriptors/minimax"
 import { providerMetadata as qoderMetadata } from "~/lib/provider-descriptors/qoder"
 import { providerMetadata as qoderCnMetadata } from "~/lib/provider-descriptors/qoder-cn"
+import { providerMetadata as raccoonMetadata } from "~/lib/provider-descriptors/raccoon"
 import { providerMetadata as traeCnMetadata } from "~/lib/provider-descriptors/trae-cn"
 import { providerMetadata as traeGlobalMetadata } from "~/lib/provider-descriptors/trae-global"
 import { providerMetadata as windsurfMetadata } from "~/lib/provider-descriptors/windsurf"
+import { providerMetadata as wpsLingxiMetadata } from "~/lib/provider-descriptors/wps-lingxi"
 import { providerMetadata as xaiMetadata } from "~/lib/provider-descriptors/xai"
 import { providerMetadata as zcodeMetadata } from "~/lib/provider-descriptors/zcode"
 import { providerMetadata as zedMetadata } from "~/lib/provider-descriptors/zed"
@@ -52,6 +60,14 @@ export const PROVIDER_METADATA_ENTRIES = [
   traeCnMetadata,
   traeGlobalMetadata,
   aistudioMetadata,
+  astudioMetadata,
+  codeartsMetadata,
+  doubaoWorkMetadata,
+  dumateMetadata,
+  inkstoneMetadata,
+  meooMetadata,
+  raccoonMetadata,
+  wpsLingxiMetadata,
 ] as const
 
 export const PROVIDER_METADATA = createProviderMetadataCatalog(

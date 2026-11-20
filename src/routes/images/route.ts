@@ -8,6 +8,7 @@ import { prepareRequestAdmission } from "~/lib/request-admission"
 import { MAX_MEDIA_JSON_BODY_BYTES, readJsonBody } from "~/lib/request-body"
 import { recordTraceError } from "~/lib/request-log"
 import { recordUsage } from "~/lib/usage"
+import { createWorkbuddyImage } from "~/services/codebuddy/images"
 import {
   createCodexImageEdit,
   createCodexImageGeneration,
@@ -40,7 +41,7 @@ function collectImageForwardedHeaders(
 }
 
 /**
- * 两个图片端口共用的下游：admission → 按 connection 协议分流到 codex/xAI →
+ * 两个图片端口共用的下游：admission → 按 connection 协议分流 →
  * 记录用量 → 返回 JSON。`model` 为路由用的规范模型名，`payload` 保留原始字段。
  */
 async function dispatchImageRequest(
@@ -86,6 +87,16 @@ async function dispatchImageRequest(
                 signal,
                 { forwardedHeaders },
               )
+        } else if (admission.connection.protocol === "codebuddy-native") {
+          response = await createWorkbuddyImage(
+            {
+              ...subject,
+              target: admission.target,
+              payload: payload as CodexImageEditRequest,
+              signal,
+            },
+            action,
+          )
         } else {
           const idempotencyKey = c.req.header("x-idempotency-key")
           response =

@@ -64,6 +64,8 @@ export function effectiveCredentials(
  * 后者会把免密连接误判成「无凭据」而整条漏掉。
  */
 export function hasEnabledCredential(connection: ProviderConnection): boolean {
+  // The paused desktop integration stays persisted but must not publish models.
+  if (connection.protocol === "doubao-work-native") return false
   return effectiveCredentials(connection).some(
     (credential) => credential.enabled,
   )

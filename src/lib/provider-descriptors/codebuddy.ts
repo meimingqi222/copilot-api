@@ -8,9 +8,9 @@ import { OAUTH_ACCOUNT_FIELDS } from "~/lib/provider-descriptors/shared"
 
 const credentials = {
   primaryKey: "accessToken",
-  exportKeys: ["accessToken", "refreshToken", "expiresAt"],
+  exportKeys: ["accessToken", "refreshToken", "expiresAt", "signIn"],
   refresherType: "codebuddy-token" as const,
-  contextStringKeys: ["refreshToken"],
+  contextStringKeys: ["refreshToken", "signIn"],
   contextValueKeys: ["expiresAt"],
 }
 

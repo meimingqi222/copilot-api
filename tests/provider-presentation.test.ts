@@ -32,6 +32,7 @@ interface AccountView {
   handleAccountSubmit(): Promise<void> | undefined
   getSubmitButtonText(): string
   resetAddModalState(): void
+  closeAddModal(): Promise<void>
   showToast(message: string, kind: string): void
   load(): Promise<void>
   startOAuthFlow(): Promise<void>
@@ -112,6 +113,42 @@ describe("provider-owned account presentation", () => {
       expect(view.newAccount.credentials).toEqual({})
     },
   )
+
+  test("Doubao Work confirms or cancels only the desktop session explicitly started by the admin", async () => {
+    const actions: unknown[] = []
+    const view = createView(async (payload) => {
+      const credentials = (payload as { credentials: Record<string, string> })
+        .credentials
+      actions.push(credentials)
+      return credentials.desktopAction === "start" ?
+          { status: "awaiting_desktop_sign_in", nonce: "desktop-fixture" }
+        : { status: "complete" }
+    })
+    view.load = () => Promise.resolve()
+    view.newAccount.provider = "doubao-work"
+    expect(view.getSubmitButtonText()).toBe("accounts.doubaoWork.start")
+    await view.handleAccountSubmit()
+    expect(view.getSubmitButtonText()).toBe("accounts.doubaoWork.confirm")
+    await view.handleAccountSubmit()
+    expect(view.deviceFlowStep).toBe("success")
+    view.resetAddModalState()
+    view.newAccount.provider = "doubao-work"
+    await view.handleAccountSubmit()
+    await view.closeAddModal()
+    expect(actions).toEqual([
+      { desktopAction: "start" },
+      { desktopAction: "confirm", desktopNonce: "desktop-fixture" },
+      { desktopAction: "start" },
+      { desktopAction: "cancel", desktopNonce: "desktop-fixture" },
+    ])
+  })
+
+  test("the paused Doubao Work provider stays out of the Add Account picker", () => {
+    const view = createView()
+    view.providerCategory = "all"
+    view.providerSearchQuery = "doubao-work"
+    expect(view.filteredProviders()).toEqual([])
+  })
 
   test("existing categories, import modes and manual callback availability survive API-driven rendering", () => {
     const view = createView()

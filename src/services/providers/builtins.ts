@@ -28,6 +28,14 @@ import {
   getTraeGlobalModule,
 } from "~/services/providers/modules/trae-cn"
 import { getAIStudioModule } from "~/services/providers/modules/aistudio"
+import { getAstudioModule } from "~/services/providers/modules/astudio"
+import { getCodeArtsModule } from "~/services/providers/modules/codearts"
+import { getDisabledDoubaoWorkModule } from "~/services/providers/modules/doubao-work"
+import { getDuMateModule } from "~/services/providers/modules/dumate"
+import { getInkstoneModule } from "~/services/providers/modules/inkstone"
+import { getMeooModule } from "~/services/providers/modules/meoo"
+import { getRaccoonModule } from "~/services/providers/modules/raccoon"
+import { getWpsLingxiModule } from "~/services/providers/modules/wps-lingxi"
 
 // Factories keep registration independent of module import order.
 const modules: Record<ProviderId, () => ProviderModule> = {
@@ -55,6 +63,14 @@ const modules: Record<ProviderId, () => ProviderModule> = {
   "trae-cn": getTraeCnModule,
   "trae-global": getTraeGlobalModule,
   aistudio: getAIStudioModule,
+  astudio: getAstudioModule,
+  codearts: getCodeArtsModule,
+  "doubao-work": getDisabledDoubaoWorkModule,
+  dumate: getDuMateModule,
+  inkstone: getInkstoneModule,
+  meoo: getMeooModule,
+  raccoon: getRaccoonModule,
+  "wps-lingxi": getWpsLingxiModule,
 }
 
 export function listBuiltinProviderModules(): Array<ProviderModule> {

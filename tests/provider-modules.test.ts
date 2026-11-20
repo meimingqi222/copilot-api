@@ -46,14 +46,14 @@ describe("internal provider modules", () => {
       "codebuff",
       "mimo-aistudio",
       "aistudio",
+      "doubao-work",
     ] as const
     expect(unsupported.map((module) => module.id).sort()).toEqual(
       [...unsupportedIds].sort(),
     )
-    expect(modules).toHaveLength(24)
     expect(
       modules.filter((module) => module.quota?.source.includes("poll")),
-    ).toHaveLength(19)
+    ).toHaveLength(PROVIDER_IDS.length - unsupportedIds.length)
     for (const module of modules) {
       expect(module.quota, module.id).toBeDefined()
       expect(getProviderRuntime(module.id).quota).toEqual(module.quota)

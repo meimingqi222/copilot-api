@@ -36,6 +36,8 @@ function accountsView() {
     },
     deviceFlowStep: "input",
     deviceFlowData: null,
+    desktopSignInNonce: "",
+    desktopSignInSubmitting: false,
     oauthFlowData: null,
     oauthCallbackInput: "",
     oauthCallbackSubmitting: false,
@@ -527,6 +529,7 @@ function accountsView() {
     filteredProviders() {
       const query = this.providerSearchQuery.trim().toLowerCase()
       return (this.providers || []).filter((p) => {
+        if (p.id === "doubao-work") return false
         // 合并 CodeBuddy：codebuddy-cn 不单独出卡片，统一归入 codebuddy
         if (p.id === "codebuddy-cn") {
           return false
@@ -575,7 +578,9 @@ function accountsView() {
       })
     },
 
-    backToProviderSelect() {
+    async backToProviderSelect() {
+      if (this.desktopSignInSubmitting) return
+      await this.cancelDesktopSignIn()
       this.addStep = "select"
       this.$nextTick(() => {
         if (window.lucide) refreshAdminIcons(this.$el)
@@ -591,6 +596,13 @@ function accountsView() {
     },
 
     getSubmitButtonText() {
+      if (this.newAccount.provider === "doubao-work") {
+        return I18n.t(
+          this.desktopSignInNonce ?
+            "accounts.doubaoWork.confirm"
+          : "accounts.doubaoWork.start",
+        )
+      }
       if (this.isWindsurfCliImport()) {
         return I18n.t("accounts.saveAndImport")
       }
@@ -610,6 +622,9 @@ function accountsView() {
     },
 
     handleAccountSubmit() {
+      if (this.newAccount.provider === "doubao-work") {
+        return this.submitDesktopSignIn()
+      }
       const meta = this.getProviderMeta(this.newAccount.provider)
       const isManual = meta.hasManualMode && this.authMethodTab === "manual"
       if (isManual && meta.importMethod === "pat") {
@@ -628,6 +643,60 @@ function accountsView() {
       return this.submitAccount(isManual)
     },
 
+    async submitDesktopSignIn() {
+      if (this.desktopSignInSubmitting) return
+      this.desktopSignInSubmitting = true
+      const nonce = this.desktopSignInNonce
+      try {
+        const res = await API.accounts.create({
+          provider: "doubao-work",
+          label: this.newAccount.label.trim() || undefined,
+          credentials:
+            nonce ?
+              { desktopAction: "confirm", desktopNonce: nonce }
+            : { desktopAction: "start" },
+        })
+        if (
+          !nonce
+          && res?.status === "awaiting_desktop_sign_in"
+          && typeof res.nonce === "string"
+          && res.nonce
+        ) {
+          this.desktopSignInNonce = res.nonce
+        } else if (nonce && (!res?.status || res.status === "complete")) {
+          this.desktopSignInNonce = ""
+          this.deviceFlowStep = "success"
+          await this.load()
+        } else {
+          throw new Error(I18n.t("error.create"))
+        }
+      } catch (error) {
+        this.showToast(
+          error instanceof Error ? error.message : I18n.t("error.create"),
+          "error",
+        )
+      } finally {
+        this.desktopSignInSubmitting = false
+      }
+    },
+
+    async cancelDesktopSignIn() {
+      const nonce = this.desktopSignInNonce
+      if (!nonce) return
+      this.desktopSignInNonce = ""
+      try {
+        await API.accounts.create({
+          provider: "doubao-work",
+          credentials: { desktopAction: "cancel", desktopNonce: nonce },
+        })
+      } catch (error) {
+        this.showToast(
+          error instanceof Error ? error.message : I18n.t("error.create"),
+          "error",
+        )
+      }
+    },
+
     /** 重置新增/重认证弹窗的全部临时状态。 */
     resetAddModalState() {
       this.newAccount = this.defaultNewAccount()
@@ -638,6 +707,8 @@ function accountsView() {
       this.authMethodTab = "oauth"
       this.deviceFlowStep = "input"
       this.deviceFlowData = null
+      this.desktopSignInNonce = ""
+      this.desktopSignInSubmitting = false
       this.oauthFlowData = null
       this.oauthCallbackInput = ""
       this.oauthCallbackSubmitting = false
@@ -702,6 +773,8 @@ function accountsView() {
     },
 
     async closeAddModal() {
+      if (this.desktopSignInSubmitting) return
+      await this.cancelDesktopSignIn()
       if (this.deviceFlowStep === "pending") {
         await this.cancelOAuthFlow()
       }
@@ -812,9 +885,8 @@ function accountsView() {
         proxyUrl: proxyUrl || undefined,
         manual,
       }
-      // MiniMax Code 需要在取设备码之前定下版本（国内版 cn / 国际版 en），
-      // 不传时后端按国内版处理。
-      if (provider === "minimax") {
+      // These accounts pick a regional authorization server before login.
+      if (provider === "minimax" || provider === "codearts") {
         payload.region = settings.region || undefined
       }
       if (this.reauthAccount) {

@@ -649,11 +649,9 @@ describe("CodeBuddy model discovery", () => {
     ) as typeof fetch
     initializeProtocolAdapters()
     const models = await codebuddyCnProviderRuntime.refreshModels(connection)
-    expect(models.map((m) => m.publicId)).toEqual([
-      "cn-model",
-      "config-only",
-      "account-only",
-    ])
+    expect(
+      models.filter((m) => m.endpoints.includes("chat")).map((m) => m.publicId),
+    ).toEqual(["cn-model", "config-only", "account-only"])
     expect(models[0]?.name).toBe("Config name")
   })
 

@@ -47,6 +47,9 @@ describe("provider contributions", () => {
       "gemini",
       "trae-cn",
       "trae-global",
+      "codearts",
+      "meoo",
+      "raccoon",
     ]
     expect(Object.keys(OAUTH_CALLBACK_CONFIGS).sort()).toEqual(ids.sort())
     expect("copilot" in OAUTH_CALLBACK_CONFIGS).toBe(false)
@@ -100,13 +103,13 @@ describe("provider contributions", () => {
           "codebuddy",
           "accessToken",
           "authToken",
-          "CodeBuddy accessToken is required.",
+          "CodeBuddy accessToken or WorkBuddy apiKey is required.",
         ],
         [
           "codebuddy-cn",
           "accessToken",
           "authToken",
-          "CodeBuddy accessToken is required.",
+          "CodeBuddy accessToken or WorkBuddy apiKey is required.",
         ],
       ] as const) {
         const creation = getBuiltinProviderModule(id)!.accountCreation!

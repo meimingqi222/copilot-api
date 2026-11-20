@@ -17,6 +17,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 
 import { PATHS, redirectPathsToDir } from "~/lib/paths"
+import type { ProviderPreset } from "~/lib/provider-presets"
 import { server } from "~/server"
 
 import {
@@ -86,6 +87,69 @@ describe("Provider Presets & Fetch Models API", () => {
     const siliconflow = body.presets.find((p) => p.id === "siliconflow")
     expect(siliconflow).toBeDefined()
     expect(siliconflow?.name).toContain("SiliconFlow")
+  })
+
+  test("DeepSeek presets advertise each gateway's native endpoint and model ID", async () => {
+    const res = await adminJson(
+      "http://localhost/admin/api/provider-connections/presets",
+    )
+    expect(res.status).toBe(200)
+    const { presets } = (await res.json()) as { presets: Array<ProviderPreset> }
+
+    for (const [id, baseUrl, endpoint, upstreamId] of [
+      [
+        "raccoon",
+        "https://xiaohuanxiong.com/api/web/llm/v2",
+        "chat",
+        "sn-deepseek-v4-1-flash",
+      ],
+      [
+        "astudio",
+        "https://astronstudio-api-volces-prod.xf-yun.com/model-gateway/v1",
+        "responses",
+        "xdeepseek-flash-in",
+      ],
+      [
+        "inkstone",
+        "https://discovery-api.intern-ai.org.cn/v1",
+        "chat",
+        "deepseek-v4.1-flash-1017",
+      ],
+      [
+        "dumate",
+        "https://dumate-svc.baidu.com/gateway/apis/v1",
+        "chat",
+        "deepseek-v41-flash",
+      ],
+      [
+        "meoo",
+        "https://api.meoo.host/meoo-ai/compatible-mode/v1",
+        "chat",
+        "deepseek-v4.1-flash-1017",
+      ],
+      [
+        "modelscope",
+        "https://api-inference.modelscope.cn/v1",
+        "chat",
+        "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+      ],
+    ] as const) {
+      expect(presets.find((preset) => preset.id === id)).toMatchObject({
+        baseUrl,
+        authMode: "bearer",
+        protocol:
+          endpoint === "responses" ?
+            "openai-responses-compatible"
+          : "openai-compatible",
+        defaultModels: expect.arrayContaining([
+          expect.objectContaining({
+            publicId: upstreamId,
+            upstreamId,
+            endpoints: [endpoint],
+          }),
+        ]),
+      })
+    }
   })
 
   test("GET /admin/api/provider-connections/presets merges user-defined presets", async () => {

@@ -2451,6 +2451,12 @@
                     />
                   </div>
 
+                  <p
+                    x-show="newAccount.provider === 'doubao-work'"
+                    class="p-3 text-sm bg-[var(--apple-bg-secondary)] rounded-lg"
+                    x-text="t(desktopSignInNonce ? 'accounts.doubaoWork.waiting' : 'accounts.doubaoWork.hint')"
+                  ></p>
+
                   <!-- 通用 Provider 提示信息（在非 manual 模式下展示） -->
                   <div
                     x-show="authMethodTab !== 'manual' && getProviderHint()"
@@ -2590,6 +2596,24 @@
                       rows="4"
                       placeholder='{"auth":{"accessToken":"eyJ...","refreshToken":"eyJ..."}}'
                     ></textarea>
+                    <label
+                      for="workbuddy-api-key"
+                      class="form-label"
+                      x-text="t('accounts.provider.codebuddy.apiKey')"
+                    ></label>
+                    <input
+                      id="workbuddy-api-key"
+                      x-model="newAccount.credentials.apiKey"
+                      type="password"
+                      autocomplete="off"
+                      class="form-input"
+                      aria-describedby="workbuddy-api-key-hint"
+                    />
+                    <p
+                      id="workbuddy-api-key-hint"
+                      class="text-xs text-[var(--apple-text-secondary)]"
+                      x-text="t('accounts.provider.codebuddy.apiKeyHint')"
+                    ></p>
                   </div>
 
                   <!-- LobsterAI SQLite DB 文件上传 & JSON 粘贴（仅在 manual 模式） -->
@@ -2653,7 +2677,7 @@
                     <button
                       @click="handleAccountSubmit()"
                       class="btn btn-primary"
-                      :disabled="patSubmitting"
+                      :disabled="patSubmitting || desktopSignInSubmitting"
                       x-text="getSubmitButtonText()"
                     ></button>
                   </div>

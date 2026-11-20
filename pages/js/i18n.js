@@ -546,6 +546,12 @@ const i18n = {
       "accounts.title": "账户连接",
       "accounts.addAccount": "添加账户",
       "accounts.addModal.title": "添加账号",
+      "accounts.doubaoWork.start": "打开桌面应用",
+      "accounts.doubaoWork.confirm": "已登录，完成绑定",
+      "accounts.doubaoWork.hint":
+        "需要在运行 copilot-api 的 macOS 或 Windows 主机上安装豆包工作，并能看到该主机的专用桌面窗口。普通 Linux / Docker 服务器不支持此登录方式。只支持云电脑任务。",
+      "accounts.doubaoWork.waiting":
+        "请在刚打开的专用桌面窗口中登录，然后回来确认。",
       "accounts.step.selectProvider": "选择服务平台",
       "accounts.step.configureAccount": "配置与授权",
       "accounts.backToSelect": "选择其他平台",
@@ -619,6 +625,9 @@ const i18n = {
       "accounts.provider.codebuddy.oauthHint":
         "点击「授权」会打开 CodeBuddy 登录页完成设备码确认；也可用下方 JSON 手动创建。",
       "accounts.provider.codebuddy.manualImport": "从粘贴的 token 创建",
+      "accounts.provider.codebuddy.apiKey": "WorkBuddy API 密钥",
+      "accounts.provider.codebuddy.apiKeyHint":
+        "也可以仅输入相应站点的 API 密钥（国内版：workbuddy.cn/profile/keys；国际版：workbuddy.ai/profile/keys）。不要同时粘贴登录 token。",
       "accounts.provider.codebuddy.series": "CodeBuddy",
       "accounts.provider.codebuddy.variant.intl": "国际版",
       "routingGroups.classifierModelPlaceholder":
@@ -754,7 +763,7 @@ const i18n = {
       "accounts.oauth.instruction":
         "请在浏览器中完成授权，完成后将自动添加账户。",
       "accounts.oauth.manualInstruction":
-        "请在浏览器中完成授权，然后将回调地址或授权码粘贴到下方。",
+        "请在自己的浏览器中完成授权。如果浏览器跳到本机回环地址后显示无法连接，仍可复制地址栏里的完整回调 URL 并粘贴到下方。无需开放服务器回调端口。",
       "accounts.oauth.openAuth": "打开授权页面",
       "accounts.oauth.openVerification": "打开验证页面",
       "accounts.oauth.waiting": "等待授权完成...",
@@ -801,6 +810,31 @@ const i18n = {
         "http://127.0.0.1:57557/authorize?userJwt=...&userInfo=...",
       "accounts.oauth.trae-globalCallbackHint":
         "授权后浏览器会跳转到 127.0.0.1（远程部署时页面打不开是正常的），复制地址栏完整 URL 粘贴到这里。",
+      "accounts.oauth.raccoonCallbackLabel": "商汤小浣熊回调地址",
+      "accounts.oauth.raccoonCallbackPlaceholder":
+        "http://127.0.0.1:59657/auth/callback?code=...&state=...",
+      "accounts.oauth.raccoonCallbackHint":
+        "请粘贴完整回调地址，单独复制授权码会丢失 state。",
+      "accounts.oauth.codeartsCallbackLabel": "CodeArts 回调地址或授权码",
+      "accounts.oauth.codeartsCallbackPlaceholder":
+        "http://127.0.0.1:18027/oauth/callback?code=...",
+      "accounts.oauth.codeartsCallbackHint":
+        "粘贴完整回调 URL，或仅粘贴 URL 中的授权码。",
+      "accounts.oauth.meooCallbackLabel": "Meoo 回调地址",
+      "accounts.oauth.meooCallbackPlaceholder":
+        "http://127.0.0.1:14556/oauth/callback?code=...&state=...",
+      "accounts.oauth.meooCallbackHint":
+        "请粘贴完整回调地址，单独复制授权码会丢失 state。",
+      "accounts.provider.astudio.cookie": "AStudio 网页 Cookie（可选）",
+      "accounts.provider.astudio.remoteHint":
+        "在自己的浏览器登录 agent.xfyun.cn，从开发者工具 → 网络中复制该网站请求的 Cookie 请求头；需要 account_id 和 token 或 ssoSessionId。也可只填 modelBearerToken 用于推理。远程部署时无需勾选桌面导入。",
+      "accounts.provider.dumate.cookie": "百度智能云控制台 Cookie",
+      "accounts.provider.dumate.remoteHint":
+        "在自己的浏览器登录 console.bce.baidu.com，从开发者工具 → 网络中复制发往该控制台的 Cookie 请求头，须包含 bce-sessionid。服务器会换发模型 token；网页会话失效后需重新粘贴。",
+      "accounts.provider.inkstone.remoteHint":
+        "推荐在 discovery.intern-ai.org.cn 创建墨点计划 API Key 后粘贴。只提供 uaa-token 时仅可查询额度，除非你明确勾选创建新 Key。",
+      "accounts.provider.wps-lingxi.remoteHint":
+        "在自己的浏览器登录 lingxi.wps.cn 或 lingxi.kdocs.cn，粘贴该站点的 wps_sid 值或含 wps_sid 的 Cookie 请求头。网页会话失效后需重新提供。",
       "accounts.oauth.success": "OAuth 账户添加成功！",
       "accounts.oauth.error": "OAuth 授权失败",
       "accounts.oauth.expired": "OAuth 授权已过期，请重试。",
@@ -2710,6 +2744,12 @@ const i18n = {
       "accounts.title": "Account Connections",
       "accounts.addAccount": "Add Account",
       "accounts.addModal.title": "Add Account",
+      "accounts.doubaoWork.start": "Open desktop app",
+      "accounts.doubaoWork.confirm": "Finish connecting",
+      "accounts.doubaoWork.hint":
+        "Requires Doubao Work and access to a dedicated desktop window on the macOS or Windows host running copilot-api. This sign-in is not supported on ordinary Linux or Docker servers. Cloud tasks only.",
+      "accounts.doubaoWork.waiting":
+        "Sign in to the dedicated desktop window, then return here to finish connecting.",
       "accounts.step.selectProvider": "Select Provider",
       "accounts.step.configureAccount": "Configure & Authorize",
       "accounts.backToSelect": "Choose another provider",
@@ -2786,6 +2826,9 @@ const i18n = {
       "accounts.provider.codebuddy.oauthHint":
         "Authorize opens the CodeBuddy device sign-in; you can also create one from the pasted JSON below.",
       "accounts.provider.codebuddy.manualImport": "Create from pasted tokens",
+      "accounts.provider.codebuddy.apiKey": "WorkBuddy API key",
+      "accounts.provider.codebuddy.apiKeyHint":
+        "Alternatively enter only a key from your site's keys page (China: workbuddy.cn/profile/keys; international: workbuddy.ai/profile/keys). Do not paste login tokens as well.",
       "accounts.provider.codebuddy.series": "CodeBuddy",
       "accounts.provider.codebuddy.variant.intl": "Intl",
       "routingGroups.classifierModelPlaceholder":
@@ -2924,7 +2967,7 @@ const i18n = {
       "accounts.oauth.instruction":
         "Complete authorization in your browser. The account will be added automatically.",
       "accounts.oauth.manualInstruction":
-        "Complete authorization in your browser, then paste the callback URL or authorization code below.",
+        "Authorize in your own browser. If the loopback address cannot load, copy the full callback URL from the address bar and paste it below. There is no need to expose a server callback port.",
       "accounts.oauth.openAuth": "Open authorization page",
       "accounts.oauth.openVerification": "Open verification page",
       "accounts.oauth.waiting": "Waiting for authorization...",
@@ -2973,6 +3016,32 @@ const i18n = {
         "http://127.0.0.1:57557/authorize?userJwt=...&userInfo=...",
       "accounts.oauth.trae-globalCallbackHint":
         "After authorization the browser jumps to 127.0.0.1 — on a remote deployment the page just fails to load; copy the full URL from the address bar and paste it here.",
+      "accounts.oauth.raccoonCallbackLabel": "SenseTime Raccoon callback URL",
+      "accounts.oauth.raccoonCallbackPlaceholder":
+        "http://127.0.0.1:59657/auth/callback?code=...&state=...",
+      "accounts.oauth.raccoonCallbackHint":
+        "Paste the full callback URL; the authorization code alone does not carry the state.",
+      "accounts.oauth.codeartsCallbackLabel":
+        "CodeArts callback URL or authorization code",
+      "accounts.oauth.codeartsCallbackPlaceholder":
+        "http://127.0.0.1:18027/oauth/callback?code=...",
+      "accounts.oauth.codeartsCallbackHint":
+        "Paste the full callback URL or just the authorization code from it.",
+      "accounts.oauth.meooCallbackLabel": "Meoo callback URL",
+      "accounts.oauth.meooCallbackPlaceholder":
+        "http://127.0.0.1:14556/oauth/callback?code=...&state=...",
+      "accounts.oauth.meooCallbackHint":
+        "Paste the full callback URL; the authorization code alone does not carry the state.",
+      "accounts.provider.astudio.cookie": "AStudio web Cookie (optional)",
+      "accounts.provider.astudio.remoteHint":
+        "Sign in at agent.xfyun.cn in your own browser. In Developer Tools → Network, copy that site's Cookie request header with account_id and either token or ssoSessionId. For inference only, paste modelBearerToken instead. Leave desktop import unchecked on a remote server.",
+      "accounts.provider.dumate.cookie": "Baidu Cloud console Cookie",
+      "accounts.provider.dumate.remoteHint":
+        "Sign in to console.bce.baidu.com in your own browser. In Developer Tools → Network, copy the console's Cookie request header including bce-sessionid. The server exchanges it for a model token; paste a fresh Cookie when the web session expires.",
+      "accounts.provider.inkstone.remoteHint":
+        "Prefer a Token Plan API key created at discovery.intern-ai.org.cn. A uaa-token alone gives quota access, not inference, unless you explicitly request a new key.",
+      "accounts.provider.wps-lingxi.remoteHint":
+        "Sign in at lingxi.wps.cn or lingxi.kdocs.cn in your own browser and paste that site's wps_sid value or a Cookie header containing it. Supply a fresh session when it expires.",
       "accounts.oauth.success": "OAuth account added successfully!",
       "accounts.oauth.error": "OAuth authorization failed",
       "accounts.oauth.expired":

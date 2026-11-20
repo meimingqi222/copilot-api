@@ -122,6 +122,7 @@ export function buildRouteTargets(
   const targets: Array<RouteTarget> = []
 
   for (const connection of connections) {
+    if (connection.protocol === "doubao-work-native") continue
     if (options.connectionId && connection.id !== options.connectionId) {
       continue
     }

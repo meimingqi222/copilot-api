@@ -13,6 +13,7 @@ import {
 import { state } from "~/lib/state"
 import { statsStore } from "~/lib/stats-store"
 import { server } from "~/server"
+import { parseWorkbuddyImageModels } from "~/services/codebuddy/image-models"
 
 const isolationRoot = PATHS.APP_DIR
 let tempAppDir: string
@@ -145,6 +146,69 @@ afterEach(async () => {
   __resetProviderConnectionsForTest()
   state.legacyApiKey = originalApiKey
   await fs.rm(tempAppDir, { recursive: true, force: true }).catch(() => {})
+})
+
+test("WorkBuddy routes a public image model to its generator and declared editor", async () => {
+  const [model, ...otherModels] = parseWorkbuddyImageModels({
+    models: [
+      { id: "hunyuan-image-alpha", tags: [" Text-to-Image "] },
+      { id: "hunyuan-image-alpha-edit", tags: ["image-to-image"] },
+      { id: "text-model", tags: ["tools"] },
+    ],
+  })
+  expect(otherModels).toEqual([])
+  expect(model?.endpoints).toEqual(["images"])
+  await createConnection({
+    id: "workbuddy-image",
+    name: "WorkBuddy Images",
+    protocol: "codebuddy-native",
+    baseUrl: "https://www.workbuddy.ai/v2",
+    credentials: [{ value: "fixture-token", authMode: "bearer" }],
+    models: [{ ...model, publicId: "draw-alpha" }],
+  })
+  const image = `data:image/png;base64,${IMAGE_B64}`
+  const answer = { created: 1757500000, data: [{ b64_json: IMAGE_B64 }] }
+  fetchQueue.push(
+    ...["0", 0].map((code) => ({
+      status: 200,
+      body: { code, data: answer },
+    })),
+  )
+  mockImageFetch()
+
+  for (const [action, fields] of [
+    ["generations", { n: 2 }],
+    ["edits", { images: [{ image_url: image }] }],
+  ] as const) {
+    const res = await server.request(`/v1/images/${action}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "draw-alpha",
+        prompt: "a cat",
+        size: "auto",
+        quality: "high",
+        ...fields,
+      }),
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual(answer)
+  }
+  expect(calls).toEqual([
+    {
+      url: "https://www.workbuddy.ai/v2/images/generations",
+      body: { model: "hunyuan-image-alpha", prompt: "a cat", n: 2 },
+    },
+    {
+      url: "https://www.workbuddy.ai/v2/images/edits",
+      body: {
+        model: "hunyuan-image-alpha-edit",
+        prompt: "a cat",
+        n: 1,
+        image: [image],
+      },
+    },
+  ])
 })
 
 describe("POST /v1/images/generations (codex)", () => {

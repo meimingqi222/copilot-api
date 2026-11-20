@@ -24,14 +24,21 @@ import { connectionFetchInit, getHeader } from "~/services/protocols/shared"
 
 import {
   ensureCodebuddyAccessToken,
+  isCodebuddyApiKey,
   resolveCodebuddyDomain,
 } from "~/services/codebuddy/token-refresh"
+import {
+  parseWorkbuddyEnterpriseUsage,
+  parseWorkbuddyUsageSummary,
+} from "~/services/codebuddy/usage"
 
 const CODEBUDDY_CN_BILLING_BASE = "https://www.codebuddy.cn"
 const CODEBUDDY_INTL_BILLING_BASE = "https://www.workbuddy.ai"
 const CODEBUDDY_RESOURCE_PATH = "/v2/billing/meter/get-user-resource"
 const CODEBUDDY_RESOURCE_FALLBACK_PATH = "/billing/meter/get-user-resource"
 const CODEBUDDY_USER_AGENT = "CLI/2.148.0 CodeBuddy/2.148.0"
+const WORKBUDDY_SUMMARY_PATH = "/billing/meter/get-user-resource-summary"
+const WORKBUDDY_ENTERPRISE_PATH = "/billing/meter/get-enterprise-user-usage"
 
 /**
  * 按连接解析 billing base：metadata.provider 优先（codebuddy 双版本共用协议，
@@ -210,6 +217,16 @@ export async function fetchCodebuddyQuota(
   if (!credential) {
     throw new Error("CodeBuddy quota request requires an access token")
   }
+  const snapshotProvider = provider ?? "codebuddy-cn"
+  if (isCodebuddyApiKey(credential)) {
+    return {
+      provider: snapshotProvider,
+      fetchedAt: Date.now(),
+      unlimited: false,
+      allowance: { state: "unknown", windows: [] },
+      details: { reason: "WorkBuddy does not report credits for API keys" },
+    }
+  }
   const accessToken = await ensureCodebuddyAccessToken(
     connection,
     credential,
@@ -259,19 +276,34 @@ export async function fetchCodebuddyQuota(
   })
 
   const { base, intl } = resolveCodebuddyBillingBase(connection)
-  const paths =
+  const legacyPaths =
     intl ?
       [CODEBUDDY_RESOURCE_PATH, CODEBUDDY_RESOURCE_FALLBACK_PATH]
     : [CODEBUDDY_RESOURCE_PATH]
+  const paths = [
+    ...(enterpriseId ? [WORKBUDDY_ENTERPRISE_PATH] : []),
+    WORKBUDDY_SUMMARY_PATH,
+    ...legacyPaths,
+  ]
 
   let summary: CodebuddyResourceSummary | undefined
   for (const [index, path] of paths.entries()) {
+    const modern =
+      path === WORKBUDDY_ENTERPRISE_PATH || path === WORKBUDDY_SUMMARY_PATH
+    const meterBase = modern && !intl ? "https://copilot.tencent.com" : base
     const response = await fetch(
-      `${base}${path}`,
+      `${meterBase}${path}`,
       connectionFetchInit(connection, {
         method: "POST",
-        headers,
-        body,
+        headers:
+          modern ?
+            {
+              ...headers,
+              "User-Agent": "WorkBuddy/5.9.3",
+              "X-IDE-Type": "WorkBuddy",
+            }
+          : headers,
+        body: modern ? "{}" : body,
         signal,
       }),
     ).catch((error: unknown) => {
@@ -291,7 +323,7 @@ export async function fetchCodebuddyQuota(
           "via configured proxy; check the account proxy or server default proxy"
         : "directly; check network connectivity"
       throw new Error(
-        `Failed to connect to CodeBuddy quota endpoint ${base} (${code}) ${route}`,
+        `Failed to connect to CodeBuddy quota endpoint ${meterBase} (${code}) ${route}`,
       )
     })
     // 国际版路径候选：404 则换下一候选（workbuddy 域同款回退语义）。
@@ -316,6 +348,14 @@ export async function fetchCodebuddyQuota(
         `CodeBuddy quota request failed: code=${envelope.code ?? "?"} msg=${envelope.msg ?? ""}`,
       )
     }
+    if (modern) {
+      const snapshot =
+        path === WORKBUDDY_ENTERPRISE_PATH ?
+          parseWorkbuddyEnterpriseUsage(envelope.data, snapshotProvider)
+        : parseWorkbuddyUsageSummary(envelope.data, snapshotProvider)
+      if (snapshot) return snapshot
+      continue
+    }
     summary = parseCodebuddyResourceData(envelope.data)
     break
   }
@@ -325,7 +365,7 @@ export async function fetchCodebuddyQuota(
 
   return {
     fetchedAt: Date.now(),
-    provider: provider ?? "codebuddy-cn",
+    provider: snapshotProvider,
     unlimited: false,
     allowance: {
       state: summary.packs > 0 ? "known" : "unknown",

@@ -82,6 +82,39 @@ the assets). It executes Google's hash-checked interpreter in `node:vm` for
 compatibility; **`node:vm` is not a security sandbox**. This reverse-engineered
 integration may break when the website changes.
 
+### Additional account providers
+
+Use **Account Connections → Add Account** for the native integrations below.
+The existing endpoint presets remain available for key-only connections. Native
+connectors read quota where the upstream exposes it; they do not claim login
+rewards or perform daily check-ins.
+
+For a remote server, authorize WorkBuddy in your own browser via its device
+flow. Raccoon, CodeArts, Meoo and Trae use browser authorization with a pasted
+callback: if the loopback page cannot load, copy the **full callback URL** from
+the address bar back into the dashboard. No server callback port needs to be
+published. Use HTTPS for the admin dashboard when providing callback URLs,
+cookies or keys. Where the upstream only gives a web session or an API key,
+sign in on your own device; copilot-api does not launch a server-side browser.
+
+| Provider              | How to connect                                                                                                                                                                                                   |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SenseTime Raccoon     | Browser OAuth or manual callback. A read-only desktop credential import is also available via the admin API.                                                                                                     |
+| Huawei CodeArts       | Huawei Cloud OAuth; the connector refreshes the STS credential and signs requests.                                                                                                                               |
+| Baidu DuMate          | Paste your signed-in console Cookie; the connector exchanges it for a short-lived model token.                                                                                                                   |
+| InkStone Token Plan   | Provide a plan API key, a console session for quota, or both. Key creation is opt-in at account setup; keys are never deleted.                                                                                   |
+| iFlytek Astron Studio | Provide a model bearer or paste the Cookie request header from `agent.xfyun.cn` (`account_id` and `token` or `ssoSessionId`). Reading a desktop credential on the proxy host is optional. Uses native Responses. |
+| WPS Lingxi            | Paste your `wps_sid` cookie. Requests use Lingxi's session/run protocol, not a generic Chat Completions URL.                                                                                                     |
+| Meoo Project Gateway  | Use Meoo OAuth or an existing project AK. This is the model gateway, not the separate Meoo Agent product.                                                                                                        |
+| Doubao Work           | The desktop integration is temporarily disabled. Saved accounts are retained. Volcengine Ark / Doubao API connections are unaffected.                                                                            |
+
+WorkBuddy uses the existing CodeBuddy CN / international account cards. API keys
+belong to one region. Refresh the account's models to discover image generators
+and their paired editors, then use `/v1/images/generations` or `/v1/images/edits`.
+ModelScope continues to use its endpoint connection and access token.
+For browser and desktop credentials, only use accounts and profiles you control;
+the connectors and upstream capabilities may change independently.
+
 ### Reversible upstream redaction
 
 Optional content redaction replaces recognized credentials, home-directory prefixes

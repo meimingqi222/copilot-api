@@ -162,8 +162,7 @@ describe("pollCodebuddyDeviceAuthorization", () => {
           data: { uid: "u1", enterpriseId: "e1", nickname: "nick" },
         })
       }
-      // CN daily checkin (best-effort)
-      return jsonResponse({ code: 0, data: {} })
+      throw new Error(`Unexpected login request: ${url}`)
     })
     const bundle = await pollCodebuddyDeviceAuthorization(
       "codebuddy-cn",
@@ -178,7 +177,7 @@ describe("pollCodebuddyDeviceAuthorization", () => {
     expect(bundle.domain).toBe("www.codebuddy.cn")
     expect(bundle.expiresAt).toBeGreaterThan(Date.now())
     expect(tokenCalls).toBe(2)
-    expect(seen.some((u) => u.includes("daily-checkin"))).toBe(true)
+    expect(seen).toHaveLength(3) // Two token polls and one account lookup; no reward claim.
   })
 
   test("account endpoint failure does not block login", async () => {

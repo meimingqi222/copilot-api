@@ -228,6 +228,7 @@ describe("fetchCodebuddyQuota", () => {
     try {
       const snapshot = await fetchCodebuddyQuota(connection)
       expect(seen).toEqual([
+        "https://copilot.tencent.com/billing/meter/get-user-resource-summary",
         "https://www.codebuddy.cn/v2/billing/meter/get-user-resource",
       ])
       expect(snapshot.provider).toBe("codebuddy-cn")
@@ -274,6 +275,7 @@ describe("fetchCodebuddyQuota", () => {
     try {
       const snapshot = await fetchCodebuddyQuota(connection)
       expect(seen).toEqual([
+        "https://www.workbuddy.ai/billing/meter/get-user-resource-summary",
         "https://www.workbuddy.ai/v2/billing/meter/get-user-resource",
         "https://www.workbuddy.ai/billing/meter/get-user-resource",
       ])

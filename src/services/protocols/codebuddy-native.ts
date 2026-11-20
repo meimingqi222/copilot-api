@@ -40,8 +40,10 @@ import {
 } from "~/lib/provider-connections"
 import {
   ensureCodebuddyAccessToken,
+  isCodebuddyApiKey,
   resolveCodebuddyDomain,
 } from "~/services/codebuddy/token-refresh"
+import { parseWorkbuddyImageModels } from "~/services/codebuddy/image-models"
 import {
   detectCodebuddyStreamError,
   isCodebuddyModelRateLimit,
@@ -52,21 +54,34 @@ import {
 import { isCodebuddyModelFree } from "~/lib/codebuddy-model-pricing"
 import { HTTPError, UpstreamModelUnavailableError } from "~/lib/error"
 import { recordModelCooldown } from "~/lib/model-cooldown"
+import { resolveTranscriptScopeId } from "~/lib/request-scope"
+import { encodeMessagesResponse } from "~/services/ir/codecs/messages-chat/response"
+import { decodeMessagesStream } from "~/services/ir/codecs/messages-chat/stream"
 import {
   connectionFetch,
   connectionFetchInit,
+  detectAnthropicStreamError,
   handleUpstreamFailure,
   safeSseStream,
 } from "~/services/protocols/shared"
 
-import type { AdapterChatResult, ProtocolAdapter } from "./types"
+import type {
+  AdapterChatResult,
+  AdapterParams,
+  AnthropicMessagesPayload,
+  ProtocolAdapter,
+} from "./types"
 
 import {
   compatImageReferenceInliningEnabled,
   inlineCompatImageReferences,
   normalizeOpenAICompatChatPayload,
 } from "./openai-compat-payload"
-import { aggregateSseToResponse, type SseChunk } from "./sse-aggregate"
+import {
+  aggregateSseToResponse,
+  aggregateTranslatedStream,
+  type SseChunk,
+} from "./sse-aggregate"
 
 // ── 常量 ────────────────────────────────────────────────────────────
 
@@ -77,6 +92,7 @@ const CODEBUDDY_USER_AGENT = "CLI/2.148.0 CodeBuddy/2.148.0"
 const CODEBUDDY_PRODUCT = "SaaS"
 const CODEBUDDY_IDE_VERSION = "2.148.0"
 const CODEBUDDY_STAINLESS_PACKAGE_VERSION = "6.25.0"
+const MESSAGES_ID_SALT = randomUUID()
 
 /**
  * 从 connection 解析 chat completions base URL。
@@ -84,7 +100,9 @@ const CODEBUDDY_STAINLESS_PACKAGE_VERSION = "6.25.0"
  * 也可不带（如 `https://copilot.tencent.com`），后者自动补 /v2。
  * 先剥离尾部斜杠再判断，避免 `.../v2/` 被拼成 `.../v2/v2`。
  */
-function resolveCodebuddyBaseUrl(connection: ProviderConnection): string {
+export function resolveCodebuddyBaseUrl(
+  connection: ProviderConnection,
+): string {
   const raw = connection.baseUrl?.trim() || CODEBUDDY_DEFAULT_BASE_URL
   const base = raw.replace(/\/+$/, "")
   if (/\/v\d+$/.test(base)) return base
@@ -188,11 +206,11 @@ function deriveCodebuddyStableId(uid: string, purpose: string): string {
     .slice(0, 36)
 }
 
-function buildCodebuddyHeaders(
+export function buildCodebuddyHeaders(
   connection: ProviderConnection,
   credential: ApiCredential,
   accessToken = credential.value,
-  userAgent = CODEBUDDY_USER_AGENT,
+  userAgent?: string,
 ): Record<string, string> {
   const requestId = randomUUID()
   const conversationId = randomUUID()
@@ -202,6 +220,11 @@ function buildCodebuddyHeaders(
   const parentSpanId = randomSpanId()
   const domain = resolveCodebuddyDomain(connection)
   const origin = `https://${domain}`
+  const apiKey = isCodebuddyApiKey(credential)
+  const defaultAgent =
+    apiKey ?
+      workbuddyConfigUserAgent(isCodebuddyCnDomain(domain))
+    : CODEBUDDY_USER_AGENT
 
   const headers = new Headers({
     // 基础
@@ -231,7 +254,7 @@ function buildCodebuddyHeaders(
     "X-IDE-Version": CODEBUDDY_IDE_VERSION,
     "X-Private-Data": "false",
     "x-codebuddy-request": "1",
-    "User-Agent": userAgent,
+    "User-Agent": userAgent ?? defaultAgent,
 
     // 会话 / 请求追踪
     "X-Request-Id": requestId,
@@ -262,6 +285,16 @@ function buildCodebuddyHeaders(
   // Authorization: Bearer <accessToken>
   if (accessToken) {
     headers.set("Authorization", `Bearer ${accessToken}`)
+  }
+
+  if (apiKey) {
+    headers.delete("X-Domain")
+    headers.delete("X-Enterprise-Id")
+    headers.delete("X-Tenant-Id")
+    if (accessToken) {
+      headers.set("X-API-Key", accessToken)
+      headers.set("X-User-Id", `anonymous_${accessToken.slice(-8)}`)
+    }
   }
 
   // X-User-Id：优先从 connection.headers 读取（用户可手动覆盖），
@@ -643,12 +676,99 @@ function codebuddyVendorLabel(
   return undefined
 }
 
+function workbuddyConfigUserAgent(isCn: boolean): string {
+  return `WorkBuddy/5.9.3 ${isCn ? "WorkBuddy" : "workbuddy-ai"}/5.9.3 CLI/2.165.0`
+}
+
+function throwIfWorkbuddyKeyRefused(
+  response: Response,
+  connection: ProviderConnection,
+  credential: ApiCredential,
+): void {
+  if (response.status !== 401 || !isCodebuddyApiKey(credential)) return
+  const site =
+    isCodebuddyCnDomain(resolveCodebuddyDomain(connection)) ? "workbuddy.cn" : (
+      "workbuddy.ai"
+    )
+  const message = `WorkBuddy refused this API key (401). Check or replace it at https://www.${site}/profile/keys.`
+  const body = { error: { message } }
+  const headers = new Headers(response.headers)
+  headers.delete("content-length")
+  headers.delete("content-encoding")
+  headers.set("content-type", "application/json")
+  void response.body?.cancel().catch(() => undefined)
+  throw new HTTPError(
+    message,
+    Response.json(body, { status: 401, headers }),
+    JSON.stringify(body),
+  )
+}
+
+function usesCodebuddyMessages(isCn: boolean, model: string): boolean {
+  return isCn && /^claude-/i.test(model)
+}
+
+function setCodebuddyMessagesConversation(
+  headers: Headers,
+  params: AdapterParams<AnthropicMessagesPayload>,
+): void {
+  const { connection, credential, payload, ctx } = params
+  const firstUser = payload.messages.find((message) => message.role === "user")
+  const session =
+    ctx?.forwardedHeaders?.["x-claude-code-session-id"]
+    ?? ctx?.forwardedHeaders?.["session_id"]
+    ?? ctx?.forwardedHeaders?.["session-id"]
+    ?? ctx?.executionSessionId
+  if (!session && !firstUser) return
+  const scope =
+    ctx?.c ? resolveTranscriptScopeId(ctx.c) : ctx?.transcriptScopeId
+  const sessionKey = createHash("sha256")
+    .update(
+      JSON.stringify([
+        MESSAGES_ID_SALT,
+        connection.id,
+        credential.id,
+        scope,
+        session !== undefined,
+      ]),
+    )
+    .update(session ?? JSON.stringify(firstUser?.content))
+    .digest("hex")
+  const lastUser = payload.messages.findLastIndex(
+    (message) =>
+      message.role === "user"
+      && (!Array.isArray(message.content)
+        || message.content.some((block) => block.type !== "tool_result")),
+  )
+  if (!new Headers(connection.headers).has("X-Conversation-ID")) {
+    headers.set("X-Conversation-ID", sessionKey.slice(0, 32))
+  }
+  if (
+    lastUser >= 0
+    && !new Headers(connection.headers).has("X-Conversation-Request-ID")
+  ) {
+    const turn = createHash("sha256")
+      .update(
+        JSON.stringify([
+          sessionKey,
+          lastUser,
+          payload.messages[lastUser].content,
+        ]),
+      )
+      .digest("hex")
+      .slice(0, 32)
+    headers.set("X-Conversation-Request-ID", turn)
+    headers.set("X-Root-Request-ID", turn)
+  }
+}
+
 // ── Adapter ──────────────────────────────────────────────────────────
 
 /** 账号接口返回 ID 数组，config 返回 { models: [...] }；保留上游原始 ID。 */
 function parseCodebuddyModels(
   data: unknown,
   isCn: boolean,
+  cliConfig = isCn,
 ): Array<ModelMapping> {
   const raw =
     Array.isArray(data) ? data
@@ -657,7 +777,7 @@ function parseCodebuddyModels(
   if (!Array.isArray(raw)) return []
   let cliIds: Array<unknown> | undefined
   if (
-    isCn
+    cliConfig
     && data
     && typeof data === "object"
     && "agents" in data
@@ -704,16 +824,23 @@ function parseCodebuddyModels(
             && promotion.modelIds.includes(model.id),
         )
       : []
-    if (cliIds && !cliIds.includes(model.id)) return []
+    if (cliIds && !cliIds.includes(model.id) && !model.id.startsWith("custom:"))
+      return []
+    const tags = "tags" in model && Array.isArray(model.tags) ? model.tags : []
+    if (
+      tags.some(
+        (tag: unknown) =>
+          typeof tag === "string"
+          && /^(text|image)-to-image$/i.test(tag.trim()),
+      )
+    )
+      return []
     if (isCn && typeof entry !== "string") {
       const maxOutput =
         "maxOutputTokens" in model ? Number(model.maxOutputTokens) : 0
-      const tags =
-        "tags" in model && Array.isArray(model.tags) ? model.tags : []
       if (
         /^(nes-|completion-|codewise-)/i.test(model.id)
         || (maxOutput > 0 && maxOutput <= 256)
-        || tags.includes("text-to-image")
       )
         return []
     }
@@ -748,7 +875,8 @@ function parseCodebuddyModels(
             model.name
           : undefined,
         vendor: codebuddyVendorLabel(model.id),
-        endpoints: ["chat"],
+        endpoints:
+          usesCodebuddyMessages(isCn, model.id) ? ["messages"] : ["chat"],
         enabled: true,
         pickerEnabled: true,
         metadata: {
@@ -809,6 +937,8 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
   },
 
   async discoverModels({ connection, credential, signal }) {
+    const apiKey = isCodebuddyApiKey(credential)
+    if (apiKey && !/^(ck_|pt_)/.test(credential.value ?? "")) return []
     const accessToken = await ensureCodebuddyAccessToken(
       connection,
       credential,
@@ -823,19 +953,20 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
       connection,
       credential,
       accessToken,
-      isCn ?
-        "WorkBuddy/5.5.4 WorkBuddy/5.5.4 CLI/2.137.1"
+      apiKey ? workbuddyConfigUserAgent(isCn)
+      : isCn ? "WorkBuddy/5.5.4 WorkBuddy/5.5.4 CLI/2.137.1"
       : "WorkBuddy/5.5.4 WorkBuddy AI/5.5.4 CLI/2.137.1",
     )
-    const sources = [
-      ["/v3/config"],
-      isCn ?
-        ["/console/enterprises/personal/models"]
-      : [
-          "/v2/enterprises/personal/models",
-          "/console/enterprises/personal/models",
-        ],
-    ]
+    const sources = [["/v3/config"]]
+    if (!apiKey)
+      sources.push(
+        isCn ?
+          ["/console/enterprises/personal/models"]
+        : [
+            "/v2/enterprises/personal/models",
+            "/console/enterprises/personal/models",
+          ],
+      )
     const results = await Promise.allSettled(
       sources.map(async (paths) => {
         let lastError: unknown
@@ -843,8 +974,13 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
           try {
             const response = await fetch(
               `${origin}${path}`,
-              connectionFetchInit(connection, { headers, signal }),
+              connectionFetchInit(connection, {
+                headers,
+                signal,
+                ...(apiKey && { redirect: "manual" }),
+              }),
             )
+            throwIfWorkbuddyKeyRefused(response, connection, credential)
             const text = await response.text()
             if (!response.ok)
               throw new HTTPError(
@@ -863,7 +999,14 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
             if (!body.data || typeof body.data !== "object") {
               throw new Error(`No CodeBuddy model data from ${path}`)
             }
-            return parseCodebuddyModels(body.data, isCn)
+            const chatModels = parseCodebuddyModels(
+              body.data,
+              isCn,
+              isCn || apiKey,
+            )
+            return path === "/v3/config" ?
+                [...chatModels, ...parseWorkbuddyImageModels(body.data)]
+              : chatModels
           } catch (error) {
             signal?.throwIfAborted()
             // 发现接口的失败不应禁用聊天凭据，另一个来源仍可能可用。
@@ -886,6 +1029,84 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
       throw failed.reason
     }
     return [...models.values()]
+  },
+
+  async createMessages(params) {
+    const { target, connection, credential, payload, signal, ctx } = params
+    const base = new URL(resolveCodebuddyBaseUrl(connection))
+    const model = target.upstreamModelId
+    if (!usesCodebuddyMessages(isCodebuddyCnDomain(base.hostname), model)) {
+      const message = "Only CodeBuddy CN Claude models support native Messages"
+      throw new HTTPError(message, new Response(null, { status: 400 }))
+    }
+    const accessToken = await ensureCodebuddyAccessToken(
+      connection,
+      credential,
+      signal,
+    )
+    const headers = new Headers(
+      buildCodebuddyHeaders(connection, credential, accessToken),
+    )
+    setCodebuddyMessagesConversation(headers, params)
+    headers.set("Accept", "text/event-stream")
+    const forwarded = ctx?.forwardedHeaders
+    headers.set(
+      "anthropic-version",
+      forwarded?.["anthropic-version"] ?? "2023-06-01",
+    )
+    if (forwarded?.["anthropic-beta"])
+      headers.set("anthropic-beta", forwarded["anthropic-beta"])
+    // WorkBuddy validates the signature against the exact historical thinking text.
+    const messages = payload.messages.map((message): typeof message => {
+      if (message.role !== "assistant" || !Array.isArray(message.content))
+        return message
+      const content = message.content.filter(
+        (block) => block.type !== "thinking" || !!block.signature,
+      )
+      return content.length === message.content.length ?
+          message
+        : {
+            ...message,
+            content: content.length ? content : [{ type: "text", text: "" }],
+          }
+    })
+    const response = await fetch(
+      `${base.origin}/v1/messages`,
+      connectionFetchInit(connection, {
+        method: "POST",
+        headers,
+        body: serializeUpstreamBody({
+          ...payload,
+          model,
+          stream: true,
+          messages,
+        }),
+        signal,
+        ...(isCodebuddyApiKey(credential) && { redirect: "manual" }),
+      }),
+    )
+    throwIfWorkbuddyKeyRefused(response, connection, credential)
+    if (!response.ok) {
+      await handleUpstreamFailure(
+        response,
+        credential,
+        "Failed to create CodeBuddy Messages",
+        "codebuddy-native",
+      )
+    }
+    const events = await safeSseStream(
+      response,
+      (event: Parameters<typeof detectAnthropicStreamError>[0]) =>
+        detectCodebuddyStreamError(event) ?? detectAnthropicStreamError(event),
+    )
+    if (payload.stream || ctx?.preferStreamingResponse) {
+      return { credentialId: credential.id, response: events }
+    }
+    const result = await aggregateTranslatedStream(decodeMessagesStream(events))
+    return {
+      credentialId: credential.id,
+      response: { ...encodeMessagesResponse(result) },
+    }
   },
 
   async createChatCompletions({
@@ -962,9 +1183,12 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
           headers,
           body: requestBody,
           signal,
+          // Fetch strips Authorization on cross-origin redirects but not X-API-Key.
+          ...(isCodebuddyApiKey(credential) && { redirect: "manual" }),
         }),
       )
 
+      throwIfWorkbuddyKeyRefused(response, connection, credential)
       if (!response.ok) {
         const rawBody = await response
           .clone()
