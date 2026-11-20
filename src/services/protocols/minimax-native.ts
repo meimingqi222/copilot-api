@@ -52,7 +52,7 @@ function rewriteIndex(frame: SseFrame, event: object, index: number): SseFrame {
  * 这里先扣住每个 tool_use 的 `content_block_stop`，直到后面的 thinking 块结束
  * 或出现别的事件；期间挂错位置的参数片段改回工具的 index，放在 stop 之前。
  */
-export async function* repairMinimaxToolArguments(
+async function* repairMinimaxToolArguments(
   stream: AsyncIterable<SseFrame>,
 ): AsyncGenerator<SseFrame> {
   const types = new Map<number, string>()
