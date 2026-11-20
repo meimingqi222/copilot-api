@@ -743,4 +743,36 @@ describe("GET /admin/api/quota cycle usage", () => {
     expect(enriched).toBe(quotaInfo)
     expect(enriched?.details?._quotaWindows).toBeUndefined()
   })
+
+  test("enrichQuotaInfoForResponse exposes display windows but keeps allowance internal", () => {
+    const quotaInfo = {
+      fetchedAt: 1,
+      allowance: {
+        state: "known",
+        windows: [
+          {
+            id: "daily-pool",
+            remaining: 6,
+            total: 10,
+            unit: "credits",
+            scope: { models: ["internal-model"] },
+          },
+        ],
+      },
+    }
+    const enriched = enrichQuotaInfoForResponse(
+      "acct-raccoon",
+      "raccoon",
+      quotaInfo,
+    )
+    expect((enriched as Record<string, unknown>)?.allowance).toBeUndefined()
+    expect(enriched?.allowanceWindows).toEqual([
+      {
+        id: "daily-pool",
+        remaining: 6,
+        total: 10,
+        unit: "credits",
+      },
+    ])
+  })
 })

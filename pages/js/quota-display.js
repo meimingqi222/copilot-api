@@ -12,6 +12,20 @@ const QuotaDisplay = {
     "lobsterai",
   ]),
   CYCLE_USAGE_PROVIDERS: new Set(["codex", "claude", "antigravity", "kimi"]),
+  /**
+   * Providers that report the typed allowance windows and have no bespoke
+   * details renderer. Keep this in step with `buildRows`' cases: a provider
+   * that gains a dedicated renderer should leave this set.
+   */
+  ALLOWANCE_PROVIDERS: new Set([
+    "raccoon",
+    "codearts",
+    "meoo",
+    "astudio",
+    "dumate",
+    "inkstone",
+    "wps-lingxi",
+  ]),
 
   displayPercent(remaining, mode = "remaining") {
     if (typeof remaining !== "number" || !Number.isFinite(remaining))
@@ -55,6 +69,23 @@ const QuotaDisplay = {
 
   isOAuthProvider(provider) {
     return this.OAUTH_PROVIDERS.has(provider)
+  },
+
+  isAllowanceProvider(provider) {
+    return this.ALLOWANCE_PROVIDERS.has(provider)
+  },
+
+  quotaWindowLabel(id, t) {
+    if (typeof id !== "string" || !id) return t("quota.window.credits")
+    if (id.startsWith("bonus-")) return t("quota.window.bonusExpiring")
+    const key = `quota.window.${id.replace(/[^\w-]/g, "-")}`
+    const label = t(key)
+    return label === key ? id : label
+  },
+
+  formatQuotaValue(value, unit) {
+    if (unit === "percent") return `${Math.round(value)}%`
+    return this.formatCredits(value)
   },
 
   getDisplayType(provider) {
@@ -387,6 +418,17 @@ const QuotaDisplay = {
 
     let rows
     switch (provider) {
+      case "raccoon":
+      case "codearts":
+      case "meoo":
+      case "astudio":
+      case "dumate":
+      case "inkstone":
+      case "wps-lingxi": {
+        rows = this.buildAllowanceRows(info, t)
+
+        break
+      }
       case "claude": {
         rows = this.buildClaudeRows(info.details, t)
 
@@ -464,6 +506,47 @@ const QuotaDisplay = {
     }
 
     return this.attachCycleUsageToRows(rows, info.details, provider, t)
+  },
+
+  /**
+   * Rows from the provider's typed allowance windows. A window with `used` or
+   * a positive `total` gets a bar; a bare balance is reported without one
+   * rather than inventing a denominator.
+   */
+  buildAllowanceRows(info, t) {
+    const windows =
+      Array.isArray(info?.allowanceWindows) ? info.allowanceWindows : []
+    const rows = []
+    for (const [index, window] of windows.entries()) {
+      if (!window || typeof window !== "object") continue
+      const remaining = this.normalizeNumber(window.remaining)
+      const total = this.normalizeNumber(window.total)
+      const used = this.normalizeNumber(window.used)
+      const unit = typeof window.unit === "string" ? window.unit : undefined
+      let remainingPercent
+      if (used !== undefined) {
+        remainingPercent = Math.max(0, Math.min(100, (1 - used) * 100))
+      } else if (total !== undefined && total > 0 && remaining !== undefined) {
+        remainingPercent = Math.max(0, Math.min(100, (remaining / total) * 100))
+      }
+      const valueText =
+        remaining === undefined ? "--"
+        : total !== undefined ?
+          `${this.formatQuotaValue(remaining, unit)} / ${this.formatQuotaValue(total, unit)}`
+        : this.formatQuotaValue(remaining, unit)
+      const resetAtMs =
+        this.normalizeNumber(window.resetsAtMs)
+        ?? this.normalizeNumber(window.expiresAtMs)
+      rows.push({
+        id: window.id ?? `window-${index + 1}`,
+        label: this.quotaWindowLabel(window.id, t),
+        remainingPercent,
+        valueText,
+        hideBar: remainingPercent === undefined,
+        resetText: resetAtMs ? this.formatResetTime(resetAtMs, t) : "",
+      })
+    }
+    return rows
   },
 
   buildClaudeRows(details, t) {
@@ -1368,6 +1451,13 @@ const QuotaDisplay = {
         return `${info.premiumInteractionsRemaining}%`
       }
       return t("quota.noData")
+    }
+    if (this.isAllowanceProvider(provider)) {
+      const rows = this.buildRows(account, t)
+      const row = rows.find((item) => !item.hideBar) ?? rows[0]
+      return row ?
+          [row.valueText, row.resetText].filter(Boolean).join(" · ")
+        : t("quota.noData")
     }
     if (info.premiumInteractionsRemaining !== undefined) {
       return `${info.premiumInteractionsRemaining} / ${info.premiumInteractionsTotal ?? "?"}`

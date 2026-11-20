@@ -27,20 +27,19 @@ export const providerMetadata = defineProviderMetadata({
       {
         key: "apiKey",
         type: "secret",
-        labelKey: "Token Plan API key (optional)",
+        labelKey: "accounts.provider.inkstone.apiKey",
         placeholder: "sk-…",
       },
       {
         key: "uaaToken",
         type: "secret",
-        labelKey: "InkStone console session (optional)",
+        labelKey: "accounts.provider.inkstone.session",
         placeholder: "uaa-token=…",
       },
       {
         key: "createApiKey",
         type: "checkbox",
-        labelKey:
-          "Create a new API key with the console session if no API key is supplied",
+        labelKey: "accounts.provider.inkstone.createApiKey",
       },
       ...OAUTH_ACCOUNT_FIELDS,
     ],

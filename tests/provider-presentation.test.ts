@@ -225,4 +225,33 @@ describe("provider-owned account presentation", () => {
     )
     expect(view.needsManualOAuthCallback("missing")).toBe(false)
   })
+
+  test("every provider translates its name, fields, options and hints in both locales", () => {
+    const i18n = vm.runInNewContext(
+      `${fs.readFileSync("pages/js/i18n.js", "utf8")}\nI18n`,
+      { navigator: { language: "en" }, localStorage: { getItem: () => null } },
+    ) as { lang: string; t: (key: string) => string }
+    const missing: Array<string> = []
+    for (const lang of ["zh", "en"]) {
+      i18n.lang = lang
+      for (const id of PROVIDER_IDS) {
+        const descriptor = getProviderDescriptor(id)
+        for (const key of [
+          `accounts.provider.${id}.name`,
+          ...descriptor.accountFields.flatMap((field) => [
+            field.labelKey,
+            ...(field.options ?? []).flatMap((option) =>
+              option.labelKey ? [option.labelKey] : [],
+            ),
+          ]),
+          ...(descriptor.presentation?.hintKey ?
+            [descriptor.presentation.hintKey]
+          : []),
+        ]) {
+          if (i18n.t(key) === key) missing.push(`${lang}:${key}`)
+        }
+      }
+    }
+    expect(missing).toEqual([])
+  })
 })

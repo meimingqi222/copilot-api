@@ -275,13 +275,20 @@ function accountsView() {
       )
     },
 
+    providerName(provider) {
+      const id = typeof provider === "string" ? provider : provider?.id
+      const descriptor =
+        typeof provider === "string" ?
+          this.providers.find((item) => item.id === provider)
+        : provider
+      if (!id) return descriptor?.name || ""
+      const key = `accounts.provider.${id}.name`
+      const label = I18n.t(key)
+      return label === key ? descriptor?.name || id : label
+    },
+
     providerLabel(providerId) {
-      const provider = this.providers.find((item) => item.id === providerId)
-      return (
-        provider?.name
-        || I18n.t(`accounts.provider.${providerId}.name`)
-        || providerId
-      )
+      return this.providerName(providerId)
     },
 
     /**

@@ -37,7 +37,7 @@ export const providerMetadata = defineProviderMetadata({
       {
         key: "modelBearerToken",
         type: "secret",
-        labelKey: "modelBearerToken",
+        labelKey: "accounts.provider.astudio.modelToken",
         placeholder: "modelBearerToken (optional with web session)",
       },
       {
@@ -49,7 +49,7 @@ export const providerMetadata = defineProviderMetadata({
       {
         key: "importDesktop",
         type: "checkbox",
-        labelKey: "Read the desktop session on this proxy host",
+        labelKey: "accounts.provider.astudio.importDesktop",
       },
       ...OAUTH_ACCOUNT_FIELDS,
     ],

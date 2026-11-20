@@ -28,7 +28,7 @@ import {
 import { resolveMinimaxRegion } from "~/services/oauth/minimax"
 import { initializeProviderRegistry } from "~/services/providers"
 import { getProviderRuntime } from "~/services/providers/registry"
-import { publicQuotaSnapshot } from "~/lib/quota/allowance"
+import { publicQuotaSnapshot, publicQuotaWindows } from "~/lib/quota/allowance"
 
 /**
  * 从 ProviderConnection 派生 admin API 的 publicAccount JSON 视图。
@@ -76,7 +76,9 @@ export function publicAccountFromConnection(
   const authStatus = getConnectionAuthStatus(conn)
   const authError = getConnectionAuthError(conn)
   const quotaState = getConnectionQuotaState(conn)
-  const quotaInfo = publicQuotaSnapshot(getConnectionQuotaInfo(conn))
+  const storedQuota = getConnectionQuotaInfo(conn)
+  const quotaInfo = publicQuotaSnapshot(storedQuota)
+  const allowanceWindows = publicQuotaWindows(storedQuota)
   const exhaustedAt = getConnectionExhaustedAt(conn)
 
   return {
@@ -95,7 +97,13 @@ export function publicAccountFromConnection(
     availabilityReason: availability.reason,
     retryAfterSeconds: availability.retryAfterSeconds || null,
     quotaState: quotaState ?? "unknown",
-    quotaInfo: quotaInfo ?? null,
+    quotaInfo:
+      quotaInfo ?
+        {
+          ...quotaInfo,
+          ...(allowanceWindows.length > 0 && { allowanceWindows }),
+        }
+      : null,
     supportsQuota: runtime.supports(conn, "quota"),
     createdAt: conn.createdAt,
     settings,

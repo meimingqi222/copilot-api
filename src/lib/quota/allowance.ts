@@ -151,3 +151,43 @@ export function publicQuotaSnapshot(
   const { allowance: _allowance, ...publicSnapshot } = snapshot
   return publicSnapshot
 }
+
+/**
+ * Display-only projection of typed allowance windows.
+ *
+ * The allowance itself is the routing contract and stays server-side; model
+ * scopes and unknown fields are dropped. Callers that render quota need these
+ * windows because provider-specific `details` shapes are not universal.
+ */
+export function publicQuotaWindows(
+  snapshot: { allowance?: { windows?: Array<QuotaWindow> } } | undefined,
+): Array<{
+  id: string
+  used?: number
+  remaining?: number
+  total?: number
+  unit?: QuotaWindow["unit"]
+  resetsAtMs?: number
+  expiresAtMs?: number
+  aside?: boolean
+}> {
+  return (snapshot?.allowance?.windows ?? []).flatMap((window, index) => {
+    const id = window.id?.trim() || `window-${index + 1}`
+    return [
+      {
+        id,
+        ...(window.used !== undefined && { used: window.used }),
+        ...(window.remaining !== undefined && { remaining: window.remaining }),
+        ...(window.total !== undefined && { total: window.total }),
+        ...(window.unit !== undefined && { unit: window.unit }),
+        ...(window.resetsAtMs !== undefined && {
+          resetsAtMs: window.resetsAtMs,
+        }),
+        ...(window.expiresAtMs !== undefined && {
+          expiresAtMs: window.expiresAtMs,
+        }),
+        ...(window.aside === true && { aside: true }),
+      },
+    ]
+  })
+}

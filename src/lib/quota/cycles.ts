@@ -11,6 +11,8 @@ import {
   type CodexQuotaWindowEntry,
 } from "~/lib/quota/codex"
 import { CLAUDE_USAGE_WINDOW_KEYS } from "~/lib/quota/constants"
+import { publicQuotaWindows } from "~/lib/quota/allowance"
+import type { QuotaWindow } from "~/lib/quota/types"
 import { parseCodexUsagePayload } from "~/lib/quota/parsers"
 import { getProviderConnection } from "~/lib/provider-connections"
 import { parseModelReference } from "~/lib/route-target/model-reference"
@@ -448,13 +450,26 @@ export function enrichQuotaInfoForResponse(
         fetchedAt?: number
         details?: Record<string, unknown>
         allowance?: unknown
+        allowanceWindows?: ReturnType<typeof publicQuotaWindows>
       }
     | null
     | undefined,
-): { details?: Record<string, unknown> } | null | undefined {
+):
+  | {
+      details?: Record<string, unknown>
+      allowanceWindows?: ReturnType<typeof publicQuotaWindows>
+    }
+  | null
+  | undefined {
+  const allowanceWindows = publicQuotaWindows(
+    quotaInfo as { allowance?: { windows?: Array<QuotaWindow> } } | undefined,
+  )
   if (quotaInfo?.allowance !== undefined) {
     const { allowance: _internal, ...publicInfo } = quotaInfo
     quotaInfo = publicInfo
+  }
+  if (quotaInfo && allowanceWindows.length > 0) {
+    quotaInfo = { ...quotaInfo, allowanceWindows }
   }
   if (!quotaInfo?.details || !supportsCycleUsage(provider)) {
     return quotaInfo

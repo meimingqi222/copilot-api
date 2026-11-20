@@ -24,7 +24,7 @@ export const providerMetadata = defineProviderMetadata({
       {
         key: "cookie",
         type: "secret",
-        labelKey: "wps_sid",
+        labelKey: "accounts.provider.wps-lingxi.sid",
         placeholder: "wps_sid=…; uid=…",
         required: true,
       },

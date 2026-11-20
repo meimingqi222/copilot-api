@@ -21,6 +21,8 @@ export type ProviderFeature = (typeof PROVIDER_FEATURES)[number]
 
 interface ProviderFieldOption {
   label: string
+  /** i18n key; takes precedence over the literal label in the UI. */
+  labelKey?: string
   value: string
 }
 

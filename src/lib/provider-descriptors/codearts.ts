@@ -30,10 +30,18 @@ export const providerMetadata = defineProviderMetadata({
       {
         key: "region",
         type: "select",
-        labelKey: "Huawei Cloud region",
+        labelKey: "accounts.provider.codearts.region",
         options: [
-          { label: "Mainland China", value: "cn" },
-          { label: "International", value: "en" },
+          {
+            label: "Mainland China",
+            labelKey: "accounts.provider.codearts.regionCn",
+            value: "cn",
+          },
+          {
+            label: "International",
+            labelKey: "accounts.provider.codearts.regionIntl",
+            value: "en",
+          },
         ],
       },
       ...OAUTH_ACCOUNT_FIELDS,

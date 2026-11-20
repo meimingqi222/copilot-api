@@ -60,6 +60,13 @@ capacity may release an obsolete account-wide lock, while model admission still
 enforces each applicable pool. Unknown readings never clear a wait. Local retry
 waits retain the one-minute to twenty-four-hour bound without altering the actual
 canonical reset. Internal allowance fields are excluded from frozen admin DTOs.
+Readers that render a card still need the measured windows, so
+`publicQuotaWindows` projects only id/amounts/unit/reset/aside and drops model
+scopes; it is not the routing allowance and must not be used for admission.
+The boundary is bound by
+`tests/quota-cycle-usage.test.ts::enrichQuotaInfoForResponse exposes display windows but keeps allowance internal`
+and
+`tests/quota-display-mode.test.ts::Allowance-only providers render typed windows instead of Copilot quota`.
 
 New producers never rely on central provider-name parsing. Existing raw details,
 cycle UI helpers and legacy snapshot/cache readers remain compatibility surfaces;

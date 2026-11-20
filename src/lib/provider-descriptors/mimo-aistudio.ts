@@ -45,7 +45,7 @@ export const providerMetadata = defineProviderMetadata({
       {
         key: "proxy",
         type: "text",
-        labelKey: "accounts.provider.mimo-aistudio.fields.proxy",
+        labelKey: "accounts.oauth.fields.proxyUrl",
         required: false,
         placeholder: "http://your-proxy:port",
       },

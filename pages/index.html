@@ -2227,7 +2227,7 @@
                         class="text-title-3 truncate"
                         x-text="addStep === 'select'
                         ? t('accounts.step.selectProvider')
-                        : (isCodebuddySeries(newAccount.provider) ? 'CodeBuddy' : (selectedProvider()?.name || newAccount.provider || t('accounts.step.configureAccount')))"
+                        : (isCodebuddySeries(newAccount.provider) ? 'CodeBuddy' : (providerName(selectedProvider()) || newAccount.provider || t('accounts.step.configureAccount')))"
                       ></h3>
                     </div>
                   </div>
@@ -2330,7 +2330,7 @@
                           <div class="min-w-0 w-full">
                             <p
                               class="font-medium text-xs truncate text-[var(--apple-text)] group-hover:text-[var(--apple-blue)] transition-colors"
-                              x-text="provider.id === 'codebuddy' ? 'CodeBuddy' : (provider.name || provider.id)"
+                              x-text="provider.id === 'codebuddy' ? 'CodeBuddy' : providerName(provider)"
                             ></p>
                             <p
                               class="text-[10px] text-[var(--apple-text-tertiary)] truncate font-mono mt-0.5"
@@ -2507,7 +2507,7 @@
                             >
                               <option
                                 :value="option.value"
-                                x-text="option.label"
+                                x-text="option.labelKey ? t(option.labelKey) : option.label"
                               ></option>
                             </template>
                           </select>

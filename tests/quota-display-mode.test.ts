@@ -274,6 +274,72 @@ test("Trae localizes dollars and enterprise seats without relabeling reporting c
   }
 })
 
+test("Allowance-only providers render typed windows instead of Copilot quota", () => {
+  const i18n = runInNewContext(
+    `${readFileSync("pages/js/i18n.js", "utf8")}\nI18n`,
+    { navigator: { language: "en" }, localStorage: { getItem: () => null } },
+  ) as { lang: string; t: (key: string) => string }
+  const resetAt = Date.now() + 90 * 60_000
+  const account = {
+    provider: "raccoon",
+    quotaInfo: {
+      allowanceWindows: [
+        {
+          id: "daily-pool",
+          remaining: 210,
+          total: 300,
+          unit: "credits",
+          expiresAtMs: resetAt,
+        },
+        { id: "credits", remaining: 42, unit: "credits", aside: true },
+      ],
+    },
+  }
+
+  i18n.lang = "en"
+  const rows = display.buildRows(account, i18n.t.bind(i18n))
+  expect(rows[0]).toMatchObject({
+    id: "daily-pool",
+    label: "Daily credit pool",
+    remainingPercent: 70,
+    valueText: "210 / 300",
+    hideBar: false,
+  })
+  expect(rows[1]).toMatchObject({
+    id: "credits",
+    label: "Credit balance",
+    valueText: "42",
+    hideBar: true,
+  })
+  expect(display.formatSummary(account, i18n.t.bind(i18n))).toContain(
+    "210 / 300",
+  )
+
+  i18n.lang = "zh"
+  expect(display.buildRows(account, i18n.t.bind(i18n))[0]?.label).toBe(
+    "每日积分池",
+  )
+
+  // A used-only window still gets a bar and a real remaining percentage.
+  const usedOnly = display.buildRows(
+    {
+      provider: "inkstone",
+      quotaInfo: {
+        allowanceWindows: [
+          { id: "5h", used: 0.4, total: 100, remaining: 60, unit: "credits" },
+        ],
+      },
+    },
+    i18n.t.bind(i18n),
+  )
+  expect(usedOnly[0]).toMatchObject({ remainingPercent: 60, hideBar: false })
+
+  // No windows must not fall back to Copilot's premium-interaction counters.
+  expect(
+    display.buildRows({ provider: "meoo", quotaInfo: {} }, i18n.t.bind(i18n)),
+  ).toEqual([])
+})
+
 test("legacy Codex windows without metadata retain matching cycle costs", () => {
   const rows = display.buildRows(
     {
