@@ -29,8 +29,10 @@ The drift is expressed as spec fields, not unified away:
   `refreshToken`. This decides whether a disabled connection keeps a timer.
 - `requiresExpiry` — CodeBuddy drops the timer when no expiry is readable;
   LobsterAI retries in a minute instead.
-- `dedupeScheduledRefresh` — LobsterAI's timer shares the request path's
-  in-flight map; CodeBuddy's timer always issues its own request.
+- `dedupeScheduledRefresh` — both timers share the request path's in-flight
+  map. WorkBuddy now also enters this same exchange on an HTTP 401 even before
+  expiry; its refresh token rotates, so a separate timer exchange could spend
+  it twice. A concurrent rejection of the old access token reuses the new one.
 - `ensure.gate` / `ensure.result` — which credential the pre-request check
   reads (argument vs live) and which one supplies the returned token. Both
   providers now return by-id: a caller signs its request with the credential
@@ -76,6 +78,9 @@ an imported connection gets its timer immediately.
 Bound tests: `tests/codebuddy-provider.test.ts`, `tests/lobsterai-refresh-timer.test.ts`,
 `tests/oauth-lobsterai.test.ts`, `tests/lobsterai-provider.test.ts`,
 `tests/connection-proxy-wiring.test.ts`, `tests/admin-account-import.test.ts`.
+
+`tests/codebuddy-provider.test.ts::concurrent chat and quota 401s renew a still-valid WorkBuddy token once`
+covers rotation and applying quota only after a fresh guarded read.
 
 Proved: the refactor was introduced without touching existing assertions and
 all six files still pass; new cases in `tests/codebuddy-provider.test.ts`

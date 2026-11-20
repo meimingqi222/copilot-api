@@ -4,7 +4,7 @@ import type {
   CodexImageEditRequest,
   CodexImageGenerationResponse,
 } from "~/services/codex/create-images"
-import { ensureCodebuddyAccessToken } from "~/services/codebuddy/token-refresh"
+import { fetchWithCodebuddyAuth } from "~/services/codebuddy/token-refresh"
 import {
   buildCodebuddyHeaders,
   resolveCodebuddyBaseUrl,
@@ -91,16 +91,21 @@ export async function createWorkbuddyImage(
     : {}),
     ...(images ? { image: images } : {}),
   }
-  const token = await ensureCodebuddyAccessToken(connection, credential, signal)
-  const response = await performanceFetch(
-    `${resolveCodebuddyBaseUrl(connection)}/images/${action}`,
-    connectionFetchInit(connection, {
-      method: "POST",
-      headers: buildCodebuddyHeaders(connection, credential, token),
-      body: JSON.stringify(body),
-      signal,
-      redirect: "manual",
-    }),
+  const response = await fetchWithCodebuddyAuth(
+    connection,
+    credential,
+    signal,
+    (token) =>
+      performanceFetch(
+        `${resolveCodebuddyBaseUrl(connection)}/images/${action}`,
+        connectionFetchInit(connection, {
+          method: "POST",
+          headers: buildCodebuddyHeaders(connection, credential, token),
+          body: JSON.stringify(body),
+          signal,
+          redirect: "manual",
+        }),
+      ),
   )
   if (!response.ok) {
     await handleUpstreamFailure(

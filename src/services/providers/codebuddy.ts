@@ -14,12 +14,16 @@ import { getProviderDescriptor } from "~/lib/provider-descriptors"
 
 import type { ModelMapping } from "~/lib/provider-connections"
 
+import { HTTPError } from "~/lib/error"
 import {
   applyCodebuddyQuotaSnapshot,
   fetchCodebuddyQuota,
 } from "~/services/codebuddy/quota"
 import { refreshProviderQuota } from "~/lib/quota/refresh"
-import { ensureCodebuddyAccessToken } from "~/services/codebuddy/token-refresh"
+import {
+  ensureCodebuddyAccessToken,
+  renewRejectedCodebuddyToken,
+} from "~/services/codebuddy/token-refresh"
 import { getProtocolAdapter } from "~/services/protocols"
 
 import type { ProviderRuntime } from "~/services/providers/runtime"
@@ -121,15 +125,42 @@ function createCodebuddyRuntime(opts: {
       return fallbackModels
     },
     async refreshQuota(connection, signal, options) {
-      return refreshProviderQuota(connection, fetchCodebuddyQuota, signal, {
-        ...options,
-        applySnapshot: applyCodebuddyQuotaSnapshot,
-        async prepare(conn, prepareSignal) {
-          const credential = conn.credentials.at(0)
-          if (credential)
-            await ensureCodebuddyAccessToken(conn, credential, prepareSignal)
-        },
-      })
+      const credential = connection.credentials.at(0)
+      if (!credential) return undefined
+      let token: string | undefined
+      const read = (prepare?: () => Promise<void>) =>
+        refreshProviderQuota(
+          connection,
+          (conn, abort) => fetchCodebuddyQuota(conn, abort, token),
+          signal,
+          {
+            ...options,
+            applySnapshot: applyCodebuddyQuotaSnapshot,
+            prepare,
+          },
+        )
+      try {
+        return await read(async () => {
+          token = await ensureCodebuddyAccessToken(
+            connection,
+            credential,
+            signal,
+          )
+        })
+      } catch (error) {
+        if (!(error instanceof HTTPError) || error.response.status !== 401)
+          throw error
+        const renewed = await renewRejectedCodebuddyToken(
+          connection,
+          credential,
+          token,
+          signal,
+        )
+        if (!renewed) throw error
+        // Start a fresh guarded read after rotation; never apply the old poll's snapshot.
+        token = renewed
+        return read()
+      }
     },
   }
 }

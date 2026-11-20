@@ -88,6 +88,7 @@ interface TokenRefreshScheduler {
     connection: ProviderConnection,
     credential: ApiCredential,
     signal?: AbortSignal,
+    rejectedToken?: string,
   ): Promise<string | undefined>
 }
 
@@ -220,11 +221,37 @@ export function createTokenRefreshScheduler(
     connection: ProviderConnection,
     credential: ApiCredential,
     signal?: AbortSignal,
+    rejectedToken?: string,
   ): Promise<string | undefined> {
+    signal?.throwIfAborted()
     const live = getMutableProviderConnection(connection.id)
     const liveMatch = live?.credentials.find(
       (item) => item.id === credential.id,
     )
+    if (rejectedToken !== undefined) {
+      // This scheduler renews the primary credential only. Never spend a
+      // different credential's refresh token to recover this request.
+      if (
+        !live
+        || !liveMatch
+        || live.credentials[0] !== liveMatch
+        || !live.enabled
+        || !liveMatch.enabled
+        || !spec.canRefresh(liveMatch)
+      )
+        return undefined
+      if (liveMatch.value !== rejectedToken) return liveMatch.value
+      if (!(await waitForRefresh(refreshOnce(live), signal))) return undefined
+      if (
+        getMutableProviderConnection(live.id) !== live
+        || live.credentials[0] !== liveMatch
+        || !live.enabled
+        || !liveMatch.enabled
+      )
+        return undefined
+      schedule(live)
+      return liveMatch.value === rejectedToken ? undefined : liveMatch.value
+    }
     const gate =
       spec.ensure?.gate === "live" && liveMatch ? liveMatch : credential
     if (!needsRefreshAt(spec.expiryMs(gate)) || !spec.canRefresh(gate)) {

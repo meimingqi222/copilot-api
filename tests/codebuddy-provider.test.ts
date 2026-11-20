@@ -22,6 +22,7 @@ import {
   resetModelCooldownsForTest,
 } from "~/lib/model-cooldown"
 import { codebuddyNativeAdapter } from "~/services/protocols/codebuddy-native"
+import { codebuddyProviderRuntime } from "~/services/providers/codebuddy"
 
 const originalFetch = globalThis.fetch
 
@@ -84,6 +85,79 @@ function sseResponse(): Response {
 }
 
 describe("CodeBuddy request handling", () => {
+  test("concurrent chat and quota 401s renew a still-valid WorkBuddy token once", async () => {
+    const old = jwt(Math.floor(Date.now() / 1000) + 3600)
+    const fresh = jwt(Math.floor(Date.now() / 1000) + 7200)
+    const credential = makeCredential({
+      value: old,
+      context: { refreshToken: "refresh-fixture" },
+    })
+    const connection = makeConnection(credential)
+    upsertProviderConnection(connection)
+    const calls: Array<[string, string | null]> = []
+    let oldRequests = 0
+    let release!: () => void
+    const bothRejected = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    globalThis.fetch = mock(async (url: string, init: RequestInit) => {
+      const headers = new Headers(init.headers)
+      const auth = headers.get("authorization")
+      const path = new URL(url).pathname
+      if (path.endsWith("/auth/token/refresh")) {
+        calls.push(["refresh", auth])
+        expect(headers.get("x-refresh-token")).toBe("refresh-fixture")
+        return Response.json({
+          code: 0,
+          data: { accessToken: fresh, refreshToken: "rotated-fixture" },
+        })
+      }
+      const kind = path.endsWith("/chat/completions") ? "chat" : "quota"
+      calls.push([kind, auth])
+      if (auth === `Bearer ${old}`) {
+        if (++oldRequests === 2) release()
+        await bothRejected
+        return new Response(null, { status: 401 })
+      }
+      return kind === "chat" ? sseResponse() : (
+          Response.json({
+            code: 0,
+            data: {
+              Packages: [
+                { CycleTotalCapacity: "10", CycleRemainCapacity: "3" },
+              ],
+            },
+          })
+        )
+    }) as unknown as typeof fetch
+    const model = "glm-5.3"
+    const [, quota] = await Promise.all([
+      codebuddyNativeAdapter.createChatCompletions!({
+        connection,
+        credential,
+        target: { upstreamModelId: model } as never,
+        payload: {
+          model,
+          stream: true,
+          messages: [{ role: "user", content: "fixture" }],
+        },
+      }),
+      codebuddyProviderRuntime.refreshQuota!(connection),
+    ])
+    expect(calls.filter(([kind]) => kind === "refresh")).toEqual([
+      ["refresh", `Bearer ${old}`],
+    ])
+    for (const kind of ["chat", "quota"]) {
+      expect(calls.filter(([name]) => name === kind)).toEqual([
+        [kind, `Bearer ${old}`],
+        [kind, `Bearer ${fresh}`],
+      ])
+    }
+    expect(credential.context?.refreshToken).toBe("rotated-fixture")
+    expect(quota?.chatRemaining).toBe(3)
+    expect(credential.quota?.chatRemaining).toBe(3)
+  })
+
   test("normalizes the upstream copy without mutating the failover payload", async () => {
     let upstreamBody: ChatCompletionsPayload | undefined
     globalThis.fetch = mock((_url: string, init: RequestInit) => {

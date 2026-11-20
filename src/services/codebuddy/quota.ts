@@ -199,6 +199,7 @@ interface CodebuddyEnvelope {
 export async function fetchCodebuddyQuota(
   connection: ProviderConnection,
   signal?: AbortSignal,
+  preparedToken?: string,
 ): Promise<ProviderQuotaSnapshot> {
   const provider = getConnectionProvider(connection)
   if (provider !== "codebuddy" && provider !== "codebuddy-cn") {
@@ -227,11 +228,9 @@ export async function fetchCodebuddyQuota(
       details: { reason: "WorkBuddy does not report credits for API keys" },
     }
   }
-  const accessToken = await ensureCodebuddyAccessToken(
-    connection,
-    credential,
-    signal,
-  )
+  const accessToken =
+    preparedToken
+    ?? (await ensureCodebuddyAccessToken(connection, credential, signal))
   if (!accessToken) {
     throw new Error("CodeBuddy quota request requires an access token")
   }

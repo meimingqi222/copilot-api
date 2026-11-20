@@ -39,7 +39,7 @@ import {
   isCodebuddyChannelCheck,
 } from "~/lib/provider-connections"
 import {
-  ensureCodebuddyAccessToken,
+  fetchWithCodebuddyAuth,
   isCodebuddyApiKey,
   resolveCodebuddyDomain,
 } from "~/services/codebuddy/token-refresh"
@@ -939,24 +939,15 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
   async discoverModels({ connection, credential, signal }) {
     const apiKey = isCodebuddyApiKey(credential)
     if (apiKey && !/^(ck_|pt_)/.test(credential.value ?? "")) return []
-    const accessToken = await ensureCodebuddyAccessToken(
-      connection,
-      credential,
-      signal,
-    )
     const base = new URL(resolveCodebuddyBaseUrl(connection))
     const origin = base.origin
     const isCn = isCodebuddyCnDomain(base.hostname)
     // config 按 UA 下发不同目录，模型发现优先使用对应 realm 的 WorkBuddy 身份。
     // 聊天保留原有 CLI 指纹，自定义 header 仍可覆盖。
-    const headers = buildCodebuddyHeaders(
-      connection,
-      credential,
-      accessToken,
+    const userAgent =
       apiKey ? workbuddyConfigUserAgent(isCn)
       : isCn ? "WorkBuddy/5.5.4 WorkBuddy/5.5.4 CLI/2.137.1"
-      : "WorkBuddy/5.5.4 WorkBuddy AI/5.5.4 CLI/2.137.1",
-    )
+      : "WorkBuddy/5.5.4 WorkBuddy AI/5.5.4 CLI/2.137.1"
     const sources = [["/v3/config"]]
     if (!apiKey)
       sources.push(
@@ -972,13 +963,24 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
         let lastError: unknown
         for (const path of paths) {
           try {
-            const response = await fetch(
-              `${origin}${path}`,
-              connectionFetchInit(connection, {
-                headers,
-                signal,
-                ...(apiKey && { redirect: "manual" }),
-              }),
+            const response = await fetchWithCodebuddyAuth(
+              connection,
+              credential,
+              signal,
+              (token) =>
+                fetch(
+                  `${origin}${path}`,
+                  connectionFetchInit(connection, {
+                    headers: buildCodebuddyHeaders(
+                      connection,
+                      credential,
+                      token,
+                      userAgent,
+                    ),
+                    signal,
+                    ...(apiKey && { redirect: "manual" }),
+                  }),
+                ),
             )
             throwIfWorkbuddyKeyRefused(response, connection, credential)
             const text = await response.text()
@@ -1039,23 +1041,7 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
       const message = "Only CodeBuddy CN Claude models support native Messages"
       throw new HTTPError(message, new Response(null, { status: 400 }))
     }
-    const accessToken = await ensureCodebuddyAccessToken(
-      connection,
-      credential,
-      signal,
-    )
-    const headers = new Headers(
-      buildCodebuddyHeaders(connection, credential, accessToken),
-    )
-    setCodebuddyMessagesConversation(headers, params)
-    headers.set("Accept", "text/event-stream")
     const forwarded = ctx?.forwardedHeaders
-    headers.set(
-      "anthropic-version",
-      forwarded?.["anthropic-version"] ?? "2023-06-01",
-    )
-    if (forwarded?.["anthropic-beta"])
-      headers.set("anthropic-beta", forwarded["anthropic-beta"])
     // WorkBuddy validates the signature against the exact historical thinking text.
     const messages = payload.messages.map((message): typeof message => {
       if (message.role !== "assistant" || !Array.isArray(message.content))
@@ -1070,20 +1056,39 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
             content: content.length ? content : [{ type: "text", text: "" }],
           }
     })
-    const response = await fetch(
-      `${base.origin}/v1/messages`,
-      connectionFetchInit(connection, {
-        method: "POST",
-        headers,
-        body: serializeUpstreamBody({
-          ...payload,
-          model,
-          stream: true,
-          messages,
-        }),
-        signal,
-        ...(isCodebuddyApiKey(credential) && { redirect: "manual" }),
-      }),
+    const body = serializeUpstreamBody({
+      ...payload,
+      model,
+      stream: true,
+      messages,
+    })
+    const response = await fetchWithCodebuddyAuth(
+      connection,
+      credential,
+      signal,
+      (token) => {
+        const headers = new Headers(
+          buildCodebuddyHeaders(connection, credential, token),
+        )
+        setCodebuddyMessagesConversation(headers, params)
+        headers.set("Accept", "text/event-stream")
+        headers.set(
+          "anthropic-version",
+          forwarded?.["anthropic-version"] ?? "2023-06-01",
+        )
+        if (forwarded?.["anthropic-beta"])
+          headers.set("anthropic-beta", forwarded["anthropic-beta"])
+        return fetch(
+          `${base.origin}/v1/messages`,
+          connectionFetchInit(connection, {
+            method: "POST",
+            headers,
+            body,
+            signal,
+            ...(isCodebuddyApiKey(credential) && { redirect: "manual" }),
+          }),
+        )
+      },
     )
     throwIfWorkbuddyKeyRefused(response, connection, credential)
     if (!response.ok) {
@@ -1158,13 +1163,6 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
       })
     }
 
-    const accessToken = await ensureCodebuddyAccessToken(
-      connection,
-      credential,
-      signal,
-    )
-    const headers = buildCodebuddyHeaders(connection, credential, accessToken)
-    headers.Accept = "application/json, text/event-stream"
     const chatUrls = resolveCodebuddyChatUrls(connection)
     const requestBody = serializeUpstreamBody(upstreamPayload)
 
@@ -1176,16 +1174,25 @@ export const codebuddyNativeAdapter: ProtocolAdapter = {
       const url = chatUrls[urlIdx] as string
       const isLastPath = urlIdx === chatUrls.length - 1
 
-      const response = await fetch(
-        url,
-        connectionFetchInit(connection, {
-          method: "POST",
-          headers,
-          body: requestBody,
-          signal,
-          // Fetch strips Authorization on cross-origin redirects but not X-API-Key.
-          ...(isCodebuddyApiKey(credential) && { redirect: "manual" }),
-        }),
+      const response = await fetchWithCodebuddyAuth(
+        connection,
+        credential,
+        signal,
+        (token) => {
+          const headers = buildCodebuddyHeaders(connection, credential, token)
+          headers.Accept = "application/json, text/event-stream"
+          return fetch(
+            url,
+            connectionFetchInit(connection, {
+              method: "POST",
+              headers,
+              body: requestBody,
+              signal,
+              // Fetch strips Authorization on cross-origin redirects but not X-API-Key.
+              ...(isCodebuddyApiKey(credential) && { redirect: "manual" }),
+            }),
+          )
+        },
       )
 
       throwIfWorkbuddyKeyRefused(response, connection, credential)

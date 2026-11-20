@@ -186,7 +186,8 @@ export async function refreshCodebuddyTokenForConnection(
       connectionFetchInit(conn, {
         method: "POST",
         headers,
-        signal,
+        redirect: "error",
+        signal: signal ?? AbortSignal.timeout(15_000),
       }),
     )
   } catch (e) {
@@ -232,6 +233,14 @@ export async function refreshCodebuddyTokenForConnection(
     expiresAtMs = Date.now() + body.data.expiresIn * 1000
   }
 
+  const live = getMutableProviderConnection(conn.id)
+  if (
+    (live && live !== conn)
+    || conn.credentials[0] !== credential
+    || credential.value !== oldAccessToken
+    || credential.context !== ctx
+  )
+    return false
   // 更新 credential
   credential.value = newAccessToken
   credential.context = {
@@ -279,8 +288,8 @@ const scheduler = createTokenRefreshScheduler({
   canRefresh: hasRefreshToken,
   requiresExpiry: true,
   maxTimerDelayMs: MAX_TIMER_DELAY_MS,
-  // 定时刷新与请求前刷新各自发起；历史上只有请求路径做 in-flight 合并。
-  dedupeScheduledRefresh: false,
+  // The refresh token rotates: timers and requests must share one exchange.
+  dedupeScheduledRefresh: true,
   // 请求前刷新用调用方传入的凭据判断；刷新成功后按同一凭据 id 取值。
   // 调用方（adapter/quota）拿准入凭据签请求头，返回「列表第一条」会在
   // 多凭据或轮换后签错身份。
@@ -305,6 +314,36 @@ export function ensureCodebuddyAccessToken(
       : Promise.resolve(credential.value)
   }
   return scheduler.ensureAccessToken(conn, credential, signal)
+}
+
+export function renewRejectedCodebuddyToken(
+  conn: ProviderConnection,
+  credential: ApiCredential,
+  token: string | undefined,
+  signal?: AbortSignal,
+): Promise<string | undefined> {
+  if (!token || !hasRefreshToken(credential)) return Promise.resolve(undefined)
+  return scheduler.ensureAccessToken(conn, credential, signal, token)
+}
+
+export async function fetchWithCodebuddyAuth(
+  conn: ProviderConnection,
+  credential: ApiCredential,
+  signal: AbortSignal | undefined,
+  send: (token: string | undefined) => Promise<Response>,
+): Promise<Response> {
+  const token = await ensureCodebuddyAccessToken(conn, credential, signal)
+  const response = await send(token)
+  if (response.status !== 401) return response
+  const renewed = await renewRejectedCodebuddyToken(
+    conn,
+    credential,
+    token,
+    signal,
+  )
+  if (!renewed) return response
+  await response.body?.cancel()
+  return send(renewed)
 }
 
 /** 取消所有 CodeBuddy 定时器（含持久化重试定时器）。 */
