@@ -43,6 +43,12 @@ export interface ProviderPresentation {
   hasManualMode?: boolean
   importMethod?: "cookie" | "json" | "lobsterai" | "pat"
   manualOAuthCallback?: boolean
+  /**
+   * 内置网页扫码登录：服务端起临时无头浏览器出二维码，用户扫码后直接把
+   * 会话换成账号（`/admin/api/web-login/*`）。用于厂商只有网页会话这一种
+   * 身份、没有标准 OAuth 的提供方；有 OAuth 的不设这个。
+   */
+  webLogin?: boolean
 }
 
 export interface ProviderDescriptor<Id extends string = ProviderId> {

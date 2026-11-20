@@ -18,6 +18,7 @@ export const providerMetadata = defineProviderMetadata({
       category: "domestic",
       badgeKey: "accounts.badge.cookie",
       hintKey: "accounts.provider.wps-lingxi.remoteHint",
+      webLogin: true,
     },
     features: ["quota", "cooldown", "model_discovery"],
     accountFields: [

@@ -378,6 +378,22 @@ const API = {
       }),
   },
 
+  // Built-in web sign-in (scan a vendor QR code with the proxy's browser).
+  webLogin: {
+    start: (provider, data = {}) =>
+      API.request(`/web-login/${provider}/start`, {
+        method: "POST",
+        body: data,
+      }),
+    poll: (provider, flowId) =>
+      API.request(`/web-login/${provider}/poll/${flowId}`),
+    cancel: (provider, data) =>
+      API.request(`/web-login/${provider}/cancel`, {
+        method: "POST",
+        body: data,
+      }),
+  },
+
   // Usage Statistics
   usage: {
     summary: (params = {}) => {

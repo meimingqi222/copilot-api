@@ -2451,6 +2451,22 @@
                     />
                   </div>
 
+                  <!-- 内置网页扫码登录：厂商只有网页会话（没有 OAuth）时的首选入口。
+                       手工粘贴仍然保留在下面，两种方式共用同一套凭证校验。 -->
+                  <div x-show="needsWebLogin() && !isReauthFlow()">
+                    <button
+                      type="button"
+                      class="btn btn-primary w-full"
+                      :disabled="webLoginSubmitting || claimCredentialBusy"
+                      @click="startWebLogin()"
+                      x-text="webLoginSubmitting ? t('accounts.webLogin.starting') : t('accounts.webLogin.start')"
+                    ></button>
+                    <p
+                      class="text-caption text-[var(--apple-text-secondary)] mt-2"
+                      x-text="t('accounts.webLogin.hint')"
+                    ></p>
+                  </div>
+
                   <p
                     x-show="newAccount.provider === 'doubao-work'"
                     class="p-3 text-sm bg-[var(--apple-bg-secondary)] rounded-lg"
@@ -2690,6 +2706,28 @@
                   <div
                     class="animate-spin h-10 w-10 border-4 border-[var(--apple-blue)] border-t-transparent rounded-full mx-auto mb-6"
                   ></div>
+                  <template x-if="webLoginFlowData?.qrImage">
+                    <div>
+                      <p
+                        class="text-body text-[var(--apple-text-secondary)] mb-4"
+                        x-text="t('accounts.webLogin.scanHint')"
+                      ></p>
+                      <img
+                        :src="webLoginFlowData.qrImage"
+                        alt="sign-in QR code"
+                        class="mx-auto rounded-lg border border-[var(--apple-separator)] bg-white"
+                        style="
+                          width: 220px;
+                          height: 220px;
+                          image-rendering: pixelated;
+                        "
+                      />
+                      <p
+                        class="text-caption text-[var(--apple-text-secondary)] mt-4"
+                        x-text="t('accounts.webLogin.waiting')"
+                      ></p>
+                    </div>
+                  </template>
                   <template x-if="oauthFlowData?.authUrl">
                     <div>
                       <p
@@ -2738,7 +2776,9 @@
                       ></p>
                     </div>
                   </template>
-                  <template x-if="!oauthFlowData?.authUrl">
+                  <template
+                    x-if="!oauthFlowData?.authUrl && !webLoginFlowData?.qrImage"
+                  >
                     <div>
                       <p
                         class="text-body text-[var(--apple-text-secondary)] mb-4"

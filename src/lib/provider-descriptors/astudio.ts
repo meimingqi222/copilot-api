@@ -57,6 +57,7 @@ export const providerMetadata = defineProviderMetadata({
       category: "ide",
       badgeKey: "accounts.badge.token",
       hintKey: "accounts.provider.astudio.remoteHint",
+      webLogin: true,
     },
   },
 })

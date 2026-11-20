@@ -163,6 +163,11 @@ src/
 │   │   ├── searcher.ts     # Ranked searcher accounts (codex first, then claude/anthropic/responses)
 │   │   ├── execute.ts      # Runs one search via a search-capable account
 │   │   └── orchestrate.ts  # Wire-agnostic search loop (max 6 rounds) + result shaping
+│   ├── web-login/          # 内置网页扫码登录（厂商只有网页会话、没有 OAuth 的提供方）
+│   │   ├── browser.ts      # 临时无头 Chromium：复用 zcode 的定位/安装与极简 CDP 客户端
+│   │   ├── flow.ts         # 扫码流程编排（起浏览器 → 出二维码 → 轮询会话 → 兑换）
+│   │   ├── providers/      # 各提供方的登录页 / 二维码选择器 / 域名白名单 / 会话提取
+│   │   └── index.ts        # WEB_LOGIN_PROVIDERS 注册表
 │   ├── copilot/            # Copilot API calls (token-refresh: connection-native)
 │   ├── dispatch/           # Request dispatch + failover
 │   ├── oauth/              # OAuth flows (provider-strategies: connection-native)

@@ -19,6 +19,7 @@ export const providerMetadata = defineProviderMetadata({
       category: "ide",
       badgeKey: "accounts.badge.cookie",
       hintKey: "accounts.provider.dumate.remoteHint",
+      webLogin: true,
     },
     features: ["quota", "cooldown", "model_discovery"],
     accountFields: [

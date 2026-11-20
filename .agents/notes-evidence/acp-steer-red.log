@@ -1,0 +1,25 @@
+bun test v1.4.4 (38afee4c8)
+
+tests\antigravity-acp-bridge.test.ts:
+890 |           { role: "tool", tool_call_id: call.id, content: "tool-result" },
+891 |           { role: "user", content: "Actually do something else now" },
+892 |         ],
+893 |         true,
+894 |       )
+895 |       expect(next.choices[0].finish_reason).toBe("stop")
+                                                  ^
+error: expect(received).toBe(expected)
+
+Expected: "stop"
+Received: "tool_calls"
+
+      at <anonymous> (tests/antigravity-acp-bridge.test.ts:895:45)
+[warn] antigravity-acp: MCP callback failed { error: 'Antigravity ACP session closed' }
+[warn] antigravity-acp: MCP callback failed { error: 'Antigravity ACP session closed' }
+(fail) ACP session lifecycle: steer, cancel preservation, resume > a new user instruction after tool results steers the same native session [233.63ms]
+
+ 0 pass
+ 34 filtered out
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [504.00ms]

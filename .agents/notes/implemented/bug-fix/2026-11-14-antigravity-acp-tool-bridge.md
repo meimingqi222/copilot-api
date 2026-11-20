@@ -369,7 +369,7 @@ Proved: with the steering branch disabled (`if (false && trailingTools.length
 === 0)`), the focused command `bun test tests/antigravity-acp-bridge.test.ts
 --test-name-pattern 'steers the same native session'` failed because the
 follow-up cold-replayed into another tool loop: `finish_reason` expected `stop`,
-received `tool_calls` (output in ignored `temp/acp-steer-red.log`). Restoring the
+received `tool_calls` (output in `.agents/notes-evidence/acp-steer-red.log`). Restoring the
 branch passes. The lifecycle suite drives the real loopback RPC/MCP fixture:
 steer reuses one native session (second prompt, not `replayed:`), a changed
 opening still replays, an aborted generation turn settles idle and its follow-up

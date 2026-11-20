@@ -786,6 +786,15 @@ const i18n = {
       "accounts.oauth.authorize": "开始授权",
       "accounts.oauth.instruction":
         "请在浏览器中完成授权，完成后将自动添加账户。",
+      "accounts.webLogin.start": "扫码登录",
+      "accounts.webLogin.starting": "正在打开登录页...",
+      "accounts.webLogin.hint":
+        "点此处在服务器上打开厂商登录页并显示二维码，用手机扫码确认后自动建号；也可以继续在下面手工粘贴 Cookie 兜底。",
+      "accounts.webLogin.scanHint":
+        "请用手机扫描下方二维码，并在厂商页面确认登录。",
+      "accounts.webLogin.waiting": "等待扫码确认...",
+      "accounts.webLogin.failed": "扫码登录失败，请重试。",
+      "accounts.webLogin.startError": "无法发起扫码登录，请重试。",
       "accounts.oauth.manualInstruction":
         "请在自己的浏览器中完成授权。如果浏览器跳到本机回环地址后显示无法连接，仍可复制地址栏里的完整回调 URL 并粘贴到下方。无需开放服务器回调端口。",
       "accounts.oauth.openAuth": "打开授权页面",
@@ -3029,6 +3038,15 @@ const i18n = {
       "accounts.oauth.authorize": "Start Authorization",
       "accounts.oauth.instruction":
         "Complete authorization in your browser. The account will be added automatically.",
+      "accounts.webLogin.start": "Scan to sign in",
+      "accounts.webLogin.starting": "Opening the sign-in page...",
+      "accounts.webLogin.hint":
+        "Opens the vendor sign-in page on the server and shows its QR code; the account is created once you confirm on your phone. Pasting a Cookie below still works as a fallback.",
+      "accounts.webLogin.scanHint":
+        "Scan the QR code below and confirm the sign-in on your phone.",
+      "accounts.webLogin.waiting": "Waiting for the scan...",
+      "accounts.webLogin.failed": "Scan sign-in failed. Please try again.",
+      "accounts.webLogin.startError": "Could not start scan sign-in.",
       "accounts.oauth.manualInstruction":
         "Authorize in your own browser. If the loopback address cannot load, copy the full callback URL from the address bar and paste it below. There is no need to expose a server callback port.",
       "accounts.oauth.openAuth": "Open authorization page",

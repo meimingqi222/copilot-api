@@ -45,6 +45,7 @@ import { totpApiRoutes } from "./api/totp"
 import { traceApiRoutes } from "./api/trace"
 import { usageApiRoutes } from "./api/usage"
 import { userApiRoutes } from "./api/users"
+import { webLoginApiRoutes } from "./api/web-login"
 
 export const adminRoutes = new Hono()
 
@@ -183,6 +184,7 @@ adminRoutes.route("/api/users", userApiRoutes)
 adminRoutes.route("/api/guard", guardApiRoutes)
 adminRoutes.route("/api/system-config", systemConfigApiRoutes)
 adminRoutes.route("/api/totp", totpApiRoutes)
+adminRoutes.route("/api/web-login", webLoginApiRoutes)
 
 // Serve a file from pages directory
 function serveFile(filePath: string): string {

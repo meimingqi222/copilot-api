@@ -22,6 +22,7 @@ export const providerMetadata = defineProviderMetadata({
       category: "domestic",
       badgeKey: "accounts.badge.token",
       hintKey: "accounts.provider.inkstone.remoteHint",
+      webLogin: true,
     },
     accountFields: [
       {

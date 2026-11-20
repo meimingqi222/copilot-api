@@ -38,6 +38,9 @@ function accountsView() {
     deviceFlowData: null,
     desktopSignInNonce: "",
     desktopSignInSubmitting: false,
+    // 内置网页扫码登录（astudio / dumate / inkstone / wps-lingxi）
+    webLoginFlowData: null,
+    webLoginSubmitting: false,
     oauthFlowData: null,
     oauthCallbackInput: "",
     oauthCallbackSubmitting: false,
@@ -484,6 +487,11 @@ function accountsView() {
       return this.getProviderMeta(provider).manualOAuthCallback === true
     },
 
+    /** 该提供方是否支持服务端扫码登录（厂商只有网页会话、没有 OAuth）。 */
+    needsWebLogin(provider = this.newAccount.provider) {
+      return this.getProviderMeta(provider).webLogin === true
+    },
+
     oauthCallbackLabel() {
       const provider = this.newAccount.provider
       const key = `accounts.oauth.${provider}CallbackLabel`
@@ -514,6 +522,92 @@ function accountsView() {
         await API.oauth.cancel(provider, { flowId })
       } catch {
         // Ignore cancel errors.
+      }
+    },
+
+    /**
+     * 发起扫码登录：服务端起临时无头浏览器出二维码，扫码成功后直接把会话
+     * 换成账号。与手工粘贴同一个提供方的两套凭证校验，谁先谁后都行。
+     */
+    async startWebLogin() {
+      const provider = this.newAccount.provider
+      if (this.webLoginSubmitting || this.claimCredentialBusy) return
+      this.webLoginSubmitting = true
+      if (this.pollTimer) clearTimeout(this.pollTimer)
+      this.pollTimer = null
+      try {
+        const res = await API.webLogin.start(provider, {
+          label: this.newAccount.label.trim() || undefined,
+          proxyUrl: this.newAccount.settings?.proxyUrl?.trim() || undefined,
+        })
+        if (!res?.flowId) throw new Error(I18n.t("error.create"))
+        this.webLoginFlowData = res
+        this.oauthCallbackInput = ""
+        this.deviceFlowStep = "pending"
+        this.pollWebLoginFlow()
+      } catch (error) {
+        this.showToast(
+          error instanceof Error ?
+            error.message
+          : I18n.t("accounts.webLogin.startError"),
+          "error",
+        )
+      } finally {
+        this.webLoginSubmitting = false
+      }
+    },
+
+    pollWebLoginFlow() {
+      const provider = this.newAccount.provider
+      const flowId = this.webLoginFlowData?.flowId
+      let pollInterval = (this.webLoginFlowData?.interval || 3) * 1000
+
+      const doPoll = async () => {
+        if (this.deviceFlowStep !== "pending" || !flowId) return
+        try {
+          const res = await API.webLogin.poll(provider, flowId)
+          if (res.status === "complete") {
+            await this.finishWebLogin(res)
+            return
+          }
+          if (res.status === "error" || res.status === "expired") {
+            await this.cancelWebLoginFlow()
+            this.deviceFlowStep = "input"
+            this.webLoginFlowData = null
+            this.showToast(
+              res.error || I18n.t("accounts.webLogin.failed"),
+              "error",
+            )
+            return
+          }
+          if (res.interval) pollInterval = res.interval * 1000
+        } catch {
+          // 轮询失败继续等：扫码本身可能比一次轮询周期长。
+        }
+        this.pollTimer = setTimeout(doPoll, pollInterval)
+      }
+      doPoll()
+    },
+
+    async finishWebLogin(result) {
+      if (this.pollTimer) clearTimeout(this.pollTimer)
+      this.pollTimer = null
+      this.webLoginFlowData = null
+      this.deviceFlowStep = "success"
+      await this.load()
+    },
+
+    async cancelWebLoginFlow() {
+      const provider = this.newAccount.provider
+      const flowId = this.webLoginFlowData?.flowId
+      if (this.pollTimer) clearTimeout(this.pollTimer)
+      this.pollTimer = null
+      this.webLoginFlowData = null
+      if (!flowId) return
+      try {
+        await API.webLogin.cancel(provider, { flowId })
+      } catch {
+        // 取消失败不影响前端状态：流程到期会自己清掉。
       }
     },
 
@@ -588,6 +682,8 @@ function accountsView() {
     async backToProviderSelect() {
       if (this.desktopSignInSubmitting) return
       await this.cancelDesktopSignIn()
+      // 扫码登录握着服务端的临时浏览器，返回选择页必须关掉，不能留给 TTL。
+      await this.cancelWebLoginFlow()
       this.addStep = "select"
       this.$nextTick(() => {
         if (window.lucide) refreshAdminIcons(this.$el)
@@ -716,6 +812,8 @@ function accountsView() {
       this.deviceFlowData = null
       this.desktopSignInNonce = ""
       this.desktopSignInSubmitting = false
+      this.webLoginFlowData = null
+      this.webLoginSubmitting = false
       this.oauthFlowData = null
       this.oauthCallbackInput = ""
       this.oauthCallbackSubmitting = false
@@ -784,6 +882,7 @@ function accountsView() {
       await this.cancelDesktopSignIn()
       if (this.deviceFlowStep === "pending") {
         await this.cancelOAuthFlow()
+        await this.cancelWebLoginFlow()
       }
 
       this.resetAddModalState()
