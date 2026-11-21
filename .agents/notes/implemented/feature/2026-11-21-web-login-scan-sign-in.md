@@ -80,6 +80,46 @@ Each scan login creates a new account, exactly like a pasted cookie — repeated
 logins do not merge into an existing connection, so an operator should reuse the
 existing account when re-authorizing.
 
+## Follow-up (2026-11-22): InkStone exchanges the redirect login code itself
+
+The sibling auto-checkin project hit this live on 2026-11-22: the InkStone scan
+*looked* successful (the console loaded and routed to `/chat`) yet no credential
+was captured, because the console is an SPA — it consumes `?code=uaa::code::…`
+from the landing URL and routes away, and the code exchange is one-shot. Waiting
+for the `uaa-token` cookie therefore depends on the SPA finishing its own
+exchange, and polling the page URL misses the code entirely once it routes.
+
+The desktop client (inkstone 0.2.13 `ExternalAuthOverlay`) answers this with
+`preventDefault()` on the code-carrying navigation. CDP has no such hook, so
+`browser.ts` now arms `Fetch.enable` (Document requests only) right after
+`Page.navigate` and fails the request whose URL matches the provider's new
+`captureCode` predicate; everything else is continued. The captured code goes
+through the provider's new `exchangeCode` hook (`POST /api/user-center/v1/users/auth`
+`{code}` → `{code:0, data:{token}}`, invalid/used → `-40132`), and the JWT lands
+in `prepare`'s credentials as `uaaToken` — the same value the console stores as
+its `uaa-token` cookie.
+
+Clauses worth keeping:
+
+- **The code criterion checks origin + `uaa::code::` prefix, not the path.**
+  The SPA routes the landing document to `/chat`; a pathname check (what the
+  desktop client uses, because it sees the URL mid-navigation) drops the code.
+  The SSO midpage `/wechat?code=` carries the *WeChat-side* code and is
+  rejected by the origin check — exchanging it only yields `-40132`.
+- **Cookie capture stays as the fallback**, not the primary path: if
+  interception fails to arm, or the redirect opens a popup the page-level
+  handler never sees, the SPA loads and the cookie still arrives.
+- **A captured code is exchanged exactly once.** `-40132` means the code was
+  already consumed (interception missed, the SPA loaded once); retrying only
+  repeats the rejection, so the flow settles as an error telling the user to
+  scan again — same one-shot semantics `prepare` already had for key minting.
+- **`Fetch.enable` is armed right after navigate, before the QR renders.**
+  The SSO redirect chain is paused-then-continued (no code in those URLs);
+  verified live, QR rendering is unaffected.
+- `CdpConnection` now dispatches events (`onEvent`). It previously dropped every
+  message without an `id`, so `Fetch.requestPaused` was unreachable. One broken
+  handler cannot affect other subscribers or command responses.
+
 ## Verification
 
 - `tests/web-login.test.ts` — provider registry and per-provider session
@@ -91,9 +131,20 @@ existing account when re-authorizing.
 - `tests/web-login.test.ts::the QR readiness expression embeds the selector, hint
   and self-check` pins the three page-behaviour clauses above; dropping any of
   them silently screenshots a loading placeholder again.
+- `tests/web-login.test.ts::the inkstone login-code criterion accepts the console
+  and rejects the SSO midpage` pins origin-vs-path and the midpage rejection.
+- `tests/web-login.test.ts::a captured login code drives the exchange and reaches
+  prepare as uaaToken` / `a rejected login code settles as an error and never
+  retries the vendor` pin the one-shot exchange and the credentials/settings
+  split for the code path.
 - Real-page probe (`temp/qr-probe.ts`, not committed) opened all four vendor
   login pages headlessly and produced a scannable QR for each: Astron Studio
   190×190, DuMate 150×150, InkStone 179×179 (cross-origin WeChat iframe), WPS
   Lingxi 180×180.
+- Follow-up probe (`temp/inkstone-intercept-probe.ts`, not committed) armed the
+  same interception against the real SSO page: the code-carrying document was
+  failed, the page stayed on `sso.openxlab.org.cn/wechat`, a normal document
+  navigation was continued, and the fake code hit the live exchange endpoint
+  (`-40132`).
 - `bun run lint`, `bun run typecheck`, `bun run format:check` and `bun run knip`
   are clean.

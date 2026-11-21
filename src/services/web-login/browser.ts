@@ -11,6 +11,7 @@
 import { launchChrome, evaluatePage } from "~/services/zcode/cdp"
 import { ensureZcodeBrowser } from "~/services/zcode/browser"
 
+import { logger } from "~/lib/logger"
 import type { WebLoginBrowser, WebLoginCookie } from "./types"
 
 /** 同一时刻只开一个登录浏览器：多用户同时点登录要明确失败，不能各起一个。 */
@@ -219,6 +220,70 @@ interface OpenSignInPageOptions {
   qrSrcHint?: string
   qrMinSize?: number
   cookieDomains: ReadonlyArray<string>
+  /**
+   * 回跳登录码判据（书生·端砚这类「落地页会烧掉一次性 code」的提供方）。
+   * 传了就在导航后立即开启文档导航拦截：命中判据的导航记下 code 并
+   * fail 掉，其余放行。
+   */
+  captureCode?: (url: string) => string | null
+}
+
+/** 拦截用的 Fetch 模式：只暂停**文档导航**，子资源照常流，不添延迟。 */
+const FETCH_DOCUMENT_PATTERNS = [
+  { urlPattern: "*", resourceType: "Document", requestStage: "Request" },
+]
+
+/**
+ * 开启文档导航拦截，命中 `captureCode` 的导航记下 code 并 abort。
+ *
+ * 桌面端（inkstone 的 ExternalAuthOverlay）对带 code 的那次导航
+ * `preventDefault()`：console 是个 SPA，它自己会拿 code 去兑换，而我们
+ * 也要用同一个 code 换令牌——兑换大概率一次性，让它加载就等于烧掉 code。
+ * CDP 侧在请求阶段拦（比 Playwright 的 framenavigated 更早），
+ * `Fetch.failRequest` 等价于那次 preventDefault。
+ *
+ * 每个被暂停的请求都必须 continue 或 fail，否则页面会挂住。
+ */
+async function interceptLoginCode(
+  browser: Awaited<ReturnType<typeof launchChrome>>,
+  sessionId: string,
+  captureCode: (url: string) => string | null,
+): Promise<() => string | null> {
+  let code: string | null = null
+  await browser.send(
+    "Fetch.enable",
+    { patterns: FETCH_DOCUMENT_PATTERNS },
+    sessionId,
+  )
+  const unsubscribe = browser.onEvent(
+    "Fetch.requestPaused",
+    (params, eventSessionId) => {
+      const requestId =
+        typeof params.requestId === "string" ? params.requestId : ""
+      const request = (params.request ?? {}) as { url?: unknown }
+      const url = typeof request.url === "string" ? request.url : ""
+      const respond = (method: string, extra: Record<string, unknown> = {}) => {
+        if (!requestId) return
+        void browser
+          .send(method, { requestId, ...extra }, eventSessionId ?? sessionId)
+          .catch(() => undefined)
+      }
+      if (!code) {
+        const captured = captureCode(url)
+        if (captured) {
+          code = captured
+          logger.info("[web-login] 已拦截回跳登录码，阻止落地页加载")
+          respond("Fetch.failRequest", { errorReason: "Aborted" })
+          return
+        }
+      }
+      respond("Fetch.continueRequest")
+    },
+  )
+  return () => {
+    unsubscribe()
+    return code
+  }
 }
 
 /**
@@ -248,6 +313,26 @@ export async function openSignInPage(
     await browser.send("Network.enable", {}, sessionId)
     await browser.send("Page.navigate", { url: options.url }, sessionId)
     const live = browser
+    // 拦截型 provider（书生·端砚）：导航后立即武装文档导航拦截。SSO 自己的
+    // 重定向链会被暂停后放行（不带登录码），只有命中判据的那次才 fail——
+    // 扫码要几秒到几分钟，没必要（也不可能）等到二维码就绪再开。开启失败
+    // 不拦登录：Cookie 那条路仍然有效（落地页加载了，Cookie 会来）。
+    let readCode: (() => string | null) | null = null
+    if (options.captureCode) {
+      try {
+        readCode = await interceptLoginCode(
+          live,
+          sessionId,
+          options.captureCode,
+        )
+      } catch (error) {
+        logger.warn(
+          `[web-login] 回跳登录码拦截开启失败，退回 Cookie 轮询: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        )
+      }
+    }
     return {
       qrImage: async () => {
         const box = await waitForQr(
@@ -287,6 +372,7 @@ export async function openSignInPage(
               && cookieDomainAllowed(cookie.domain, options.cookieDomains),
           )
       },
+      code: () => readCode?.() ?? null,
       close: async () => {
         openBrowsers = Math.max(0, openBrowsers - 1)
         await live.close().catch(() => undefined)

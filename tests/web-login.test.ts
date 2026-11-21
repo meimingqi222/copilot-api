@@ -38,14 +38,16 @@ function cookie(
   }
 }
 
-/** 不真起浏览器的替身：只负责给二维码和Cookie。 */
+/** 不真起浏览器的替身：只负责给二维码、Cookie 和拦截到的登录码。 */
 function fakeBrowser(
   cookies: Array<WebLoginCookie>,
   onClose?: () => void,
+  code: string | null = null,
 ): WebLoginBrowser {
   return {
     qrImage: () => Promise.resolve("data:image/png;base64,ZmFrZQ=="),
     cookies: () => Promise.resolve(cookies),
+    code: () => code,
     close: () => {
       onClose?.()
       return Promise.resolve()
@@ -192,6 +194,175 @@ test("inkstone scan sign-in only accepts the console's own uaa-token", () => {
   ).toEqual({ uaaToken: "console" })
   // 没有 API key 时让账号创建流程用控制台会话建一把（同意项走 settings）。
   expect(config.settings?.()).toEqual({ createApiKey: true })
+})
+
+// ── 书生·端砚：回跳登录码兑换（2026-11-22） ──────────────────────────
+
+import {
+  exchangeCode,
+  readSsoCode,
+} from "~/services/web-login/providers/inkstone"
+
+/** 打桩 globalThis.fetch 返回固定响应；返回恢复函数。 */
+function stubFetch(response: () => Response): () => void {
+  const original = globalThis.fetch
+  globalThis.fetch = (() =>
+    Promise.resolve(response())) as unknown as typeof fetch
+  return () => {
+    globalThis.fetch = original
+  }
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  })
+}
+
+test("the inkstone login-code criterion accepts the console and rejects the SSO midpage", () => {
+  // 落点判据：origin 必须是 console、code 只有一个、uaa::code:: 前缀。
+  expect(
+    readSsoCode(
+      "https://discovery.intern-ai.org.cn/token-plan/home?code=uaa::code::abc",
+    ),
+  ).toBe("uaa::code::abc")
+  // ⚠️ 路径不限：console 是 SPA，拿到 code 后会路由走（线上实测落 /chat），
+  // 按桌面端的 pathname 判据会把登录码整段错过。
+  expect(
+    readSsoCode("https://discovery.intern-ai.org.cn/chat?code=uaa::code::abc"),
+  ).toBe("uaa::code::abc")
+  // SSO 中途页带的是微信侧 code：origin 不符，拿去兑换只会 -40132。
+  expect(
+    readSsoCode("https://sso.openxlab.org.cn/wechat?redirect=x&code=wxcode"),
+  ).toBeNull()
+  expect(
+    readSsoCode("https://evil.example.com/?code=uaa::code::abc"),
+  ).toBeNull()
+  expect(
+    readSsoCode("http://discovery.intern-ai.org.cn/?code=uaa::code::abc"),
+  ).toBeNull()
+  expect(
+    readSsoCode(
+      "https://discovery.intern-ai.org.cn/?code=uaa::code::a&code=uaa::code::b",
+    ),
+  ).toBeNull()
+  expect(
+    readSsoCode("https://discovery.intern-ai.org.cn/?code=not-uaa-code"),
+  ).toBeNull()
+  expect(
+    readSsoCode(
+      `https://discovery.intern-ai.org.cn/?code=${"uaa::code::" + "x".repeat(3000)}`,
+    ),
+  ).toBeNull()
+  expect(
+    readSsoCode(
+      "https://user:pass@discovery.intern-ai.org.cn/?code=uaa::code::a",
+    ),
+  ).toBeNull()
+})
+
+test("the inkstone login-code exchange returns the console JWT", async () => {
+  const restore = stubFetch(() =>
+    jsonResponse({ code: 0, data: { token: "jwt-fixture" } }),
+  )
+  try {
+    await expect(exchangeCode("uaa::code::fixture")).resolves.toEqual({
+      uaaToken: "jwt-fixture",
+    })
+  } finally {
+    restore()
+  }
+})
+
+test("a used or refused login code tells the user to scan again", async () => {
+  const restore = stubFetch(() =>
+    jsonResponse({ code: -40132, msg: "SSO authentication failed" }),
+  )
+  try {
+    await expect(exchangeCode("uaa::code::used")).rejects.toThrow(
+      /重新发起扫码/,
+    )
+  } finally {
+    restore()
+  }
+})
+
+test("a captured login code drives the exchange and reaches prepare as uaaToken", async () => {
+  const bodies: Array<Record<string, unknown>> = []
+  stubSignInPage(fakeBrowser([], undefined, "uaa::code::captured"))
+  stubConnectionPersistence()
+  keep(
+    spyOn(builtins, "getBuiltinProviderModule").mockReturnValue({
+      accountCreation: {
+        prepare: (context: { body: Record<string, unknown> }) => {
+          bodies.push(context.body)
+          return Promise.resolve({
+            id: "ink-code",
+            name: "端砚",
+            provider: "inkstone",
+            credentials: { apiKey: "sk-fixture" },
+          })
+        },
+      },
+    } as never),
+  )
+  const restore = stubFetch(() =>
+    jsonResponse({ code: 0, data: { token: "jwt-x" } }),
+  )
+  try {
+    const flow = await startWebLogin("inkstone", { label: "端砚" })
+    const done = await refreshWebLoginFlow(flow.id)
+    expect(done.status).toBe("complete")
+    expect(done.accountId).toBe("ink-code")
+    expect(bodies).toHaveLength(1)
+    expect(bodies[0].credentials).toEqual({ uaaToken: "jwt-x" })
+    expect(bodies[0].settings).toEqual({ createApiKey: true })
+  } finally {
+    restore()
+  }
+})
+
+test("a rejected login code settles as an error and never retries the vendor", async () => {
+  stubSignInPage(fakeBrowser([], undefined, "uaa::code::used"))
+  stubConnectionPersistence()
+  let prepares = 0
+  keep(
+    spyOn(builtins, "getBuiltinProviderModule").mockReturnValue({
+      accountCreation: {
+        prepare: () => {
+          prepares += 1
+          return Promise.resolve({ error: "never" })
+        },
+      },
+    } as never),
+  )
+  let calls = 0
+  const restore = stubFetch(() => {
+    calls += 1
+    return jsonResponse({ code: -40132, msg: "SSO authentication failed" })
+  })
+  try {
+    const flow = await startWebLogin("inkstone", { label: "端砚" })
+    const settled = await refreshWebLoginFlow(flow.id)
+    expect(settled.status).toBe("error")
+    expect(settled.error).toContain("重新发起扫码")
+    expect(calls).toBe(1)
+    expect(prepares).toBe(0)
+    // 终态不因再 poll 一次而重试。
+    expect((await refreshWebLoginFlow(flow.id)).status).toBe("error")
+    expect(calls).toBe(1)
+  } finally {
+    restore()
+  }
+})
+
+test("without a captured code the flow keeps waiting on cookies", async () => {
+  // 拦截型 provider 在主路径之外保留 Cookie 兜底：没拿到码时不能提前结束。
+  stubSignInPage(fakeBrowser([], undefined, null))
+  const flow = await startWebLogin("inkstone", { label: "端砚" })
+  expect((await refreshWebLoginFlow(flow.id)).status).toBe("pending")
+  await cancelWebLogin(flow.id)
 })
 
 test("wps-lingxi scan sign-in waits for wps_sid and forwards the whole jar", () => {

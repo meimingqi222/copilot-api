@@ -31,6 +31,17 @@ interface CdpResponse {
   error?: { code: number; message: string }
 }
 
+interface CdpEvent {
+  method?: string
+  params?: Record<string, unknown>
+  sessionId?: string
+}
+
+type CdpEventHandler = (
+  params: Record<string, unknown>,
+  sessionId?: string,
+) => void
+
 interface Pending {
   resolve: (value: Record<string, unknown>) => void
   reject: (error: Error) => void
@@ -52,6 +63,13 @@ interface ChromeBrowser {
     params?: Record<string, unknown>,
     sessionId?: string,
   ): Promise<Record<string, unknown>>
+  /**
+   * 订阅 CDP 事件（命令响应之外的 message），返回取消订阅函数。
+   *
+   * 拦截类需求（`Fetch.requestPaused` 之类）只有事件没有命令响应；处理器
+   * 抛错不影响连接与其它订阅者。
+   */
+  onEvent(method: string, handler: CdpEventHandler): () => void
   /** 新建一个页面，返回它的 sessionId。 */
   newPage(): Promise<string>
   /** 关浏览器并清理临时用户目录。 */
@@ -102,6 +120,7 @@ async function waitForDevToolsPort(
 class CdpConnection {
   private readonly socket: WebSocket
   private readonly pending = new Map<number, Pending>()
+  private readonly eventHandlers = new Map<string, Set<CdpEventHandler>>()
   private nextId = 1
   private closed = false
 
@@ -110,13 +129,17 @@ class CdpConnection {
     socket.addEventListener("message", (event) => {
       const data = event.data
       if (typeof data !== "string") return
-      let message: CdpResponse
+      let message: CdpResponse & CdpEvent
       try {
-        message = JSON.parse(data) as CdpResponse
+        message = JSON.parse(data) as CdpResponse & CdpEvent
       } catch {
         return
       }
-      if (typeof message.id !== "number") return
+      if (typeof message.id !== "number") {
+        // 事件（没有 id）：分发给订阅者；命令响应走下面的 pending。
+        this.dispatchEvent(message)
+        return
+      }
       const entry = this.pending.get(message.id)
       if (!entry) return
       this.pending.delete(message.id)
@@ -131,6 +154,29 @@ class CdpConnection {
     })
     socket.addEventListener("close", () => this.failAll("CDP socket closed"))
     socket.addEventListener("error", () => this.failAll("CDP socket error"))
+  }
+
+  private dispatchEvent(message: CdpEvent): void {
+    if (!message.method) return
+    const handlers = this.eventHandlers.get(message.method)
+    if (!handlers?.size) return
+    for (const handler of handlers) {
+      try {
+        handler(message.params ?? {}, message.sessionId)
+      } catch {
+        /* 一个处理器坏掉不影响其它订阅者 */
+      }
+    }
+  }
+
+  onEvent(method: string, handler: CdpEventHandler): () => void {
+    const handlers = this.eventHandlers.get(method) ?? new Set()
+    handlers.add(handler)
+    this.eventHandlers.set(method, handlers)
+    return () => {
+      handlers.delete(handler)
+      if (!handlers.size) this.eventHandlers.delete(method)
+    }
   }
 
   private failAll(message: string): void {
@@ -268,6 +314,7 @@ export async function launchChrome(
     return {
       send: (method, params, sessionId) =>
         connection.send(method, params ?? {}, sessionId),
+      onEvent: (method, handler) => connection.onEvent(method, handler),
       async newPage() {
         const { targetId } = await connection.send("Target.createTarget", {
           url: "about:blank",

@@ -154,6 +154,7 @@ export async function startWebLogin(
       qrSrcHint: config.qrSrcHint,
       qrMinSize: config.qrMinSize,
       cookieDomains: config.cookieDomains,
+      captureCode: config.captureCode,
     })
     flow.qrImage = await flow.browser.qrImage()
   } catch (error) {
@@ -167,10 +168,11 @@ export async function startWebLogin(
 }
 
 /**
- * 轮询一次：会话Cookie到位就兑换，否则继续等。
+ * 轮询一次：拦截到登录码就自己兑换，否则等会话Cookie。
  *
- * 兑换走该 provider 自己的 `accountCreation.prepare`——扫码和手工粘贴共用
- * 同一套校验与派生 token 逻辑，不会出现「能登录但不能用」的第二种语义。
+ * 兑换走该 provider 自己的 `accountCreation.prepare`——扫码、登录码兑换和
+ * 手工粘贴共用同一套校验与派生 token 逻辑，不会出现「能登录但不能用」的
+ * 第二种语义。
  */
 export async function refreshWebLoginFlow(
   flowId: string,
@@ -188,6 +190,32 @@ export async function refreshWebLoginFlow(
   if (!browser || !config) {
     await settle(flow, "error", { error: "登录会话已丢失，请重新发起" })
     return flow
+  }
+
+  // 拦截型 provider（书生·端砚）：登录码到位就自己兑换，不等 SPA 落 Cookie
+  // ——带 code 的那次导航被 abort 了，Cookie 永远不来，等它是白等。没拿到码
+  // 就落到下面的 Cookie 兜底（拦截没开成 / 回跳弹了新窗口时仍然有戏）。
+  if (config.captureCode && config.exchangeCode) {
+    const code = browser.code()
+    if (code) {
+      try {
+        const credentials = await config.exchangeCode(code)
+        const connection = await createWebLoginConnection(
+          config,
+          flow,
+          credentials,
+        )
+        await settle(flow, "complete", { accountId: connection.id })
+        logger.info(
+          `[web-login] ${flow.provider} 扫码登录成功（登录码兑换，${connection.id}）`,
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        logger.warn(`[web-login] ${flow.provider} 登录码兑换失败: ${message}`)
+        await settle(flow, "error", { error: message })
+      }
+      return flow
+    }
   }
 
   const cookies = await browser.cookies()
