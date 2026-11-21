@@ -21,6 +21,10 @@ let openBrowsers = 0
 const QR_TIMEOUT_MS = 60_000
 /** 二维码就绪轮询间隔（毫秒）。 */
 const QR_POLL_MS = 300
+/** 截图外扩的白边（像素）：二维码需要静区才能扫。 */
+const QR_PAD_PX = 12
+/** 截图为空白时的兜底门槛（base64 字符数）：真二维码远大于这个体积。 */
+const MIN_QR_PNG_CHARS = 2_000
 
 interface QrBox {
   x: number
@@ -83,16 +87,31 @@ export function qrBoxExpression(
     .replaceAll("HINT", JSON.stringify(srcHint))})()`
 }
 
-/** iframe 内部「有一张够大的图且加载完了」——微信二维码的就绪判据。 */
+/**
+ * iframe 内部「有一张够大的二维码图」——微信二维码的就绪判据。
+ *
+ * 只说「有图」会判早：微信登录页里还有一张 136×136 的默认头像 SVG，尺寸过线但
+ * 不是二维码，扫不了；真正的二维码是 `open.weixin.qq.com/connect/qrcode/<id>`。
+ * 所以必须连带 src 关键字一起判（和主文档里的 `HINT` 同一个口径）。判早了截出来
+ * 就是个白框——2026-11-21 线上实测。
+ */
 const FRAME_QR_BODY = `(() => {
-  const img = [...document.images].find(
-    (item) => item.complete && item.naturalWidth >= MIN,
-  );
+  const hint = HINT.toLowerCase();
+  const img = [...document.images].find((item) => {
+    const src = (item.currentSrc || item.src || '').toLowerCase();
+    return item.complete
+      && item.naturalWidth >= MIN
+      && item.naturalHeight >= MIN
+      && src.indexOf(hint) !== -1;
+  });
   return Boolean(img);
 })()`
 
-function frameQrExpression(minSize: number): string {
-  return FRAME_QR_BODY.replaceAll("MIN", String(minSize))
+export function frameQrExpression(minSize: number, srcHint: string): string {
+  return FRAME_QR_BODY.replaceAll("MIN", String(minSize)).replaceAll(
+    "HINT",
+    JSON.stringify(srcHint),
+  )
 }
 
 function scrollExpression(selector: string): string {
@@ -111,6 +130,7 @@ async function frameQrReady(
   browser: Awaited<ReturnType<typeof launchChrome>>,
   frameSrc: string,
   minSize: number,
+  srcHint: string,
   cached: { sessionId?: string },
 ): Promise<boolean> {
   if (!frameSrc) return true
@@ -137,10 +157,14 @@ async function frameQrReady(
     sessionId = attached.sessionId
     cached.sessionId = sessionId
   }
-  const ready = await evaluatePage(browser, frameQrExpression(minSize), {
-    sessionId,
-    timeoutMs: 8000,
-  }).catch(() => false)
+  const ready = await evaluatePage(
+    browser,
+    frameQrExpression(minSize, srcHint),
+    {
+      sessionId,
+      timeoutMs: 8000,
+    },
+  ).catch(() => false)
   return ready === true
 }
 
@@ -165,7 +189,7 @@ async function waitForQr(
     if (box && box.width > 0 && box.height > 0) {
       // 容器里嵌 iframe 时，盒子尺寸够不代表二维码画完了（书生·端砚实测：
       // 早 1 秒截出来是白框），必须等 iframe 内部出现够大的图。
-      if (await frameQrReady(browser, box.frameSrc, minSize, frame)) {
+      if (await frameQrReady(browser, box.frameSrc, minSize, srcHint, frame)) {
         // 滚到视口中央再截：CDP 的 clip 用页面坐标，元素在视口外会截到空白。
         await evaluatePage(browser, scrollExpression(selector), {
           sessionId,
@@ -335,31 +359,47 @@ export async function openSignInPage(
     }
     return {
       qrImage: async () => {
-        const box = await waitForQr(
-          live,
-          sessionId,
-          options.qrSelector,
-          options.qrMinSize ?? 120,
-          options.qrSrcHint ?? "qrcode",
-        )
-        const shot = await live.send(
-          "Page.captureScreenshot",
-          {
-            format: "png",
-            captureBeyondViewport: false,
-            clip: {
-              x: box.x,
-              y: box.y,
-              width: box.width,
-              height: box.height,
-              scale: 1,
+        const minSize = options.qrMinSize ?? 120
+        const srcHint = options.qrSrcHint ?? "qrcode"
+        const deadline = Date.now() + QR_TIMEOUT_MS
+        for (;;) {
+          const box = await waitForQr(
+            live,
+            sessionId,
+            options.qrSelector,
+            minSize,
+            srcHint,
+          )
+          // 截的时候往外放一圈白边：微信二维码图本身没有静区（quiet zone），
+          // 容器又是紧贴 iframe 裁的，边缘不留白扫不出来。
+          const pad = QR_PAD_PX
+          const shot = await live.send(
+            "Page.captureScreenshot",
+            {
+              format: "png",
+              captureBeyondViewport: false,
+              clip: {
+                x: Math.max(0, box.x - pad),
+                y: Math.max(0, box.y - pad),
+                width: box.width + pad * 2,
+                height: box.height + pad * 2,
+                scale: 1,
+              },
             },
-          },
-          sessionId,
-        )
-        const data = typeof shot.data === "string" ? shot.data : ""
-        if (!data) throw new Error("二维码截图失败，请重试")
-        return `data:image/png;base64,${data}`
+            sessionId,
+          )
+          const data = typeof shot.data === "string" ? shot.data : ""
+          // 就绪判据过了、截出来还是白框：跨域 iframe 的图层合成比 DOM 慢一拍。
+          // 空白 168×168 PNG 只有几百字节，真二维码几 KB 起步——按体积兜底重截，
+          // 宁可多等 0.4 秒，也不能把白框甩给用户（2026-11-21 线上实测）。
+          if (data.length >= MIN_QR_PNG_CHARS) {
+            return `data:image/png;base64,${data}`
+          }
+          if (Date.now() >= deadline) {
+            throw new Error("二维码截图失败，请重试")
+          }
+          await new Promise((resolve) => setTimeout(resolve, 400))
+        }
       },
       cookies: async () => {
         const result = await live.send("Network.getAllCookies", {}, sessionId)

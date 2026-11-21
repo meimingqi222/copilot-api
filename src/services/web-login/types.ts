@@ -101,6 +101,11 @@ export interface WebLoginFlow {
    * 结论（OAuth flow 对 complete 也是这个语义），所以不立即从表里删掉。
    */
   settledAt?: number
+  /**
+   * 前端最后一次来 poll 的时间。页面被关掉/刷新后前端不会再 poll，也没有机会
+   * 发取消——用它判断「这个流程被丢下了」，别让它白占该提供方 4 分钟的互斥。
+   */
+  lastSeenAt?: number
   /** In-memory only: the browser that stays open while the user scans. */
   browser?: WebLoginBrowser
   /** In-memory only: per-connection proxy chosen when the flow started. */

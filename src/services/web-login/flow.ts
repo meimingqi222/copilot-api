@@ -38,6 +38,15 @@ const POLL_INTERVAL_SECONDS = 3
 const MAX_FLOWS = 16
 /** 终态流程的保留时长：够前端再 poll 一次拿到同一个结论。 */
 const TERMINAL_GRACE_MS = 5 * 60_000
+/**
+ * 多久没有前端 poll 就当作流程被丢下（关页面、刷新、直接关标签）。
+ *
+ * 前端轮询是 3 秒一次，弹窗活着就一直在续这条命；后台标签页被 Chrome 限流到
+ * 1 分钟一次也仍在窗口内。超过 120 秒没人问，就只能认为那个浏览器没人看了，
+ * 让新的 start 接管——否则用户重开弹窗只会撞「该提供方已有登录正在进行」，
+ * 而真正干活的窗口早就没人盯了。
+ */
+const ABANDONED_AFTER_MS = 120_000
 
 const flows = new Map<string, WebLoginFlow>()
 
@@ -126,8 +135,15 @@ export async function startWebLogin(
   options: WebLoginStartOptions,
 ): Promise<WebLoginFlow> {
   purgeExpiredFlows()
-  if (activeWebLoginFlowFor(provider)) {
-    throw new Error("该提供方已有登录正在进行，请先完成或取消")
+  const active = activeWebLoginFlowFor(provider)
+  if (active) {
+    const idleSince = active.lastSeenAt ?? active.expiresAt - LOGIN_WINDOW_MS
+    if (Date.now() - idleSince < ABANDONED_AFTER_MS) {
+      throw new Error("该提供方已有登录正在进行，请先完成或取消")
+    }
+    // 没人再 poll 的旧流程：关掉它的浏览器，让这次 start 接管。
+    logger.info(`[web-login] ${provider} 上一次扫码已被丢下，重新发起`)
+    await settle(active, "cancelled", { error: "上一次扫码已放弃，请重新扫码" })
   }
   if (flows.size >= MAX_FLOWS) {
     throw new Error("登录流程过多，请先取消其它登录")
@@ -143,6 +159,7 @@ export async function startWebLogin(
     label: options.label,
     status: "pending",
     expiresAt: Date.now() + LOGIN_WINDOW_MS,
+    lastSeenAt: Date.now(),
     interval: POLL_INTERVAL_SECONDS,
     proxyUrl: options.proxyUrl,
   }
@@ -180,6 +197,8 @@ export async function refreshWebLoginFlow(
   purgeExpiredFlows()
   const flow = flows.get(flowId)
   if (!flow) throw new Error("登录流程不存在或已结束")
+  // 有人来问就说明这个流程还活着——用它续「被丢下」的判定。
+  flow.lastSeenAt = Date.now()
   if (flow.status !== "pending") return flow
   if (flow.expiresAt <= Date.now()) {
     await settle(flow, "expired", { error: "登录已超时，请重新发起" })

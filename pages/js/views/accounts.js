@@ -802,6 +802,18 @@ function accountsView() {
 
     /** 重置新增/重认证弹窗的全部临时状态。 */
     resetAddModalState() {
+      // 关弹窗/换提供方/重开弹窗都要先把服务端的旧流程收掉：只清本地状态的话，
+      // 那个临时浏览器会一直占着「该提供方已有登录」，下一次扫码直接撞墙。
+      const provider = this.newAccount.provider
+      const webLoginFlowId = this.webLoginFlowData?.flowId
+      if (webLoginFlowId) {
+        API.webLogin
+          .cancel(provider, { flowId: webLoginFlowId })
+          .catch(() => undefined)
+      }
+      if (this.oauthFlowData?.flowId) {
+        void this.cancelOAuthFlow()
+      }
       this.newAccount = this.defaultNewAccount()
       this.reauthAccount = null
       this.addStep = "select"

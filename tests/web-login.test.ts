@@ -544,7 +544,36 @@ import { webLoginApiRoutes } from "~/routes/admin/api/web-login"
 
 // ── 二维码就绪判据 ────────────────────────────────────────────────
 
-import { qrBoxExpression } from "~/services/web-login/browser"
+import {
+  frameQrExpression,
+  qrBoxExpression,
+} from "~/services/web-login/browser"
+
+test("the in-iframe QR check requires the QR source hint, not just a big image", () => {
+  // 微信登录页里有一张 136×136 的默认头像 SVG：只判尺寸会判早，截出来是白框
+  // （2026-11-21 线上实测）。二维码图永远带 /connect/qrcode/。
+  const expression = frameQrExpression(120, "qrcode")
+  expect(expression).toContain('"qrcode"')
+  expect(expression).toContain("src.indexOf(hint) !== -1")
+  expect(expression).toContain("item.naturalHeight >= 120")
+})
+
+test("a flow nobody polls any more is taken over instead of blocking the provider", async () => {
+  stubSignInPage(fakeBrowser([]))
+  const first = await startWebLogin("dumate", { label: "第一次" })
+  // 前端关掉页面/刷新：不再 poll，也就没机会发取消。等 120 秒太慢，直接把
+  // 心跳推回过去，等价于「两分钟没人问」。
+  const live = getWebLoginFlow(first.id)
+  expect(live).toBeDefined()
+  if (live) live.lastSeenAt = Date.now() - 180_000
+
+  const second = await startWebLogin("dumate", { label: "第二次" })
+  expect(second.id).not.toBe(first.id)
+  expect(second.status).toBe("pending")
+  // 旧流程要被收掉并关掉它那个临时浏览器，不能留着占位。
+  expect(getWebLoginFlow(first.id)?.status).toBe("cancelled")
+  await cancelWebLogin(second.id)
+})
 
 test("the QR readiness expression embeds the selector, hint and self-check", () => {
   // 这三条都是实测踩出来的：选择器常常直接指向二维码那张图（要把元素自身也算
