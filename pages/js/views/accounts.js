@@ -581,8 +581,20 @@ function accountsView() {
             return
           }
           if (res.interval) pollInterval = res.interval * 1000
-        } catch {
-          // 轮询失败继续等：扫码本身可能比一次轮询周期长。
+        } catch (error) {
+          // 400/404/410 是终态（流程已结束/超时/兑换失败），必须收尾；
+          // 其余（网络抖动、网关 5xx）继续等：扫码本身可能比一次轮询周期长。
+          const status = error?.status
+          if (status === 400 || status === 404 || status === 410) {
+            await this.cancelWebLoginFlow()
+            this.deviceFlowStep = "input"
+            this.webLoginFlowData = null
+            this.showToast(
+              error?.message || I18n.t("accounts.webLogin.failed"),
+              "error",
+            )
+            return
+          }
         }
         this.pollTimer = setTimeout(doPoll, pollInterval)
       }

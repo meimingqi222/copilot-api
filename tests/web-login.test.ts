@@ -48,12 +48,16 @@ function fakeBrowser(
     qrImage: () => Promise.resolve("data:image/png;base64,ZmFrZQ=="),
     cookies: () => Promise.resolve(cookies),
     code: () => code,
+    pageUrl: () => Promise.resolve(CODE_PAGE_URL),
     close: () => {
       onClose?.()
       return Promise.resolve()
     },
   }
 }
+
+/** 超时日志要读的当前页面。 */
+const CODE_PAGE_URL = "https://sso.openxlab.org.cn/wechat"
 
 let mocks: Array<{ mockRestore(): unknown }> = []
 

@@ -80,6 +80,8 @@ export interface WebLoginBrowser {
    * 那条路对拦截型 provider 是兜底而不是主路径。
    */
   code(): string | null
+  /** 当前文档 URL（诊断用：超时时停在哪个页面）。 */
+  pageUrl(): Promise<string>
   close(): Promise<void>
 }
 

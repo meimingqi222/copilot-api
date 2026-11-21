@@ -17,6 +17,20 @@ import type { WebLoginBrowser, WebLoginCookie } from "./types"
 /** 同一时刻只开一个登录浏览器：多用户同时点登录要明确失败，不能各起一个。 */
 let openBrowsers = 0
 
+/**
+ * 跨域 iframe（微信二维码）的 CDP session：targetId → sessionId。
+ *
+ * `open.weixin.qq.com` 的 iframe 是独立进程（OOPIF），它自己的网络事件只发到
+ * 它自己的 session 上。登录码那一次回跳就发生在这一层（SSO 的 redirect_uri
+ * 指回 sso.openxlab.org.cn/wechat），只监听页面 session 会把登录码整段漏掉。
+ * attach 只做一次：同一 target 重复 attach 会拿到两个 session，两边都开 Fetch
+ * 就会把同一个请求暂停两次（只 respond 一次，页面直接挂住）。
+ */
+const frameSessions = new Map<string, string>()
+
+/** 当前登录流程的拦截解绑器；浏览器关闭时调用，避免监听泄漏到下个流程。 */
+let detachInterceptors: (() => void) | null = null
+
 /** 页面加载 + 二维码渲染的等待上限（毫秒）。 */
 const QR_TIMEOUT_MS = 60_000
 /** 二维码就绪轮询间隔（毫秒）。 */
@@ -149,6 +163,17 @@ async function frameQrReady(
         info.type === "iframe" && String(info.url ?? "").startsWith(origin),
     )
     if (!target || typeof target.targetId !== "string") return false
+    const known = frameSessions.get(target.targetId)
+    if (known) {
+      sessionId = known
+      cached.sessionId = known
+      const ready = await evaluatePage(
+        browser,
+        frameQrExpression(minSize, srcHint),
+        { sessionId, timeoutMs: 8000 },
+      ).catch(() => false)
+      return ready === true
+    }
     const attached = await browser.send("Target.attachToTarget", {
       targetId: target.targetId,
       flatten: true,
@@ -156,6 +181,7 @@ async function frameQrReady(
     if (typeof attached.sessionId !== "string") return false
     sessionId = attached.sessionId
     cached.sessionId = sessionId
+    frameSessions.set(target.targetId, sessionId)
   }
   const ready = await evaluatePage(
     browser,
@@ -252,6 +278,19 @@ interface OpenSignInPageOptions {
   captureCode?: (url: string) => string | null
 }
 
+/** 只留 origin + path，query 只留键名：登录码不能进日志。 */
+function describeUrl(raw: string): string {
+  try {
+    const parsed = new URL(raw)
+    const keys = [...parsed.searchParams.keys()]
+    return `${parsed.origin}${parsed.pathname}${
+      keys.length ? `?[${keys.join(",")}]` : ""
+    }`
+  } catch {
+    return "<invalid url>"
+  }
+}
+
 /** 拦截用的 Fetch 模式：只暂停**文档导航**，子资源照常流，不添延迟。 */
 const FETCH_DOCUMENT_PATTERNS = [
   { urlPattern: "*", resourceType: "Document", requestStage: "Request" },
@@ -274,14 +313,40 @@ async function interceptLoginCode(
   captureCode: (url: string) => string | null,
 ): Promise<() => string | null> {
   let code: string | null = null
-  await browser.send(
-    "Fetch.enable",
-    { patterns: FETCH_DOCUMENT_PATTERNS },
-    sessionId,
-  )
-  const unsubscribe = browser.onEvent(
-    "Fetch.requestPaused",
-    (params, eventSessionId) => {
+  const stop: Array<() => void> = []
+  const armed = new Set<string>()
+
+  const take = (url: string): boolean => {
+    if (code) return false
+    const captured = captureCode(url)
+    if (!captured) return false
+    code = captured
+    return true
+  }
+
+  /** 给一个 CDP session 武装拦截：Fetch 负责 abort，Network 只做兜底捕获。 */
+  const arm = async (target: string, where: string) => {
+    if (armed.has(target)) return
+    armed.add(target)
+    try {
+      await browser.send(
+        "Fetch.enable",
+        { patterns: FETCH_DOCUMENT_PATTERNS },
+        target,
+      )
+      logger.info(`[web-login] 导航拦截已开启：${where}`)
+    } catch (error) {
+      logger.warn(
+        `[web-login] 导航拦截开启失败（${where}）: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    }
+    await browser.send("Network.enable", {}, target).catch(() => undefined)
+  }
+
+  stop.push(
+    browser.onEvent("Fetch.requestPaused", (params, eventSessionId) => {
       const requestId =
         typeof params.requestId === "string" ? params.requestId : ""
       const request = (params.request ?? {}) as { url?: unknown }
@@ -292,22 +357,74 @@ async function interceptLoginCode(
           .send(method, { requestId, ...extra }, eventSessionId ?? sessionId)
           .catch(() => undefined)
       }
-      if (!code) {
-        const captured = captureCode(url)
-        if (captured) {
-          code = captured
-          logger.info("[web-login] 已拦截回跳登录码，阻止落地页加载")
-          respond("Fetch.failRequest", { errorReason: "Aborted" })
-          return
-        }
+      logger.info(`[web-login] 文档导航: ${describeUrl(url)}`)
+      if (!code && take(url)) {
+        logger.info("[web-login] 已拦截回跳登录码，阻止落地页加载")
+        respond("Fetch.failRequest", { errorReason: "Aborted" })
+        return
       }
       respond("Fetch.continueRequest")
-    },
+    }),
   )
-  return () => {
-    unsubscribe()
-    return code
+
+  // 兜底一：任何 session（含跨域 iframe）发出的请求里带登录码就记下来。
+  // Fetch 的暂停事件只回给武装过的那层 session，漏掉时这里是第二道网。
+  stop.push(
+    browser.onEvent("Network.requestWillBeSent", (params) => {
+      const request = (params.request ?? {}) as { url?: unknown }
+      const url = typeof request.url === "string" ? request.url : ""
+      if (url && take(url)) {
+        logger.info("[web-login] 从网络请求里捕获到回跳登录码")
+      }
+    }),
+  )
+  // 兜底二：帧导航（iframe 内的回跳不会改顶层 URL）。
+  stop.push(
+    browser.onEvent("Page.frameNavigated", (params) => {
+      const frame = (params.frame ?? {}) as { url?: unknown }
+      const url = typeof frame.url === "string" ? frame.url : ""
+      if (url && take(url)) {
+        logger.info("[web-login] 从帧导航里捕获到回跳登录码")
+      }
+    }),
+  )
+  // 跨域 iframe 是独立 target（OOPIF），它的请求不经过页面 session。
+  // 自动 attach 之后同样的 Fetch 拦截才能在 iframe 里生效。
+  stop.push(
+    browser.onEvent("Target.attachedToTarget", (params) => {
+      const child = typeof params.sessionId === "string" ? params.sessionId : ""
+      if (!child) return
+      const info = (params.targetInfo ?? {}) as {
+        type?: unknown
+        targetId?: unknown
+      }
+      const targetId = typeof info.targetId === "string" ? info.targetId : ""
+      if (targetId) frameSessions.set(targetId, child)
+      void arm(child, `auto:${String(info.type ?? "target")}`)
+    }),
+  )
+  try {
+    await browser.send(
+      "Target.setAutoAttach",
+      { autoAttach: true, waitForDebuggerOnStart: false, flatten: true },
+      sessionId,
+    )
+  } catch (error) {
+    logger.warn(
+      `[web-login] iframe 自动 attach 失败，只监听页面 session: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    )
   }
+  await arm(sessionId, "page")
+
+  // ⚠️ 不能在这里返回「读一次就退订」的闭包：轮询每 3 秒读一次，
+  // 第一次读就会把拦截拆掉，等用户真扫码时早已无人值守（线上实测
+  // 表现为「扫码成功但服务端一直停在二维码」）。监听活到浏览器关闭。
+  detachInterceptors = () => {
+    for (const unsubscribe of stop) unsubscribe()
+  }
+  return () => code
 }
 
 /**
@@ -413,7 +530,17 @@ export async function openSignInPage(
           )
       },
       code: () => readCode?.() ?? null,
+      pageUrl: async () => {
+        const current = await evaluatePage(live, "location.href", {
+          sessionId,
+          timeoutMs: 5_000,
+        }).catch(() => "")
+        return typeof current === "string" ? current : ""
+      },
       close: async () => {
+        detachInterceptors?.()
+        detachInterceptors = null
+        frameSessions.clear()
         openBrowsers = Math.max(0, openBrowsers - 1)
         await live.close().catch(() => undefined)
       },

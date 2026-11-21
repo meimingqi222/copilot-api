@@ -69,7 +69,10 @@ const API = {
 
     if (!response.ok) {
       const errorText = await response.text()
-      throw this.extractErrorMessage(errorText, response.status)
+      const error = this.extractErrorMessage(errorText, response.status)
+      // 状态码要带出去：轮询的 404/400 是终态，不能当成网络抖动一直重试。
+      error.status = response.status
+      throw error
     }
 
     const contentType = response.headers.get("content-type")

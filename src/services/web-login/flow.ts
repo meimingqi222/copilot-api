@@ -30,8 +30,18 @@ import type {
   WebLoginStartOptions,
 } from "~/services/web-login/types"
 
-/** 扫码 + 确认比设备码登录慢（要掏手机），给 4 分钟。 */
-const LOGIN_WINDOW_MS = 240_000
+/** 扫码 + 确认比设备码登录慢（要掏手机），给 5 分钟。 */
+const LOGIN_WINDOW_MS = 300_000
+
+/** 日志里只留 origin + path：登录码不能进日志。 */
+function describeForLog(raw: string): string {
+  try {
+    const parsed = new URL(raw)
+    return `${parsed.origin}${parsed.pathname}`
+  } catch {
+    return raw ? "<invalid url>" : "<unknown>"
+  }
+}
 /** UI 轮询间隔（秒）。 */
 const POLL_INTERVAL_SECONDS = 3
 /** 同时存在的登录流程上限。 */
@@ -201,6 +211,15 @@ export async function refreshWebLoginFlow(
   flow.lastSeenAt = Date.now()
   if (flow.status !== "pending") return flow
   if (flow.expiresAt <= Date.now()) {
+    const where = (await flow.browser?.pageUrl().catch(() => "")) ?? ""
+    const names = ((await flow.browser?.cookies().catch(() => [])) ?? [])
+      .map((cookie) => `${cookie.name}@${cookie.domain}`)
+      .join(", ")
+    logger.warn(
+      `[web-login] ${flow.provider} 登录超时，最后页面 ${describeForLog(
+        where,
+      )}，Cookie: ${names || "无"}`,
+    )
     await settle(flow, "expired", { error: "登录已超时，请重新发起" })
     return flow
   }
