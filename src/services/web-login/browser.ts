@@ -358,8 +358,15 @@ async function interceptLoginCode(
           .catch(() => undefined)
       }
       logger.info(`[web-login] 文档导航: ${describeUrl(url)}`)
-      if (!code && take(url)) {
-        logger.info("[web-login] 已拦截回跳登录码，阻止落地页加载")
+      const captured = captureCode(url)
+      if (captured) {
+        if (!code) {
+          code = captured
+          logger.info("[web-login] 已拦截回跳登录码，阻止落地页加载")
+        }
+        // 登录码是一次性的：落地页 console 的 SPA 也会拿它去兑换，谁先到谁赢。
+        // 所以只要 URL 里带码就 failRequest（不只是第一次），否则我们手里的码
+        // 可能已被 SPA 烧掉，兑换报 -40132 又变成“扫码了但没登上”。
         respond("Fetch.failRequest", { errorReason: "Aborted" })
         return
       }
@@ -399,8 +406,11 @@ async function interceptLoginCode(
         targetId?: unknown
       }
       const targetId = typeof info.targetId === "string" ? info.targetId : ""
-      if (targetId) frameSessions.set(targetId, child)
-      void arm(child, `auto:${String(info.type ?? "target")}`)
+      const type = String(info.type ?? "")
+      // worker / service_worker 不支持 Fetch 域（会报 -32601），武装了也没用。
+      if (type !== "iframe" && type !== "page") return
+      if (targetId && type === "iframe") frameSessions.set(targetId, child)
+      void arm(child, `auto:${type}`)
     }),
   )
   try {
