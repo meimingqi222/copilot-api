@@ -78,10 +78,18 @@ import { createInterface } from "node:readline";
 writeFileSync(${JSON.stringify(path.join(dir, "fixture.pid"))}, String(process.pid));
 setTimeout(() => process.exit(91), 15000).unref();
 const scenario = ${JSON.stringify(scenario)};
+const permissions = {};
 if (scenario === "close") process.on("SIGTERM", () => {});
 createInterface({ input: process.stdin }).on("line", line => {
   const msg = JSON.parse(line);
   if (msg.method === "initialize") {
+    if (scenario === "normal") {
+      for (const name of ["mcp_bridge_declared", "mcp_bridge_unknown", "run_command"]) {
+        process.stdout.write(JSON.stringify({ id: "permission:" + name, method: "session/request_permission", params: {
+          toolCall: { name }, options: [{ kind: "allow_once", optionId: "allow" }, { kind: "reject_once", optionId: "reject" }]
+        } }) + "\\n");
+      }
+    }
     process.stdout.write(JSON.stringify({ id: msg.id, result: { agentCapabilities: { promptCapabilities: { embeddedContext: scenario === "embedded" } } } }) + "\\n");
     if (scenario === "stdin") {
       closeSync(0);
@@ -89,8 +97,11 @@ createInterface({ input: process.stdin }).on("line", line => {
       setInterval(() => {}, 1000);
       process.stdout.write(JSON.stringify({ method: "session/update", params: { update: { sessionUpdate: "stdin_closed" } } }) + "\\n");
     }
+  } else if (typeof msg.id === "string" && msg.id.startsWith("permission:")) {
+    permissions[msg.id.slice("permission:".length)] = msg.result?.outcome?.optionId;
   } else if (scenario === "exit") process.exit(7);
   else if (scenario === "normal" || scenario === "embedded") {
+    if (scenario === "normal" && (permissions.mcp_bridge_declared !== "allow" || permissions.mcp_bridge_unknown !== "reject" || permissions.run_command !== "reject")) process.exit(95);
     const first = msg.params.prompt[scenario === "embedded" ? 1 : 0];
     if (first.type !== (scenario === "embedded" ? "resource" : "text")) process.exit(92);
     if ((first.resource?.text ?? first.text) !== "Historical context") process.exit(93);
@@ -112,6 +123,7 @@ const stdinClosed = new Promise(resolve => { ready = resolve; });
 const client = new AgyAcpClient({
   binaryPath: ${JSON.stringify(binary)},
   geminiDir: ${JSON.stringify(dir)}, workspaceDir: ${JSON.stringify(dir)},
+  toolNames: new Set(["declared"]),
   connectionId: "synthetic-connection", onUpdate: () => ready(),
   onExit: (code, signal) => notifications.push({ code, signal }),
 });
@@ -456,7 +468,16 @@ describe("antigravity acp prompt & tools", () => {
               serverInfo: { name: "antigravity-bridge-mcp", version: "1.0.0" },
             },
           },
-          { jsonrpc: "2.0", id: 2, result: { tools } },
+          {
+            jsonrpc: "2.0",
+            id: 2,
+            result: {
+              tools: tools.map((tool) => ({
+                ...tool,
+                _meta: { "antigravity/alwaysLoad": true },
+              })),
+            },
+          },
           {
             jsonrpc: "2.0",
             id: 3,

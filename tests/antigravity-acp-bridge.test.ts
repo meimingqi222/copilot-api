@@ -955,6 +955,193 @@ describe("ACP session lifecycle: steer, cancel preservation, resume", () => {
   )
 
   loopbackTest(
+    "reuses a process but not the native session for independent one-shot requests",
+    async () => {
+      const first = await complete([{ role: "user", content: "A short task" }])
+      const next = await complete([
+        { role: "user", content: "An unrelated task" },
+      ])
+      const firstText = String(first.choices[0].message.content)
+      const nextText = String(next.choices[0].message.content)
+      expect(firstText).toMatch(/^session-\d+-1:1$/)
+      expect(nextText).toBe(firstText.replace(/-1:1$/, "-2:1"))
+    },
+  )
+
+  loopbackTest(
+    "fails before generation when the requested tool catalog is not loaded",
+    async () => {
+      const start = process.env["ACP_FIXTURE_START"]
+      const timeout =
+        process.env["COPILOT_API_ANTIGRAVITY_TOOL_LIST_TIMEOUT_MS"]
+      process.env["ACP_FIXTURE_START"] = "no-tools-list"
+      process.env["COPILOT_API_ANTIGRAVITY_TOOL_LIST_TIMEOUT_MS"] = "50"
+      try {
+        await expect(
+          complete([{ role: "user", content: "Load my tools" }], true),
+        ).rejects.toThrow("did not load the declared client tools")
+      } finally {
+        if (start === undefined) delete process.env["ACP_FIXTURE_START"]
+        else process.env["ACP_FIXTURE_START"] = start
+        if (timeout === undefined)
+          delete process.env["COPILOT_API_ANTIGRAVITY_TOOL_LIST_TIMEOUT_MS"]
+        else
+          process.env["COPILOT_API_ANTIGRAVITY_TOOL_LIST_TIMEOUT_MS"] = timeout
+      }
+    },
+  )
+
+  loopbackTest("reports service overload as HTTP 503", async () => {
+    const error = await complete([
+      { role: "user", content: "PROVIDER_BUSY" },
+    ]).catch((err: HTTPError) => err)
+    expect(error instanceof HTTPError && error.response.status).toBe(503)
+  })
+
+  loopbackTest(
+    "keeps the native session when switching to an offered model",
+    async () => {
+      const initial: Message[] = [{ role: "user", content: "MODEL_PROBE" }]
+      const first = await complete(initial)
+      const session = String(first.choices[0].message.content).split(":")[0]
+      const result = (await createAntigravityAcpChatCompletionsOnce(
+        { connection, credential: connection.credentials.at(0)! },
+        {
+          model: "gemini-4-hydrogen-low",
+          messages: [
+            ...initial,
+            assistant(first),
+            { role: "user", content: "MODEL_PROBE again" },
+          ],
+        },
+      )) as ChatCompletionResponse
+      expect(result.choices[0].message.content).toBe(
+        `${session}:2:gemini-4-hydrogen-low`,
+      )
+    },
+  )
+
+  loopbackTest(
+    "cancels a dropped tool without losing its conversation",
+    async () => {
+      const initial: Message[] = [
+        { role: "user", content: "STEER_LOOP DROP_TOOL" },
+      ]
+      const first = await complete(initial, true)
+      expect(first.choices[0].message.tool_calls).toHaveLength(1)
+      const session = runRegistry.findCandidates(
+        connection.id,
+        "gemini-3.8-flash",
+        undefined,
+        ownerKey(),
+      )[0]!.sessionId
+      const result = await complete(
+        [
+          ...initial,
+          { role: "assistant", content: "I was about to look it up." },
+          { role: "user", content: "Skip the lookup and continue" },
+        ],
+        true,
+      )
+      expect(result.choices[0].message.content).toBe(`${session}:2`)
+    },
+  )
+
+  loopbackTest(
+    "retries an empty generation once in the same native session",
+    async () => {
+      const result = await complete([{ role: "user", content: "EMPTY_ONCE" }])
+      expect(result.choices[0].message.content).toMatch(/^session-.+:2$/)
+    },
+  )
+
+  loopbackTest(
+    "rejects saturation before starting a second session and releases timed out startup slots",
+    async () => {
+      const overrides = {
+        COPILOT_API_ANTIGRAVITY_MAX_RUNS: "1",
+        COPILOT_API_ANTIGRAVITY_START_TIMEOUT_MS: "100",
+        ACP_FIXTURE_START: "hang",
+      }
+      const previous = Object.fromEntries(
+        Object.keys(overrides).map((key) => [key, process.env[key]]),
+      )
+      Object.assign(process.env, overrides)
+      try {
+        const first = complete([
+          { role: "user", content: "First startup" },
+        ]).catch((error: HTTPError) => error)
+        const second = complete([
+          { role: "user", content: "Second startup" },
+        ]).catch((error: HTTPError) => error)
+        const failures = await Promise.all([first, second])
+        expect(
+          failures
+            .map((item) =>
+              item instanceof HTTPError ? item.response.status : 200,
+            )
+            .sort(),
+        ).toEqual([503, 504])
+        delete process.env["ACP_FIXTURE_START"]
+        delete process.env["COPILOT_API_ANTIGRAVITY_START_TIMEOUT_MS"]
+        const recovered = await complete([
+          { role: "user", content: "Recovered" },
+        ])
+        expect(recovered.choices[0].message.content).toMatch(/^session-.+:1$/)
+      } finally {
+        for (const [key, value] of Object.entries(previous)) {
+          if (value === undefined) delete process.env[key]
+          else process.env[key] = value
+        }
+      }
+    },
+  )
+
+  loopbackTest(
+    "replays the full transcript when native resume is unavailable",
+    async () => {
+      const initial: Message[] = [
+        { role: "user", content: "Remember the cobalt key" },
+      ]
+      const first = await complete(initial)
+      const session = String(first.choices[0].message.content).split(":")[0]
+      const followup: Message[] = [
+        ...initial,
+        assistant(first),
+        { role: "user", content: "What key?" },
+      ]
+      runRegistry.disposeAll()
+      const before = process.env["ACP_FIXTURE_START"]
+      try {
+        process.env["ACP_FIXTURE_START"] = "no-resume"
+        const unsupported = await complete(followup)
+        expect(unsupported.choices[0].message.content).toContain(
+          "Remember the cobalt key",
+        )
+      } finally {
+        if (before === undefined) delete process.env["ACP_FIXTURE_START"]
+        else process.env["ACP_FIXTURE_START"] = before
+      }
+      runRegistry.disposeAll()
+      rmSync(
+        path.join(
+          dataDir,
+          "antigravity-acp",
+          "accounts",
+          connection.id,
+          "antigravity-cli",
+          "conversations",
+          `${session}.turn.json`,
+        ),
+      )
+      const rejected = await complete(followup)
+      expect(rejected.choices[0].message.content).toContain(
+        "Remember the cobalt key",
+      )
+    },
+  )
+
+  loopbackTest(
     "a follow-up after the process is gone resumes the persisted native session",
     async () => {
       const initial: Message[] = [{ role: "user", content: "Resume probe" }]

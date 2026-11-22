@@ -167,6 +167,10 @@ idle continuation. Three additions, all ACP-only (no private HTTP replay):
   that prefix reattaches via `session/resume` (capability-gated) and sends only
   the delta. A single prefix match resumes; several are disambiguated by the
   assistant echo; an unresolved ambiguity or a failed resume replays fresh.
+  Select the prompt only after ACP actually accepts the resume: an unsupported,
+  rejected, or already-open session needs the full checked replay, never the
+  precomputed delta. Reserve the session ID during startup to prevent two runs
+  from resuming it concurrently.
 
 `parkMcpToolCall` now rejects a callback that arrives with no prompt in flight
 (cancelled, steered, or ended) so a stale call cannot leak a phantom `tool_use`
@@ -180,11 +184,25 @@ the prompt (this note's earlier decision keeps them in MCP and real tool
 round-trips passed), long-tool "still running" deferral (Magpie's deadline is for
 its `--ide-mcp-port` transport, not our stdio MCP path; no evidence of our
 deadline), estimated fallback usage (the pending contract above stays), and
-speculative history-normalization loosening (needs real-workload evidence). Full
-local-tool isolation via a dedicated agent and dropping
-`--dangerously-skip-permissions` also remains a follow-up: removing the flag
-risks breaking bridge-tool execution on agy versions that do not ask, so the
-selective response is added without it.
+general fuzzy history matching or silent history trimming. The history hash
+ignores only recognized clock and billing lines in instructions, not user prose.
+A dropped tool batch only stays in-session when the same owner and tool catalog
+echo the unchanged prefix and nonempty assistant prose, with all tool calls
+omitted. The callbacks receive explicit cancellation, not fabricated results.
+
+The registry reserves process slots before spawning. Saturation is local 503
+without account cooldown; startup, generation and parked tools have independent
+deadlines. A no-tool, non-streaming one-shot can reuse an idle process of the
+same owner, but always opens a new native session. Older ACP peers without
+`session/close` get a bounded number of reuses. The dedicated bridge agent does
+not inherit global MCP or default tools; automatic permission approval is
+removed. The stdio helper reports tool discovery on `tools/list`, and the bridge
+does not start generating if discovery never occurs. The agent explicitly
+allows the session's `bridge` MCP server: `tools/list` can succeed even when
+the agent's allowlist hides those tools from the model. The ACP client accepts
+both string and numeric reverse-RPC IDs and acknowledges only declared tools.
+Empty-object (`{}`) and boolean (`true`) capability advertisements both enable
+native resume and close.
 
 ## Alternatives considered
 
@@ -364,6 +382,22 @@ internal statistics still retain uncached input and both cache buckets.
 - `tests/antigravity-acp-bridge.test.ts::a follow-up after the process is gone resumes the persisted native session`
 - `tests/antigravity-acp-bridge.test.ts::a tool callback with no prompt in flight is rejected`
 - `tests/antigravity-acp-bridge.test.ts::allows a declared bridge tool once`
+- `tests/antigravity-acp-bridge.test.ts::replays the full transcript when native resume is unavailable`
+
+Proved: before fixing resume fallback the focused test received a new native
+session's first turn without the preceding instruction. With fallback deferred
+until the native resume result is known, both unsupported and rejected resume
+cases include the instruction in the replay.
+
+Proved with an isolated real Google account on agy 1.5.14: the client tool
+received the expected argument, and the final reply returned the exact random
+value introduced only in its MCP result. After disposing the process,
+the session/resume RPC reused the same native session ID and recalled the value;
+switching from Gemini 4 Argon Low to Gemini 4 Hydrogen High preserved that
+session and value. Without the explicit bridge allowlist, agy listed the tools
+but denied the agent access; with only numeric reverse-RPC IDs, the native
+string-ID permission request remained unanswered. The fixture now exercises
+string-ID permission decisions and agy's empty-object resume advertisement.
 
 Proved: with the steering branch disabled (`if (false && trailingTools.length
 === 0)`), the focused command `bun test tests/antigravity-acp-bridge.test.ts

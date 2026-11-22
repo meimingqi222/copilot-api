@@ -30,6 +30,33 @@ const AGY_APP_DATA_DIR = "antigravity-cli"
 /** agy 读取的凭据文件名，来自二进制里的 `antigravity-%s` 模板。 */
 const AGY_TOKEN_FILE = "antigravity-oauth-token"
 
+export const ACP_AGENT = "copilot-api-bridge"
+
+export async function prepareAcpWorkspace(
+  workspace: string,
+  bridgeName: string,
+): Promise<void> {
+  const dir = path.join(workspace, ".agents", "agents", ACP_AGENT)
+  await mkdir(dir, { recursive: true, mode: 0o700 })
+  await writeFile(
+    path.join(dir, "agent.md"),
+    `---
+name: ${ACP_AGENT}
+description: Bridges only the client's declared tools
+mainAgent: true
+subagent: false
+tools: []
+commandExecutionPolicy: off
+inheritMcp: false
+mcpServers: [{name: ${JSON.stringify(bridgeName)}}]
+inheritCustomizations: false
+---
+Use only the bridge tools provided by the client.
+`,
+    { mode: 0o600 },
+  )
+}
+
 function sanitizeSegment(value: string | undefined): string {
   const cleaned = (value ?? "default").replace(/[^a-zA-Z0-9._-]/g, "_")
   return cleaned || "default"

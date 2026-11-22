@@ -131,11 +131,22 @@ export function hashMessages(messages: Array<Message>): string {
         && (block.type === "thinking" || block.type === "reasoning")
       )
         continue
-      if (block.type === "text" && !block.text) continue
-      const previous = content.at(-1)
-      if (block.type === "text" && previous?.type === "text")
-        previous.text += block.text
-      else content.push({ ...block })
+      if (block.type === "text") {
+        // Client clocks and billing tags can change without changing the
+        // conversation. Never apply this to ordinary user/tool prose.
+        const text =
+          message.role === "system" || message.role === "developer" ?
+            block.text
+              .replace(/^x-anthropic-billing-header:[^\n]*(?:\n|$)/gim, "")
+              .replace(/^Today's date: \d{4}-\d{2}-\d{2}(?:\n|$)/gm, "")
+          : block.text
+        if (!text) continue
+        const previous = content.at(-1)
+        if (previous?.type === "text") previous.text += text
+        else content.push({ ...block, text })
+        continue
+      }
+      content.push({ ...block })
     }
     return {
       role: message.role,

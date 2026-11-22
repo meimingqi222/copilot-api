@@ -7,6 +7,7 @@ import { createInterface } from "node:readline"
 
 import { logger } from "~/lib/logger"
 import { claudeLaunchCommand } from "~/services/claude/cli/binary"
+import { ACP_AGENT } from "./auth-sync"
 
 export interface AcpMcpServerSpec {
   name: string
@@ -42,6 +43,12 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ?
       (value as Record<string, unknown>)
     : undefined
+}
+
+// ACP advertises supported extensions as objects, often `{}`. Older peers
+// and fixtures use booleans; both encode the same capability.
+function supportsCapability(value: unknown): boolean {
+  return value === true || asRecord(value) !== undefined
 }
 
 function pickFiniteNumber(
@@ -219,6 +226,31 @@ interface PendingRpc {
   reject: (reason: Error) => void
 }
 
+interface AcpModelChoice {
+  value?: string
+  options?: Array<AcpModelChoice>
+}
+
+interface AcpOpenedSession {
+  sessionId?: string
+  models?: { availableModels?: Array<{ modelId?: string }> }
+  configOptions?: Array<{
+    id: string
+    type?: string
+    category?: string
+    currentValue?: string
+    options?: Array<AcpModelChoice>
+  }>
+}
+
+function configValues(options: Array<AcpModelChoice> = []): Array<string> {
+  return options.flatMap((item) =>
+    item.value ? [item.value] : configValues(item.options),
+  )
+}
+
+const MODEL_EFFORT = /-(minimal|low|medium|high|xhigh|max|none)$/
+
 interface AcpSpawnOptions {
   binaryPath: string
   geminiDir: string
@@ -228,6 +260,7 @@ interface AcpSpawnOptions {
   onExit: (code: number | null, signal: NodeJS.Signals | null) => void
   /** Prefix identifying the caller's bridge tools in permission requests. */
   bridgeToolPrefix?: string
+  toolNames?: ReadonlySet<string>
 }
 
 export class AgyAcpClient {
@@ -238,11 +271,17 @@ export class AgyAcpClient {
   private closed = false
   private embeddedContext = false
   private readonly bridgeToolPrefix: string
+  private readonly toolNames: ReadonlySet<string>
   private resumable = false
+  private closable = false
+  private config?: AcpOpenedSession["configOptions"]
+  private offered: Array<string> = []
+  private sessionId?: string
 
   constructor(options: AcpSpawnOptions) {
     this.onUpdate = options.onUpdate
     this.bridgeToolPrefix = options.bridgeToolPrefix ?? "mcp_bridge_"
+    this.toolNames = options.toolNames ?? new Set()
     const args = [
       "acp",
       "--stdio",
@@ -252,7 +291,9 @@ export class AgyAcpClient {
       "antigravity-cli",
       "--cli_dir_name",
       options.connectionId,
-      "--dangerously-skip-permissions",
+      "--agent",
+      ACP_AGENT,
+      "--include-default-customizations=false",
       "--disable-telemetry",
     ]
     const [command, ...prefixArgs] = claudeLaunchCommand(options.binaryPath)
@@ -307,6 +348,16 @@ export class AgyAcpClient {
     return this.closed
   }
 
+  offersModel(modelId: string): boolean {
+    return (
+      this.offered.includes(modelId)
+      || (MODEL_EFFORT.test(modelId)
+        && configValues(this.selectConfig("model")?.options).includes(
+          modelId.replace(MODEL_EFFORT, ""),
+        ))
+    )
+  }
+
   private rejectPending(error: Error): void {
     for (const entry of this.pending.values()) {
       entry.reject(error)
@@ -341,8 +392,14 @@ export class AgyAcpClient {
     }
 
     if (msg.method === "session/update" && msg.params) {
-      const params = msg.params as { update?: AcpSessionUpdate }
-      if (params.update) {
+      const params = msg.params as {
+        update?: AcpSessionUpdate
+        sessionId?: string
+      }
+      if (
+        params.update
+        && (!params.sessionId || params.sessionId === this.sessionId)
+      ) {
         this.onUpdate(params.update)
       }
       return
@@ -351,7 +408,10 @@ export class AgyAcpClient {
     // 服务端反向发起 JSON-RPC 请求。只有权限请求需要作答，且只放行调用方声明的
     // 桥接工具；agy 本地工具（shell/文件/浏览器）一律拒绝，避免在后端机器上执行。
     // 其它方法（fs/terminal 等）本客户端未声明能力，返回标准方法不支持错误。
-    if (typeof msg.id === "number" && typeof msg.method === "string") {
+    if (
+      (typeof msg.id === "number" || typeof msg.id === "string")
+      && typeof msg.method === "string"
+    ) {
       if (msg.method === "session/request_permission") {
         const params = (msg.params ?? {}) as {
           toolCall?: { name?: string; title?: string }
@@ -363,7 +423,12 @@ export class AgyAcpClient {
           id: msg.id,
           result: {
             outcome: selectPermissionOutcome(
-              toolName,
+              (
+                this.toolNames.has(toolName.slice(this.bridgeToolPrefix.length))
+                  && toolName.startsWith(this.bridgeToolPrefix)
+              ) ?
+                toolName
+              : "",
               params.options ?? [],
               this.bridgeToolPrefix,
             ),
@@ -396,14 +461,33 @@ export class AgyAcpClient {
   ): Promise<T> {
     const id = this.nextId++
     return new Promise<T>((resolve, reject) => {
+      // Prompt deadlines belong to the bridge: a prompt can wait for tools
+      // across HTTP requests. Control RPCs must never block a run forever.
+      const timer =
+        method === "session/prompt" ? undefined : (
+          setTimeout(() => {
+            this.pending.delete(id)
+            reject(
+              new Error(`Antigravity ACP control RPC timed out: ${method}`),
+            )
+          }, 60_000)
+        )
+      timer?.unref?.()
       this.pending.set(id, {
-        resolve: (value) => resolve(value as T),
-        reject,
+        resolve: (value) => {
+          clearTimeout(timer)
+          resolve(value as T)
+        },
+        reject: (error) => {
+          clearTimeout(timer)
+          reject(error)
+        },
       })
       try {
         this.writeLine({ jsonrpc: "2.0", id, method, params })
       } catch (error) {
         this.pending.delete(id)
+        clearTimeout(timer)
         reject(error instanceof Error ? error : new Error(String(error)))
       }
     })
@@ -413,8 +497,8 @@ export class AgyAcpClient {
     const result = await this.request<{
       agentCapabilities?: {
         promptCapabilities?: { embeddedContext?: boolean }
-        sessionCapabilities?: { resume?: boolean }
-        session_capabilities?: { resume?: boolean }
+        sessionCapabilities?: { resume?: unknown; close?: unknown }
+        session_capabilities?: { resume?: unknown; close?: unknown }
       }
     }>("initialize", {
       protocolVersion: 1,
@@ -427,29 +511,42 @@ export class AgyAcpClient {
     this.embeddedContext =
       result.agentCapabilities?.promptCapabilities?.embeddedContext === true
     this.resumable =
-      result.agentCapabilities?.sessionCapabilities?.resume === true
-      || result.agentCapabilities?.session_capabilities?.resume === true
+      supportsCapability(result.agentCapabilities?.sessionCapabilities?.resume)
+      || supportsCapability(
+        result.agentCapabilities?.session_capabilities?.resume,
+      )
+    this.closable =
+      supportsCapability(result.agentCapabilities?.sessionCapabilities?.close)
+      || supportsCapability(
+        result.agentCapabilities?.session_capabilities?.close,
+      )
   }
 
   get canResume(): boolean {
     return this.resumable
   }
 
+  get canCloseSession(): boolean {
+    return this.closable
+  }
+
+  async closeSession(sessionId: string): Promise<void> {
+    await this.request("session/close", { sessionId })
+    this.sessionId = undefined
+  }
+
   async newSession(
     cwd: string,
     mcpServers: Array<AcpMcpServerSpec>,
   ): Promise<{ sessionId: string; availableModels: Array<string> }> {
-    const res = await this.request<{
-      sessionId?: string
-      models?: { availableModels?: Array<{ modelId?: string }> }
-    }>("session/new", { cwd, mcpServers })
+    const res = await this.request<AcpOpenedSession>("session/new", {
+      cwd,
+      mcpServers,
+    })
     if (!res.sessionId) {
       throw new Error("ACP session/new did not return sessionId")
     }
-    const availableModels = (res.models?.availableModels ?? [])
-      .map((m) => m.modelId)
-      .filter((id): id is string => typeof id === "string" && id.length > 0)
-    return { sessionId: res.sessionId, availableModels }
+    return this.openedSession(res, res.sessionId)
   }
 
   /**
@@ -461,20 +558,86 @@ export class AgyAcpClient {
     cwd: string,
     mcpServers: Array<AcpMcpServerSpec>,
   ): Promise<{ sessionId: string; availableModels: Array<string> }> {
-    const res = await this.request<{
-      sessionId?: string
-      models?: { availableModels?: Array<{ modelId?: string }> }
-    }>("session/resume", { sessionId, cwd, mcpServers })
-    if (!res.sessionId) {
-      throw new Error("ACP session/resume did not return sessionId")
+    const res = await this.request<AcpOpenedSession>("session/resume", {
+      sessionId,
+      cwd,
+      mcpServers,
+    })
+    if (
+      !res
+      || typeof res !== "object"
+      || (res.sessionId && res.sessionId !== sessionId)
+    ) {
+      throw new Error("ACP session/resume returned an invalid session")
     }
-    const availableModels = (res.models?.availableModels ?? [])
+    return this.openedSession(res, sessionId)
+  }
+
+  private openedSession(res: AcpOpenedSession, sessionId: string) {
+    this.sessionId = sessionId
+    this.config = res.configOptions
+    const modern = configValues(this.selectConfig("model")?.options)
+    const legacy = (res.models?.availableModels ?? [])
       .map((m) => m.modelId)
       .filter((id): id is string => typeof id === "string" && id.length > 0)
-    return { sessionId: res.sessionId, availableModels }
+    this.offered = [
+      ...new Set([
+        ...modern,
+        ...legacy.filter(
+          (id) =>
+            modern.length === 0
+            || modern.includes(id)
+            || modern.includes(id.replace(MODEL_EFFORT, "")),
+        ),
+      ]),
+    ]
+    return { sessionId, availableModels: this.offered }
+  }
+
+  private selectConfig(category: string) {
+    return this.config?.find(
+      (item) =>
+        item.type === "select"
+        && (item.category === category || item.id === category),
+    )
+  }
+
+  private async setConfig(
+    sessionId: string,
+    configId: string,
+    value: string,
+  ): Promise<void> {
+    const response = await this.request<AcpOpenedSession>(
+      "session/set_config_option",
+      { sessionId, configId, value },
+    )
+    if (
+      response?.configOptions?.find((item) => item.id === configId)
+        ?.currentValue !== value
+    ) {
+      throw new Error(`ACP did not apply session option ${configId}`)
+    }
+    this.config = response.configOptions
   }
 
   async setModel(sessionId: string, modelId: string): Promise<void> {
+    const config = this.selectConfig("model")
+    const values = configValues(config?.options)
+    const effort = MODEL_EFFORT.exec(modelId)
+    const base = effort ? modelId.slice(0, effort.index) : modelId
+    if (config && values.includes(modelId)) {
+      await this.setConfig(sessionId, config.id, modelId)
+      return
+    }
+    if (config && effort && values.includes(base)) {
+      await this.setConfig(sessionId, config.id, base)
+      const thinking = this.selectConfig("thought_level")
+      if (!thinking || !configValues(thinking.options).includes(effort[1])) {
+        throw new Error("ACP does not offer the requested thinking level")
+      }
+      await this.setConfig(sessionId, thinking.id, effort[1])
+      return
+    }
     await this.request("session/set_model", { sessionId, modelId })
   }
 
@@ -522,6 +685,17 @@ export class AgyAcpClient {
     this.rejectPending(new Error("agy acp process is already closed"))
     try {
       this.proc.kill("SIGTERM")
+      const timer = setTimeout(() => {
+        if (this.proc.exitCode === null && this.proc.signalCode === null) {
+          try {
+            this.proc.kill("SIGKILL")
+          } catch {
+            /* already exited */
+          }
+        }
+      }, 2_000)
+      timer.unref?.()
+      this.proc.once("exit", () => clearTimeout(timer))
     } catch {
       // ignore
     }

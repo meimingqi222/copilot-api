@@ -14,6 +14,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import type { Context } from "hono"
 
+import { HTTPError, LocalPayloadUnsupportedError } from "~/lib/error"
 import type {
   ApiCredential,
   ProviderConnection,
@@ -39,7 +40,7 @@ import type {
   Message,
 } from "~/services/protocols/chat/types"
 
-import { syncAntigravityAcpCredentials } from "./auth-sync"
+import { prepareAcpWorkspace, syncAntigravityAcpCredentials } from "./auth-sync"
 import {
   AgyAcpClient,
   type AcpContentBlock,
@@ -67,11 +68,34 @@ import {
 } from "./session-store"
 import { antigravityCallbackBaseUrl } from "./server-address"
 import { AgyStepUsage } from "~/services/antigravity/acp/step-usage"
+import { rememberAntigravityAcpModels } from "~/services/antigravity/get-models"
 import { findAgyBinary } from "./transport"
 
 const PARALLEL_TOOL_BATCH_MS = 40
 
 const log = createLogger("acp")
+
+function acpFailure(message: string, status: number): HTTPError {
+  const body = JSON.stringify({ error: { type: "upstream_error", message } })
+  return new HTTPError(message, new Response(body, { status }), body)
+}
+
+function classifyAcpFailure(message: string): number {
+  if (
+    /verification required|permission.denied|account (?:is |has been )?(?:disabled|suspended|banned)/i.test(
+      message,
+    )
+  )
+    return 403
+  if (/high traffic|service unavailable|\b503\b/i.test(message)) return 503
+  if (
+    /individual quota reached|resource.exhausted|rate.limit|\b429\b/i.test(
+      message,
+    )
+  )
+    return 429
+  return 502
+}
 
 /**
  * 将请求中的模型 ID 映射到 `agy acp` 实际支持列表中的 modelId。
@@ -258,8 +282,11 @@ async function startNewRun(params: {
   messageCount: number
   messageHash: string
   ownerKey: string
-  resumeSessionId?: string
+  stateless?: boolean
+  resume?: { sessionId: string; fullReplay: () => Array<AcpContentBlock> }
+  signal?: AbortSignal
 }): Promise<AgyRun> {
+  params.signal?.throwIfAborted()
   const binaryPath = findAgyBinary()
   if (!binaryPath) {
     throw new Error("Antigravity CLI (`agy`) binary not found")
@@ -269,6 +296,7 @@ async function startNewRun(params: {
     params.connection,
     params.credential,
   )
+  params.signal?.throwIfAborted()
 
   const token = randomUUID()
   const bridgeDir = path.join(geminiDir, "bridges", token)
@@ -282,76 +310,158 @@ async function startNewRun(params: {
   })
   run.lastMessageCount = params.messageCount
   run.lastMessageHash = params.messageHash
-
-  const client = new AgyAcpClient({
-    binaryPath,
-    geminiDir,
-    workspaceDir,
-    connectionId: params.connection.id,
-    bridgeToolPrefix: `mcp_${BRIDGE_MCP_SERVER_NAME}_`,
-    onUpdate: (update) => run.handleUpdate(update),
-    onExit: (code) => {
-      if (run.activePromptInFlight) {
-        run.pushEvent({
-          type: "error",
-          message: `agy acp exited unexpectedly with code ${code ?? "null"}`,
-        })
-      }
-      runRegistry.dispose(token)
-    },
-  })
-  run.client = client
+  run.stateless = params.stateless === true
+  const resume =
+    (
+      params.resume
+      && !runRegistry.hasSession(params.connection.id, params.resume.sessionId)
+    ) ?
+      params.resume
+    : undefined
+  if (resume) run.sessionId = resume.sessionId
+  // Reserve before spawning, including time spent negotiating the session.
+  run.activePromptInFlight = true
   runRegistry.register(run)
+  const onAbort = () => runRegistry.dispose(token)
+  params.signal?.addEventListener("abort", onAbort, { once: true })
 
   const c = performanceContext()
   const connectStarted = performance.now()
+  const configuredMs = Number(
+    process.env.COPILOT_API_ANTIGRAVITY_START_TIMEOUT_MS,
+  )
+  const deadline = AbortSignal.timeout(
+    configuredMs > 0 && configuredMs <= 600_000 ?
+      Math.ceil(configuredMs)
+    : 60_000,
+  )
+  deadline.addEventListener("abort", onAbort, { once: true })
   try {
+    // ACP's session MCP registration does not grant a custom agent access;
+    // allow exactly our server in the agent definition, not inherited MCP.
+    await prepareAcpWorkspace(workspaceDir, BRIDGE_MCP_SERVER_NAME)
+    params.signal?.throwIfAborted()
+    deadline.throwIfAborted()
+    const client = new AgyAcpClient({
+      binaryPath,
+      geminiDir,
+      workspaceDir,
+      connectionId: params.connection.id,
+      bridgeToolPrefix: `mcp_${BRIDGE_MCP_SERVER_NAME}_`,
+      toolNames: new Set(params.tools.map((tool) => tool.name)),
+      onUpdate: (update) => run.handleUpdate(update),
+      onExit: (code) => {
+        if (run.activePromptInFlight) {
+          run.pushEvent({
+            type: "error",
+            message: `agy acp exited unexpectedly with code ${code ?? "null"}`,
+          })
+        }
+        runRegistry.dispose(token)
+      },
+    })
+    run.client = client
     await client.initialize()
     const mcpServers = await createBridgeMcpSpec(token, bridgeDir, params.tools)
-    let opened: { sessionId: string; availableModels: Array<string> }
-    if (params.resumeSessionId && client.canResume) {
+    let opened: Awaited<ReturnType<AgyAcpClient["newSession"]>> | undefined
+    if (resume && client.canResume) {
       try {
         opened = await client.resumeSession(
-          params.resumeSessionId,
+          resume.sessionId,
           workspaceDir,
           mcpServers,
         )
-      } catch {
-        opened = await client.newSession(workspaceDir, mcpServers)
+      } catch (error) {
+        if (client.isClosed) throw error
+        log.debug("acp resume rejected; replaying full history")
       }
-    } else {
-      opened = await client.newSession(workspaceDir, mcpServers)
     }
+    // Only a successfully restored session can interpret an incremental prompt.
+    const blocks =
+      !opened && params.resume ?
+        params.resume.fullReplay()
+      : params.promptBlocks
+    opened ??= await client.newSession(workspaceDir, mcpServers)
     const { sessionId, availableModels } = opened
-    run.sessionId = sessionId
-    run.stepUsage = new AgyStepUsage(
-      path.join(
-        geminiDir,
-        "antigravity-cli",
-        "conversations",
-        `${path.basename(sessionId)}.db`,
-      ),
+    rememberAntigravityAcpModels(
+      params.connection.id,
+      params.credential.id,
+      availableModels,
     )
-    const targetModel = resolveAcpModelId(params.model, availableModels)
+    bindAcpSession(run, geminiDir, sessionId)
+    const targetModel =
+      client.offersModel(params.model) ?
+        params.model
+      : resolveAcpModelId(params.model, availableModels)
     if (targetModel) {
       await client.setModel(sessionId, targetModel)
+    } else if (availableModels.length) {
+      throw new LocalPayloadUnsupportedError(
+        "Antigravity ACP did not offer the requested model",
+      )
+    }
+    if (params.tools.length > 0) {
+      const configured = Number(
+        process.env.COPILOT_API_ANTIGRAVITY_TOOL_LIST_TIMEOUT_MS,
+      )
+      const until =
+        performance.now()
+        + (configured > 0 && configured <= 60_000 ? configured : 20_000)
+      const readinessFile = path.join(bridgeDir, "tools-listed")
+      while (!existsSync(readinessFile)) {
+        params.signal?.throwIfAborted()
+        deadline.throwIfAborted()
+        if (client.isClosed || performance.now() >= until) {
+          throw acpFailure(
+            "Antigravity ACP did not load the declared client tools",
+            502,
+          )
+        }
+        await Bun.sleep(25)
+      }
     }
     addPerformanceTiming(
       c,
       "upstreamConnectMs",
       performance.now() - connectStarted,
     )
-    dispatchPrompt(run, params.promptBlocks)
+    params.signal?.throwIfAborted()
+    dispatchPrompt(run, blocks)
     return run
   } catch (error) {
     run.tainted = true
     runRegistry.dispose(token)
+    params.signal?.throwIfAborted()
+    if (deadline.aborted)
+      throw acpFailure("Antigravity ACP startup timed out", 504)
     throw error
+  } finally {
+    params.signal?.removeEventListener("abort", onAbort)
+    deadline.removeEventListener("abort", onAbort)
   }
+}
+
+function bindAcpSession(
+  run: AgyRun,
+  geminiDir: string,
+  sessionId: string,
+): void {
+  run.replaceSession(
+    sessionId,
+    new AgyStepUsage(
+      path.join(
+        geminiDir,
+        "antigravity-cli",
+        "conversations",
+        `${path.basename(sessionId)}.db`,
+      ),
+    ),
+  )
 }
 
 function dispatchPrompt(run: AgyRun, blocks: Array<AcpContentBlock>): void {
   run.activePromptInFlight = true
+  run.lastToolTurnTextHash = undefined
   run.resetTurnUsage()
   const sentAt = performance.now()
   run.turnUpstreamSentAt = sentAt
@@ -361,6 +471,7 @@ function dispatchPrompt(run: AgyRun, blocks: Array<AcpContentBlock>): void {
     .prompt(run.sessionId, blocks)
     .then((result) => {
       run.activePromptInFlight = false
+      run.touch()
       run.updateTurnUsage(result.usage)
       run.pushEvent({
         type: "prompt_done",
@@ -371,6 +482,7 @@ function dispatchPrompt(run: AgyRun, blocks: Array<AcpContentBlock>): void {
     })
     .catch((error: unknown) => {
       run.activePromptInFlight = false
+      run.touch()
       run.pushEvent({
         type: "error",
         message: error instanceof Error ? error.message : String(error),
@@ -529,13 +641,108 @@ export function classifyColdReplay(
   return { reason, candidateCount: candidates.length, candidates: breakdown }
 }
 
+async function continueAfterDroppedTools(
+  candidates: Array<AgyRun>,
+  payload: ChatCompletionsPayload,
+  toolsSignature: string,
+  signal?: AbortSignal,
+): Promise<AgyRun | undefined> {
+  const matching = candidates.filter((run) => {
+    const echo = payload.messages[run.lastMessageCount]
+    const delta = payload.messages.slice(run.lastMessageCount + 1)
+    return (
+      run.parkedCount > 0
+      && run.lastToolTurnTextHash !== undefined
+      && echo?.role === "assistant"
+      && !echo.tool_calls?.length
+      && delta.length > 0
+      && delta.every((message) => message.role === "user")
+      && hashMessages([echo]) === run.lastToolTurnTextHash
+      && matchRunHistory(run, payload.messages, toolsSignature).prefixMatch
+      && run.toolsSignature === toolsSignature
+    )
+  })
+  if (matching.length !== 1) return undefined
+  const [run] = matching
+  const blocks = buildAcpPromptBlocks(payload, run.lastMessageCount + 1)
+  if (!blocks.length) return undefined
+  const steered = await run.steerToNewTurn({
+    results: run.cancelParkedResults(),
+    newMessageCount: payload.messages.length,
+    newMessageHash: hashMessages(payload.messages),
+    dispatch: () => {
+      signal?.throwIfAborted()
+      dispatchPrompt(run, blocks)
+    },
+  })
+  if (steered) return run
+  runRegistry.dispose(run.token)
+  signal?.throwIfAborted()
+  return undefined
+}
+
+async function reuseOneShotProcess(
+  run: AgyRun,
+  {
+    connection,
+    credential,
+    messages,
+  }: {
+    connection: ProviderConnection
+    credential: ApiCredential
+    messages: Array<Message>
+  },
+  promptBlocks: Array<AcpContentBlock>,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  run.activePromptInFlight = true
+  const onAbort = () => runRegistry.dispose(run.token)
+  signal?.addEventListener("abort", onAbort, { once: true })
+  try {
+    const { geminiDir, workspaceDir } = await syncAntigravityAcpCredentials(
+      connection,
+      credential,
+    )
+    signal?.throwIfAborted()
+    if (run.client.canCloseSession) await run.client.closeSession(run.sessionId)
+    const { sessionId, availableModels } = await run.client.newSession(
+      workspaceDir,
+      [],
+    )
+    const selected =
+      run.client.offersModel(run.model) ?
+        run.model
+      : resolveAcpModelId(run.model, availableModels)
+    if (selected) await run.client.setModel(sessionId, selected)
+    else if (availableModels.length)
+      throw new Error("ACP did not offer the requested model")
+    signal?.throwIfAborted()
+    bindAcpSession(run, geminiDir, sessionId)
+    run.statelessReuses++
+    run.lastMessageCount = messages.length
+    run.lastMessageHash = hashMessages(messages)
+    dispatchPrompt(run, promptBlocks)
+    return true
+  } catch {
+    runRegistry.dispose(run.token)
+    signal?.throwIfAborted()
+    return false
+  } finally {
+    signal?.removeEventListener("abort", onAbort)
+  }
+}
+
 async function resolveOrStartRun(
-  connection: ProviderConnection,
-  credential: ApiCredential,
+  {
+    connection,
+    credential,
+    c,
+  }: { connection: ProviderConnection; credential: ApiCredential; c?: Context },
   payload: ChatCompletionsPayload,
   model: string,
-  c?: Context,
+  signal?: AbortSignal,
 ): Promise<AgyRun> {
+  signal?.throwIfAborted()
   const { mcpTools, toolsSignature, trailingTools } = measureLocalWork(
     "adapterPreparationMs",
     () => {
@@ -608,6 +815,13 @@ async function resolveOrStartRun(
   // 转向。先把真实工具结果交还挂起的 MCP 调用，等 agy 接纳后取消旧 prompt，
   // 再用同一会话发出新指令；只有历史/工具未变且结果对齐时才转向，否则冷重放。
   if (trailingTools.length === 0) {
+    const dropped = await continueAfterDroppedTools(
+      candidates,
+      payload,
+      toolsSignature,
+      signal,
+    )
+    if (dropped) return dropped
     const allResults = extractToolResults(payload.messages)
     if (allResults.length > 0) {
       const steerRun = candidates.find((candidate) => {
@@ -673,10 +887,12 @@ async function resolveOrStartRun(
   // 请求前缀逐字节匹配已足以认定同一对话；原生会话里就保存着真实的 assistant
   // 回复，无需客户端逐字节回显（客户端常会规范化/裁剪回显）。仅当多个候选会话
   // 前缀相同时，才用 assistant 回显消歧，避免复用错会话。
-  const prefixCandidates = candidates
+  const prefixCandidates = runRegistry
+    .findCandidates(connection.id, undefined, toolsSignature, ownerKey)
     .filter(
       (candidate) =>
         candidate.isIdle
+        && (candidate.model === model || candidate.client.offersModel(model))
         && payload.messages.length > candidate.lastMessageCount + 1
         && payload.messages
           .slice(candidate.lastMessageCount + 1)
@@ -713,8 +929,15 @@ async function resolveOrStartRun(
       // Claim synchronously before credential I/O so concurrent requests cannot
       // both check out the same idle process.
       prefixRun.activePromptInFlight = true
+      prefixRun.stateless = false
       try {
         await syncAntigravityAcpCredentials(connection, credential)
+        signal?.throwIfAborted()
+        if (prefixRun.model !== model) {
+          await prefixRun.client.setModel(prefixRun.sessionId, model)
+          prefixRun.model = model
+        }
+        signal?.throwIfAborted()
         prefixRun.touch()
         dispatchPrompt(prefixRun, deltaBlocks)
       } catch (error) {
@@ -739,22 +962,22 @@ async function resolveOrStartRun(
       buildAcpPromptBlocks(payload, resumable.messageCount + 1),
     )
     if (deltaBlocks.length > 0) {
-      try {
-        return await startNewRun({
-          connection,
-          credential,
-          model,
-          tools: mcpTools,
-          toolsSignature,
-          promptBlocks: deltaBlocks,
-          messageCount: payload.messages.length,
-          messageHash: hashMessages(payload.messages),
-          ownerKey,
-          resumeSessionId: resumable.sessionId,
-        })
-      } catch {
-        // Resume failed (expired/unknown session): fall through to fresh replay.
-      }
+      return startNewRun({
+        connection,
+        credential,
+        model,
+        tools: mcpTools,
+        toolsSignature,
+        promptBlocks: deltaBlocks,
+        messageCount: payload.messages.length,
+        messageHash: hashMessages(payload.messages),
+        ownerKey,
+        signal,
+        resume: {
+          sessionId: resumable.sessionId,
+          fullReplay: () => buildAcpPromptBlocks(payload, 0),
+        },
+      })
     }
   }
   const diagnostic = classifyColdReplay(
@@ -770,6 +993,38 @@ async function resolveOrStartRun(
   const promptBlocks = measureLocalWork("adapterPreparationMs", () =>
     buildAcpPromptBlocks(payload, 0),
   )
+  const conversation = payload.messages.filter(
+    ({ role }) => role !== "system" && role !== "developer",
+  )
+  const stateless =
+    payload.stream !== true
+    && mcpTools.length === 0
+    && conversation.length === 1
+    && conversation[0].role === "user"
+  const messageHash = hashMessages(payload.messages)
+  if (stateless) {
+    const idle = candidates.find(
+      // Older agy cannot release a session explicitly; recycle its process
+      // after a bounded number of one-shot sessions.
+      (run) =>
+        run.isIdle
+        && run.stateless
+        // Identical openings can be independent branches; keep their live
+        // sessions available for assistant-echo disambiguation.
+        && run.lastMessageHash !== messageHash
+        && (run.client.canCloseSession || run.statelessReuses < 8),
+    )
+    if (
+      idle
+      && (await reuseOneShotProcess(
+        idle,
+        { connection, credential, messages: payload.messages },
+        promptBlocks,
+        signal,
+      ))
+    )
+      return idle
+  }
   return startNewRun({
     connection,
     credential,
@@ -778,8 +1033,10 @@ async function resolveOrStartRun(
     toolsSignature,
     promptBlocks,
     messageCount: payload.messages.length,
-    messageHash: hashMessages(payload.messages),
+    messageHash,
     ownerKey,
+    signal,
+    stateless,
   })
 }
 
@@ -793,6 +1050,7 @@ async function* streamAcpEvents(
   const created = Math.floor(Date.now() / 1000)
   let sentRole = false
   let usageSettled = false
+  let retriedEmptyTurn = false
   const assistant: Message = { role: "assistant", content: "" }
 
   const onAbort = () => {
@@ -825,9 +1083,13 @@ async function* streamAcpEvents(
       if (!event || signal?.aborted) break
 
       if (event.type === "error") {
+        toOpenAiUsage(run, c)
         run.tainted = true
         runRegistry.dispose(run.token)
-        throw new Error(event.message)
+        throw acpFailure(
+          event.message,
+          event.status ?? classifyAcpFailure(event.message),
+        )
       }
 
       markUpstreamEvent(performanceContext(), run.turnUpstreamSentAt)
@@ -864,7 +1126,11 @@ async function* streamAcpEvents(
         if (failure || run.client.isClosed) {
           run.tainted = true
           runRegistry.dispose(run.token)
-          throw new Error(failure?.message ?? "Antigravity ACP session closed")
+          const message = failure?.message ?? "Antigravity ACP session closed"
+          throw acpFailure(
+            message,
+            failure?.status ?? classifyAcpFailure(message),
+          )
         }
         for (const item of extra) {
           if (signal?.aborted) return
@@ -900,6 +1166,8 @@ async function* streamAcpEvents(
             arguments: call.argsJson,
           },
         }))
+        if (String(assistant.content).trim())
+          run.lastToolTurnTextHash = hashMessages([assistant])
         assistant.tool_calls = toolCallsDelta.map(
           ({ index: _index, ...call }) => call,
         )
@@ -927,6 +1195,27 @@ async function* streamAcpEvents(
       }
 
       if (event.type === "prompt_done") {
+        if (
+          !String(assistant.content).trim()
+          && event.stopReason === "end_turn"
+        ) {
+          toOpenAiUsage(run, c)
+          if (!retriedEmptyTurn) {
+            retriedEmptyTurn = true
+            dispatchPrompt(run, [
+              {
+                type: "text",
+                text: "Your last reply had no answer. Continue with your answer or the client tool call you intended.",
+              },
+            ])
+            continue
+          }
+          runRegistry.dispose(run.token)
+          throw acpFailure(
+            "Antigravity ACP finished without an answer or a tool call",
+            502,
+          )
+        }
         run.lastAssistantHash = hashMessages([assistant])
         recordRunSession(run)
         const finishReason =
@@ -1038,11 +1327,10 @@ export async function createAntigravityAcpChatCompletionsOnce(
   // The run is keyed by the effort-selected upstream SKU; responses keep
   // reporting the client-facing head id.
   const run = await resolveOrStartRun(
-    connection,
-    credential,
+    { connection, credential, c },
     payload,
     requestModel ?? model,
-    c,
+    signal,
   )
   const stream = streamAcpEvents(run, model, signal, c)
   if (payload.stream === true) {

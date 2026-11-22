@@ -10,6 +10,24 @@ import { ProtobufEncoder } from "~/services/windsurf/protobuf"
 let callbackUrl = ""
 let sessionId = ""
 let newCounter = 0
+let selectedModel = ""
+let selectedEffort = ""
+const modelOptions = () => [
+  {
+    id: "model",
+    type: "select",
+    category: "model",
+    currentValue: selectedModel,
+    options: [{ value: "gemini-3.8-flash" }, { value: "gemini-4-hydrogen" }],
+  },
+  {
+    id: "thinking",
+    type: "select",
+    category: "thought_level",
+    currentValue: selectedEffort,
+    options: [{ value: "low" }, { value: "high" }],
+  },
+]
 let state = { turn: 0, nativeSteps: false, generationIndex: 0 }
 // The prompt currently awaiting; session/cancel resolves it with stopReason cancelled.
 let activeScope: {
@@ -39,6 +57,24 @@ function saveState() {
   mkdirSync(conversationsDir(), { recursive: true })
   writeFileSync(statePath(sessionId), JSON.stringify(state))
 }
+
+function loadBridge(
+  spec: { args: Array<string>; command: string } | undefined,
+) {
+  if (!spec) return
+  const file = spec.args.at(-1)
+  if (!file) return
+  callbackUrl = (
+    JSON.parse(readFileSync(file, "utf8")) as { callbackUrl: string }
+  ).callbackUrl
+  if (process.env["ACP_FIXTURE_START"] === "no-tools-list") return
+  const helper = Bun.spawn([spec.command, ...spec.args], {
+    stdin: new Blob(['{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n']),
+    stdout: "ignore",
+  })
+  void helper.exited
+}
+
 function nativeGeneration(input: number, cache: number, output: number) {
   const dir = conversationsDir()
   mkdirSync(dir, { recursive: true })
@@ -104,7 +140,7 @@ async function handle(raw: string) {
     params?: {
       sessionId?: string
       prompt?: Array<{ text?: string }>
-      mcpServers?: Array<{ args: Array<string> }>
+      mcpServers?: Array<{ args: Array<string>; command: string }>
     }
   }
   // session/cancel is a notification: stop the awaiting prompt with cancelled.
@@ -117,21 +153,29 @@ async function handle(raw: string) {
   }
   let result: unknown = {}
   if (request.method === "initialize") {
+    if (process.env["ACP_FIXTURE_START"] === "hang") return
     result = {
-      agentCapabilities: { sessionCapabilities: { resume: true } },
+      agentCapabilities: {
+        sessionCapabilities: {
+          resume: process.env["ACP_FIXTURE_START"] === "no-resume" ? false : {},
+          close: {},
+        },
+      },
     }
   } else if (request.method === "session/new") {
-    const file = request.params?.mcpServers?.[0]?.args.at(-1)
-    if (file)
-      callbackUrl = (
-        JSON.parse(readFileSync(file, "utf8")) as { callbackUrl: string }
-      ).callbackUrl
+    loadBridge(request.params?.mcpServers?.[0])
     sessionId = `session-${process.pid}-${++newCounter}`
     state = { turn: 0, nativeSteps: false, generationIndex: 0 }
     saveState()
     result = {
       sessionId,
-      models: { availableModels: [{ modelId: "gemini-3.8-flash" }] },
+      models: {
+        availableModels: [
+          { modelId: "gemini-3.8-flash" },
+          { modelId: "gemini-4-hydrogen-high" },
+        ],
+      },
+      configOptions: modelOptions(),
     }
   } else if (request.method === "session/resume") {
     const requested = request.params?.sessionId ?? ""
@@ -144,17 +188,25 @@ async function handle(raw: string) {
       })
       return
     }
-    const file = request.params?.mcpServers?.[0]?.args.at(-1)
-    if (file)
-      callbackUrl = (
-        JSON.parse(readFileSync(file, "utf8")) as { callbackUrl: string }
-      ).callbackUrl
+    loadBridge(request.params?.mcpServers?.[0])
     sessionId = requested
     state = restored
     result = {
       sessionId,
       models: { availableModels: [{ modelId: "gemini-3.8-flash" }] },
     }
+  } else if (request.method === "session/set_model") {
+    selectedModel =
+      (request.params as { modelId?: string } | undefined)?.modelId ?? ""
+  } else if (request.method === "session/set_config_option") {
+    const params = request.params as { configId: string; value: string }
+    if (params.configId === "model") {
+      selectedModel = params.value
+      selectedEffort = ""
+    } else if (params.configId === "thinking") {
+      selectedEffort = params.value
+    }
+    result = { configOptions: modelOptions() }
   } else if (request.method === "session/prompt") {
     const scope = beginScope()
     state.turn++
@@ -162,6 +214,18 @@ async function handle(raw: string) {
     saveState()
     const text =
       request.params?.prompt?.map((block) => block.text ?? "").join("\n") ?? ""
+    if (text.includes("PROVIDER_BUSY")) {
+      write({
+        jsonrpc: "2.0",
+        id: request.id,
+        error: {
+          code: -32000,
+          message: "Our servers are experiencing high traffic right now",
+        },
+      })
+      activeScope = null
+      return
+    }
     // Race tests control the MCP/event queue while this real peer stays alive.
     if (text.includes("BATCH_HOLD")) await new Promise(() => {})
     // A pure-generation turn that waits for cancellation (abort preservation).
@@ -185,8 +249,24 @@ async function handle(raw: string) {
       sessionUpdate: "agent_thought_chunk",
       content: { type: "text", text: `native-reasoning-${sessionId}` },
     })
+    if (text.includes("EMPTY_ONCE")) {
+      write({
+        jsonrpc: "2.0",
+        id: request.id,
+        result: { stopReason: "end_turn" },
+      })
+      activeScope = null
+      return
+    }
+    if (text.includes("MODEL_PROBE"))
+      answer += `:${selectedModel}${selectedEffort ? `-${selectedEffort}` : ""}`
     // A single-tool turn that commits the result then waits to be steered.
     if (text.includes("STEER_LOOP") && turn === 1) {
+      if (text.includes("DROP_TOOL"))
+        update({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "I was about to look it up." },
+        })
       const acpId = `acp-${sessionId}-${turn}`
       update({
         sessionUpdate: "tool_call",

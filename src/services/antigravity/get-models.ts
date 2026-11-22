@@ -17,6 +17,7 @@ import {
   collapseAntigravityModelVariants,
   type RawAntigravityCatalogEntry,
 } from "./variant-collapse"
+import { resolveAntigravityTransport } from "./acp/transport"
 
 // Daily first, matching CPA (daily gets new models like gemini-3.8-flash
 // before the prod endpoint rolls them out).
@@ -33,6 +34,23 @@ const SKIPPED_ANTIGRAVITY_MODELS = new Set([
   "gemini-2.5-flash-thinking",
   "gemini-2.5-pro",
 ])
+
+const acpOffers = new Map<
+  string,
+  { ids: ReadonlyArray<string>; expires: number }
+>()
+
+export function rememberAntigravityAcpModels(
+  connectionId: string,
+  credentialId: string,
+  ids: ReadonlyArray<string>,
+): void {
+  const key = JSON.stringify([connectionId, credentialId])
+  acpOffers.delete(key)
+  if (!ids.length) return
+  acpOffers.set(key, { ids, expires: Date.now() + 5 * 60_000 })
+  if (acpOffers.size > 128) acpOffers.delete(acpOffers.keys().next().value!)
+}
 
 interface AntigravityModelNode {
   displayName?: string
@@ -121,6 +139,30 @@ export async function getAntigravityModelsForConnection(
   signal?: AbortSignal,
 ): Promise<Array<ModelMapping>> {
   if (getConnectionProvider(connection) !== "antigravity") return []
+  if (resolveAntigravityTransport(connection) === "acp") {
+    const offers = connection.credentials
+      .filter((credential) => credential.enabled)
+      .map((credential) =>
+        acpOffers.get(JSON.stringify([connection.id, credential.id])),
+      )
+    if (
+      offers.length
+      && offers.every((offer) => offer && offer.expires > Date.now())
+    ) {
+      const ids = new Set(
+        offers.flatMap((offer) => offer?.ids ?? []).map(canonicalNativeModelId),
+      )
+      return collapseAntigravityModelVariants(
+        [...ids]
+          .filter((id) => id && !SKIPPED_ANTIGRAVITY_MODELS.has(id))
+          .map((id) => ({
+            publicId: id,
+            name: id,
+            endpoints: ["chat", "messages"],
+          })),
+      )
+    }
+  }
   const body = await requestAntigravityAvailableModels(connection, signal)
   return body ? parseAntigravityModelsPayload(body) : []
 }

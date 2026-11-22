@@ -8,6 +8,7 @@
 
 import { rmSync } from "node:fs"
 
+import { LocalConcurrencyLimitError } from "~/lib/error"
 import type { AgyStepUsage } from "~/services/antigravity/acp/step-usage"
 
 import {
@@ -47,7 +48,7 @@ type AgyTurnEvent =
   | { type: "text"; text: string }
   | { type: "tool_call_ready"; call: AnnouncedToolCall }
   | { type: "prompt_done"; stopReason: string; usage?: AcpUsage }
-  | { type: "error"; message: string }
+  | { type: "error"; message: string; status?: number }
 
 const IDLE_TTL_MS = 10 * 60 * 1000
 const DEFAULT_MAX_RUNS = 16
@@ -56,7 +57,7 @@ const MCP_TOOL_PREFIX = `mcp_${MCP_SERVER_NAME}_`
 
 function maxAgyRuns(): number {
   const raw = Number(process.env.COPILOT_API_ANTIGRAVITY_MAX_RUNS)
-  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_MAX_RUNS
+  return Number.isSafeInteger(raw) && raw > 0 ? raw : DEFAULT_MAX_RUNS
 }
 
 function positiveMs(env: string, fallback: number): number {
@@ -93,11 +94,13 @@ export function stripBridgeToolPrefix(name: string): string {
 export class AgyRun {
   readonly token: string
   readonly connectionId: string
-  readonly model: string
+  model: string
   readonly toolsSignature: string
   readonly ownerKey: string
   readonly bridgeDir: string
   sessionId = ""
+  stateless = false
+  statelessReuses = 0
   client!: AgyAcpClient
   stepUsage?: AgyStepUsage
 
@@ -105,6 +108,7 @@ export class AgyRun {
   lastMessageCount = 0
   lastMessageHash = ""
   lastAssistantHash = ""
+  lastToolTurnTextHash?: string
   contextUsage?: AcpContextUsage
   resumedToolTurn = false
   usageTps?: number
@@ -154,15 +158,31 @@ export class AgyRun {
     this.lastActiveAt = Date.now()
     if (this.idleTimer) clearTimeout(this.idleTimer)
     if (this.disposed) return
+    const waitingForTools = this.parkedCalls.size > 0
+    const generating = this.activePromptInFlight && !waitingForTools
+    const timeout =
+      waitingForTools ?
+        positiveMs("COPILOT_API_ANTIGRAVITY_TOOL_TIMEOUT_MS", 30 * 60_000)
+      : generating ?
+        positiveMs("COPILOT_API_ANTIGRAVITY_TURN_TIMEOUT_MS", 5 * 60_000)
+      : IDLE_TTL_MS
     this.idleTimer = setTimeout(() => {
+      if (generating)
+        this.pushEvent({
+          type: "error",
+          message: "Antigravity ACP generation timed out",
+          status: 504,
+        })
       runRegistry.dispose(this.token)
-    }, IDLE_TTL_MS)
+    }, timeout)
+    this.idleTimer.unref?.()
   }
 
   get isIdle(): boolean {
     return (
       !this.activePromptInFlight
       && this.parkedCalls.size === 0
+      && this.turnEvents.length === 0
       && !this.steering
       && !this.cancelPending
     )
@@ -188,8 +208,18 @@ export class AgyRun {
   }
 
   startUsageSegment(now: number): void {
+    this.touch()
     this.usageSegmentStartedAt = now
     this.usageTps = undefined
+  }
+
+  replaceSession(sessionId: string, stepUsage: AgyStepUsage): void {
+    this.sessionId = sessionId
+    this.stepUsage = stepUsage
+    this.lastAssistantHash = ""
+    this.contextUsage = undefined
+    this.announcedQueue.length = 0
+    this.activeAcpToolCalls.clear()
   }
 
   get hasTurnUsage(): boolean {
@@ -488,8 +518,6 @@ export class AgyRun {
         new Error("Antigravity ACP has no prompt in flight"),
       )
     }
-    this.touch()
-
     const matchIdx = this.announcedQueue.findIndex(
       (item) => item.originalName === name || item.rawName === name,
     )
@@ -514,12 +542,26 @@ export class AgyRun {
         resolve,
         reject,
       })
+      this.touch()
       this.pushEvent({ type: "tool_call_ready", call: announced })
     })
   }
 
   hasParkedCall(toolCallId: string): boolean {
     return this.parkedCalls.has(toolCallId)
+  }
+
+  cancelParkedResults() {
+    return [...this.parkedCalls.keys()].map((toolCallId) => ({
+      toolCallId,
+      isError: true,
+      content: [
+        {
+          type: "text" as const,
+          text: "Tool call cancelled by the client; it was not executed.",
+        },
+      ],
+    }))
   }
 
   resolveParkedCall(toolCallId: string, result: McpToolResult): boolean {
@@ -590,11 +632,22 @@ export class AgyRun {
   }
 }
 
+class AcpPoolFullError extends LocalConcurrencyLimitError {}
+
 class AgyRunRegistry {
   private readonly byToken = new Map<string, AgyRun>()
 
   register(run: AgyRun): void {
     this.evictIfNeeded()
+    if (this.byToken.size >= maxAgyRuns()) {
+      run.dispose()
+      const message = "All Antigravity ACP process slots are busy"
+      throw new AcpPoolFullError(
+        message,
+        new Response(null, { status: 503 }),
+        message,
+      )
+    }
     this.byToken.set(run.token, run)
   }
 
@@ -617,9 +670,17 @@ class AgyRunRegistry {
     return this.byToken.get(token)
   }
 
+  hasSession(connectionId: string, sessionId: string): boolean {
+    for (const run of this.byToken.values()) {
+      if (run.connectionId === connectionId && run.sessionId === sessionId)
+        return true
+    }
+    return false
+  }
+
   findCandidates(
     connectionId: string,
-    model: string,
+    model: string | undefined,
     toolsSignature?: string,
     ownerKey = "",
   ): Array<AgyRun> {
@@ -628,7 +689,7 @@ class AgyRunRegistry {
       if (
         !run.tainted
         && run.connectionId === connectionId
-        && run.model === model
+        && (model === undefined || run.model === model)
         && (toolsSignature === undefined
           || run.toolsSignature === toolsSignature)
         && run.ownerKey === ownerKey

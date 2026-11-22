@@ -95,6 +95,7 @@ export function findResumable(params: {
       || now - entry.updatedAt > RESUME_TTL_MS
       || entry.messageCount <= 0
       || messages.length <= entry.messageCount + 1
+      || messages[entry.messageCount]?.role !== "assistant"
     ) {
       return false
     }

@@ -9,6 +9,7 @@
 
 import fs from "node:fs"
 import http from "node:http"
+import path from "node:path"
 import readline from "node:readline"
 
 interface JsonRpcRequest {
@@ -73,6 +74,7 @@ function postCallback(
 async function handleRequest(
   config: BridgeConfig,
   msg: JsonRpcRequest,
+  readinessFile: string,
 ): Promise<void> {
   const { id, method, params } = msg
   if (id === undefined || id === null || !method) {
@@ -90,7 +92,13 @@ async function handleRequest(
   }
 
   if (method === "tools/list") {
-    writeResponse(id, { tools: config.tools })
+    fs.writeFileSync(readinessFile, "", { mode: 0o600 })
+    writeResponse(id, {
+      tools: config.tools.map((tool) => ({
+        ...tool,
+        _meta: { "antigravity/alwaysLoad": true },
+      })),
+    })
     return
   }
 
@@ -99,6 +107,10 @@ async function handleRequest(
       name?: string
       arguments?: unknown
       _meta?: Record<string, unknown>
+    }
+    if (!config.tools.some((tool) => tool.name === typed.name)) {
+      writeError(id, -32602, "unknown bridge tool")
+      return
     }
     const res = await postCallback(config.callbackUrl, {
       name: typed.name ?? "",
@@ -134,6 +146,7 @@ function main(): void {
   }
 
   const config = JSON.parse(fs.readFileSync(bridgeFile, "utf8")) as BridgeConfig
+  const readinessFile = path.join(path.dirname(bridgeFile), "tools-listed")
   const rl = readline.createInterface({
     input: process.stdin,
     crlfDelay: Infinity,
@@ -148,7 +161,7 @@ function main(): void {
     } catch {
       return
     }
-    void handleRequest(config, msg).catch((error: unknown) => {
+    void handleRequest(config, msg, readinessFile).catch((error: unknown) => {
       if (msg.id !== undefined && msg.id !== null) {
         writeError(
           msg.id,
