@@ -85,6 +85,7 @@ import {
   encodeResponsesStream,
 } from "~/services/ir/codecs/responses/stream"
 import { applyPromptCaching } from "~/services/claude/prompt-cache"
+import { streamChatResult } from "~/services/protocols/chat/result-stream"
 import type { ChatCompletionsPayload } from "~/services/protocols/chat/types"
 import type {
   ResponsesPayload,
@@ -393,6 +394,45 @@ interface TranslatedCallParams {
   onPhase?: (phase: TranslationPhase, details: TranslationPhaseDetails) => void
 }
 
+function encodeMinimaxJsonObjectResult(result: ResultIR) {
+  const response = encodeChatResponse(result)
+  const choice = response.choices[0]!
+  if (result.stop?.reason === "refusal") {
+    choice.finish_reason = "content_filter"
+    return response
+  }
+  if (
+    choice.finish_reason === "tool_calls"
+    && choice.message.tool_calls?.length
+  )
+    return response
+
+  // Validate the public answer, not thinking. JSON-mode content has to be a
+  // string even when the upstream interleaves text and thinking blocks.
+  const text = result.parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("")
+  try {
+    const parsed: unknown = JSON.parse(text)
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      choice.message.content = text
+      return response
+    }
+  } catch {
+    // Invalid model output is retryable, not a successful free-text response.
+  }
+  const message = "MiniMax did not return a JSON object for response_format"
+  const body = JSON.stringify({ error: { type: "upstream_error", message } })
+  const error = new HTTPError(
+    message,
+    new Response(body, { status: 502 }),
+    body,
+  )
+  error.reportedUsage = result.usage
+  throw error
+}
+
 /**
  * Translates `targetPayload` from the client wire into `target`'s wire,
  * delegates to `executor`, then translates the upstream result back.
@@ -427,7 +467,33 @@ export async function createTranslatedCall(
   const translationStarted = performance.now()
   const sourceSpec = WIRE_SPECS[source]
   const targetSpec = WIRE_SPECS[target]
-  const requestIR = sourceSpec.decodeRequest(targetPayload)
+  const decodedRequest = sourceSpec.decodeRequest(targetPayload)
+  const minimaxJsonObject =
+    source === "chat"
+    && target === "messages"
+    && connection.protocol === "minimax-native"
+    && decodedRequest.generation?.textFormat?.type === "json_object"
+  // MiniMax lacks native JSON mode. Prompt for the shape, then validate the
+  // resulting object before sending anything to the client.
+  const requestIR: RequestIR =
+    minimaxJsonObject ?
+      {
+        ...decodedRequest,
+        instructions: [
+          ...decodedRequest.instructions,
+          {
+            role: "system",
+            parts: [
+              {
+                type: "text",
+                text: "When giving the final answer, return exactly one valid JSON object, without Markdown fences or surrounding text.",
+              },
+            ],
+          },
+        ],
+        generation: { ...decodedRequest.generation, textFormat: undefined },
+      }
+    : decodedRequest
   if (
     source === "responses"
     && target !== "responses"
@@ -481,6 +547,7 @@ export async function createTranslatedCall(
     )
   }
   const stream = requestIRStream(requestIR, targetPayload)
+  const upstreamStream = minimaxJsonObject ? false : stream
   // copilot-native rejects reasoning in the transcript; every other upstream
   // accepts or ignores it.
   const preserveHistoricalReasoning =
@@ -541,7 +608,7 @@ export async function createTranslatedCall(
   }
 
   const encoded = targetSpec.encodeRequest(requestIR, {
-    stream,
+    stream: upstreamStream,
     issuer: connection.id,
     preserveHistoricalReasoning,
     preserveReasoningOrder: connection.protocol === "windsurf-native",
@@ -577,7 +644,7 @@ export async function createTranslatedCall(
   )
   const result = await executor(targetRequest)
   const isResult = targetSpec.isResult(result.response)
-  if (isResult || !stream) {
+  if (isResult || !upstreamStream) {
     const upstreamResponse =
       !replay ? result.response
       : isResult ? await replay.response(result.response as ResponsesResponse)
@@ -599,12 +666,16 @@ export async function createTranslatedCall(
           ),
         )
     onPhase?.("result_decoded", { request: requestIR })
-    const response = measureLocalWork("responseTranslationMs", () =>
-      sourceSpec.encodeResult(decoded, {
+    const response = measureLocalWork("responseTranslationMs", () => {
+      if (minimaxJsonObject) {
+        const validated = encodeMinimaxJsonObjectResult(decoded)
+        return stream ? streamChatResult(validated) : validated
+      }
+      return sourceSpec.encodeResult(decoded, {
         model: routeTarget.upstreamModelId,
         request: requestIR,
-      }),
-    )
+      })
+    })
     onPhase?.("complete", { request: requestIR })
     return { credentialId: result.credentialId, response }
   }

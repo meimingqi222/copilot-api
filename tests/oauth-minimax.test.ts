@@ -1,11 +1,15 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, mock, test } from "bun:test"
 
 import type { ProviderConnection } from "~/lib/provider-connections"
 
 import {
   __resetProviderConnectionsForTest,
   getProviderConnection,
+  upsertProviderConnection,
 } from "~/lib/provider-connections"
+import { resetAdaptiveRateLimiterForTest } from "~/lib/rate-limit"
+import { resetProtectedRouteGuardForTest } from "~/lib/protected-route-guard"
+import { server } from "~/server"
 import {
   isOAuthProviderId,
   OAUTH_PROVIDER_IDS,
@@ -385,6 +389,92 @@ describe("MiniMax Code token refresh", () => {
 })
 
 describe("MiniMax Code protocol adapter", () => {
+  test.each([
+    { stream: false, text: '{"answer":42}', status: 200 },
+    { stream: true, text: '{"answer":42}', status: 200 },
+    { stream: true, text: '[{"answer":42}]', status: 502 },
+  ])(
+    "serves only valid Chat JSON objects (stream=$stream status=$status)",
+    async ({ stream, text, status }) => {
+      resetAdaptiveRateLimiterForTest()
+      resetProtectedRouteGuardForTest()
+      upsertProviderConnection(
+        createConnection({
+          models: [
+            {
+              publicId: "minimax-json-test",
+              upstreamId: "MiniMax-M3.1-Flash",
+              endpoints: ["messages"],
+              enabled: true,
+            },
+          ],
+        }),
+      )
+      const upstream = mock((_url: unknown, _init?: RequestInit) =>
+        Promise.resolve(
+          jsonResponse({
+            id: "msg_minimax_json",
+            type: "message",
+            role: "assistant",
+            model: "MiniMax-M3.1-Flash",
+            content: [
+              { type: "text", text: text.slice(0, 1) },
+              { type: "thinking", thinking: "not JSON" },
+              { type: "text", text: text.slice(1) },
+            ],
+            stop_reason: "end_turn",
+            usage: { input_tokens: 30, output_tokens: 12 },
+          }),
+        ),
+      )
+      globalThis.fetch = upstream as unknown as typeof fetch
+
+      const response = await server.request("/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "minimax-json-test",
+          messages: [
+            { role: "system", content: "Keep the answer short." },
+            { role: "user", content: "Return the answer to 6 times 7." },
+          ],
+          response_format: { type: "json_object" },
+          stream,
+        }),
+      })
+
+      expect(response.status).toBe(status)
+      expect(upstream).toHaveBeenCalledTimes(1)
+      const sent = JSON.parse(String(upstream.mock.calls[0]?.[1]?.body))
+      expect(sent.model).toBe("MiniMax-M3.1-Flash")
+      expect(JSON.stringify(sent.system)).toContain("Keep the answer short.")
+      expect(JSON.stringify(sent.system)).toContain("JSON object")
+      expect(sent.output_config?.format).toBeUndefined()
+      expect(sent.stream).toBe(false)
+      if (status !== 200) {
+        expect(await response.text()).toContain(
+          "MiniMax did not return a JSON object",
+        )
+      } else if (stream) {
+        const body = await response.text()
+        const chunks = body
+          .split("\n")
+          .filter(
+            (line) => line.startsWith("data:") && !line.includes("[DONE]"),
+          )
+        const first = JSON.parse(chunks[0]!.slice(5))
+        expect(first.object).toBe("chat.completion.chunk")
+        expect(first.choices[0].delta.content).toBe(text)
+        expect(body).toContain("data: [DONE]")
+      } else {
+        const body = (await response.json()) as {
+          choices: Array<{ message: { content: string } }>
+        }
+        expect(body.choices[0]?.message.content).toBe(text)
+      }
+    },
+  )
+
   test("posts Anthropic Messages to the configured base with a bearer token", async () => {
     initializeProtocolAdapters()
     const adapter = getProtocolAdapter("minimax-native")

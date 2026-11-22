@@ -475,6 +475,8 @@ IR 侧的意图与事件语义仍然是基础，下述规则不变：
 
 Responses 的 JSON schema 配置使用 `text.format = { type: "json_schema", name, schema, strict? }`，不能套用 Chat 的 `response_format.json_schema` 嵌套结构。Messages 来源没有 schema 名称，转换时使用 `response`；调用方提供的名称及 strict 保留。
 
-Gemini codec 尚未实现结构化输出映射，跨协议请求带 JSON schema 或 JSON object 模式时，预检记录 `structured_output` 的 reject loss，禁止静默丢弃后返回自由文本。Messages 能承载 JSON schema，但不能表达无 schema 的 JSON object 模式，也必须拒绝。原生 Gemini 透传与普通文本转换不受影响。
+Gemini codec 尚未实现结构化输出映射，跨协议请求带 JSON schema 或 JSON object 模式时，预检记录 `structured_output` 的 reject loss，禁止静默丢弃后返回自由文本。Messages 能承载 JSON schema，但不能原生表达无 schema 的 JSON object 模式，默认也必须拒绝。原生 Gemini 透传与普通文本转换不受影响。
 
-回归：`tests/ir-structured-output.test.ts`、`tests/messages-via-responses.test.ts`。决策：`.agents/notes/implemented/bug-fix/2026-10-08-structured-output-wire-contract.md`。
+Chat → `minimax-native` 的 `json_object` 由代理兼容：保留调用方指令，并要求最终正文为单个 JSON 对象；代理收齐正文后验证，普通最终文本无效时返回 502 而非成功。客户端仍可使用 SSE，但该模式须验证完才开始发帧。工具调用与拒绝不是最终 JSON 答案，不按正文验证。其他 Messages 目标的预检规则不变。
+
+回归：`tests/ir-structured-output.test.ts`、`tests/messages-via-responses.test.ts`、`tests/oauth-minimax.test.ts`。决策：`.agents/notes/implemented/bug-fix/2026-10-08-structured-output-wire-contract.md`。
