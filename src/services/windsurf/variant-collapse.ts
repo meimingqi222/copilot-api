@@ -16,7 +16,7 @@
  * - Thinking effort is folded into one listed head per
  *   (family, context-tier, lane). Clients select effort via
  *   `reasoning_effort`. `max` and `xhigh` are independent tiers.
- * - Context (`1m`) and lane (`fast`/`priority`) stay separate public
+ * - Context (`1m`) and lane (`fast`/`priority`/`lightning`) stay separate public
  *   dimensions so pins keep their own upstreamId after dispatch overwrites
  *   payload.model.
  * - Non-head effort siblings become independent `hidden: true` mappings.
@@ -39,8 +39,8 @@ import {
 
 type WindsurfContextTier = "standard" | "1m"
 
-/** Latency/product lane. `fast`/`priority` are not thinking efforts. */
-type WindsurfLane = "standard" | "fast" | "priority"
+/** Latency/product lanes are not thinking efforts. */
+type WindsurfLane = "standard" | "fast" | "priority" | "lightning"
 
 /** Windsurf adds context/lane axes on top of the shared effort variants. */
 interface WindsurfModelVariants extends EffortVariants {
@@ -122,11 +122,10 @@ interface ParsedVariantTokens {
 
 /**
  * Peel Windsurf catalog suffixes in order:
- *   family[-{effort}][-thinking][-fast|-priority][-1m]
+ *   family[-{effort}][-thinking][-fast|-priority|-lightning][-1m]
  *
- * Lane tokens are only stripped when what remains still carries an effort
- * (or no-thinking) token — otherwise `swe-1-6-fast` would fold into
- * `swe-1-6`, which is a different product rather than a latency lane.
+ * Fast/priority require an effort token; bare products like `swe-1-6-fast`
+ * stay intact. Only SWE-2 uses a trailing Lightning token as a lane.
  */
 export function parseWindsurfVariantTokens(
   publicId: string,
@@ -157,9 +156,13 @@ export function parseWindsurfVariantTokens(
   for (const laneToken of [
     { re: /(?:^|[-_\s])priority$/i, value: "priority" as const },
     { re: /(?:^|[-_\s])fast$/i, value: "fast" as const },
+    { re: /(?:^|[-_\s])lightning$/i, value: "lightning" as const },
   ]) {
     if (!laneToken.re.test(work)) continue
     const stem = trimTrailingSeparators(work.replace(laneToken.re, ""))
+    // Other Lightning products (e.g. Nemotron) put effort after the product name.
+    if (laneToken.value === "lightning" && !/^swe[-_.]2(?:[-_.]|$)/i.test(stem))
+      continue
     const stemIsEffortful =
       detectEffortToken(stem) !== undefined
       || THINKING_OR_REASONING_SUFFIXES.some(
@@ -168,7 +171,7 @@ export function parseWindsurfVariantTokens(
           && detectEffortToken(trimTrailingSeparators(stem.replace(suffix, "")))
             !== undefined,
       )
-    if (stemIsEffortful) {
+    if (stemIsEffortful || laneToken.value === "lightning") {
       lane = laneToken.value
       work = stem
     }
@@ -257,11 +260,15 @@ function buildHeadDisplayName(group: VariantGroup): string {
     group.baseDisplayName
     || group.entries[0]?.entry.name
     || groupPublicId(group)
-  let display = displayNameWithoutVariantTokens(rawName, {
-    keepThinking: !hasEffortAxis,
-  })
+  let display = displayNameWithoutVariantTokens(
+    group.lane === "lightning" ?
+      rawName.replace(/[-\s]+Lightning(?=\s*(?:1M)?$)/i, "")
+    : rawName,
+    { keepThinking: !hasEffortAxis },
+  )
   if (group.lane === "fast") display = `${display} Fast`
   else if (group.lane === "priority") display = `${display} Priority`
+  else if (group.lane === "lightning") display = `${display} Lightning`
   if (group.contextTier === "1m") display = `${display} 1M`
   return display
 }
@@ -272,7 +279,7 @@ interface VariantGroup {
   lane: WindsurfLane
   entries: Array<{
     entry: RawWindsurfCatalogEntry
-    effort: EffortVariantKey
+    effort: EffortVariantKey | undefined
   }>
   vendor: string
   pickerEnabled: boolean
@@ -283,8 +290,7 @@ interface VariantGroup {
 
 function groupPublicId(group: VariantGroup): string {
   let id = group.family
-  if (group.lane === "fast") id = `${id}-fast`
-  else if (group.lane === "priority") id = `${id}-priority`
+  if (group.lane !== "standard") id = `${id}-${group.lane}`
   if (group.contextTier === "1m") id = `${id}-1m`
   return id
 }
@@ -302,7 +308,6 @@ export function collapseWindsurfModelVariants(
   for (const entry of entries) {
     if (!entry.publicId) continue
     const parsed = parseWindsurfVariantTokens(entry.publicId, entry.name)
-    const resolvedEffort: EffortVariantKey = parsed.effort ?? "high"
     const groupKey = `${parsed.family}::${parsed.contextTier}::${parsed.lane}`
 
     let group = groups.get(groupKey)
@@ -326,7 +331,7 @@ export function collapseWindsurfModelVariants(
       group.pickerCategory = entry.pickerCategory
     }
 
-    group.entries.push({ entry, effort: resolvedEffort })
+    group.entries.push({ entry, effort: parsed.effort })
     if (entry.baseDisplayName && !group.baseDisplayName) {
       group.baseDisplayName = displayNameWithoutVariantTokens(
         entry.baseDisplayName,
@@ -339,16 +344,21 @@ export function collapseWindsurfModelVariants(
   for (const group of groups.values()) {
     const byEffort: Partial<Record<EffortVariantKey, string>> = {}
     const entriesByPublicId = new Map<string, RawWindsurfCatalogEntry>()
+    let bareLightningId: string | undefined
 
     for (const { entry, effort } of group.entries) {
       const upstreamId = entry.upstreamId || entry.publicId
-      if (!byEffort[effort]) {
-        byEffort[effort] = upstreamId
+      if (group.lane === "lightning" && effort === undefined) {
+        // An unqualified Lightning SKU must not shadow an explicit high SKU.
+        bareLightningId ??= upstreamId
+      } else {
+        byEffort[effort ?? "high"] ??= upstreamId
       }
       if (!entriesByPublicId.has(entry.publicId)) {
         entriesByPublicId.set(entry.publicId, entry)
       }
     }
+    if (bareLightningId) byEffort.high ??= bareLightningId
 
     const defaultEffort = preferDefaultEffort(byEffort)
     const publicId = groupPublicId(group)

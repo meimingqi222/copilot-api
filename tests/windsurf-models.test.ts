@@ -544,6 +544,59 @@ test("extractWindsurfModelMappingsFromPayload emits head + hidden pin mappings",
   })
 })
 
+test("SWE Lightning variants list one head and keep exact tier pins", () => {
+  const lightning = "swe-2-1-lightning"
+  const nemotron = "nemotron-3-5-lightning"
+  const tiers = ["low", "medium", "high", "xhigh", "max"] as const
+  const payload = buildCatalogPayload(
+    [
+      { displayName: "SWE-2.1 Lightning", modelId: lightning },
+      ...tiers.map((tier) => ({
+        displayName: `SWE-2.1 ${tier} Lightning`,
+        modelId: `swe-2-1-${tier}-lightning`,
+        baseDisplayName: "SWE-2.1 Lightning",
+      })),
+      { displayName: "SWE-2.1 High", modelId: "swe-2-1-high" },
+      { displayName: "Nemotron 3.5 Lightning", modelId: nemotron },
+      {
+        displayName: "Nemotron 3.5 Lightning High",
+        modelId: `${nemotron}-high`,
+      },
+    ],
+    {},
+  )
+  expect(
+    extractWindsurfModelsFromPayload(payload).map(({ id, name }) => ({
+      id,
+      name,
+    })),
+  ).toEqual([
+    { id: nemotron, name: "Nemotron 3.5 Lightning" },
+    { id: "swe-2-1", name: "SWE-2.1" },
+    { id: lightning, name: "SWE-2.1 Lightning" },
+  ])
+
+  const models = extractWindsurfModelMappingsFromPayload(payload)
+  const connection = cachedCatalogConnection({ models })
+  expect(
+    listWindsurfSupportedEfforts(models.find((m) => m.publicId === lightning)),
+  ).toEqual(["high", "low", "medium", "xhigh", "max"])
+  for (const tier of tiers) {
+    const sku = `swe-2-1-${tier}-lightning`
+    expect(resolveWindsurfRequestModel(connection, lightning, tier)).toBe(sku)
+    expect(
+      resolveWindsurfRequestModel(
+        connection,
+        sku,
+        tier === "low" ? "max" : "low",
+      ),
+    ).toBe(sku)
+  }
+  expect(resolveWindsurfRequestModel(connection, "swe-2-1", "high")).toBe(
+    "swe-2-1-high",
+  )
+})
+
 test("parseWindsurfVariantTokens handles thinking / fast / priority lanes", () => {
   // {effort}-thinking and no-thinking share family gpt-5.2
   expect(parseWindsurfVariantTokens("gpt-5.2-high-thinking")).toMatchObject({
