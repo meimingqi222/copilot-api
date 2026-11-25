@@ -88,6 +88,7 @@ import {
   buildCodexUpstreamBody,
   chainedHttpCodexRequestError,
   isResponsesLiteRequest,
+  resolveCodexRequestServiceTier,
   stripReasoningItems,
 } from "./upstream-body"
 
@@ -238,7 +239,19 @@ async function createCodexResponsesOnceImpl(
     }
   }
 
-  const upstreamBody = buildCodexUpstreamBody(payload, model, responsesLite)
+  const serviceTier = await resolveCodexRequestServiceTier(
+    payload.service_tier,
+    { connection, credential },
+    accessToken,
+    model,
+    signal,
+  )
+  const upstreamBody = buildCodexUpstreamBody(
+    payload,
+    model,
+    responsesLite,
+    serviceTier,
+  )
 
   const originalCacheKey = (
     payload as unknown as { prompt_cache_key?: unknown }

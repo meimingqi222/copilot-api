@@ -411,6 +411,43 @@
         </div>
 
         <div class="divide-y divide-[var(--apple-gray-5)]">
+          <div
+            class="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-[var(--apple-bg-secondary)] transition"
+          >
+            <div class="space-y-1 max-w-xl">
+              <label
+                for="codex-default-speed"
+                class="text-sm font-medium text-[var(--apple-text)]"
+                x-text="t('system.codexDefaultSpeed')"
+              ></label>
+              <p
+                id="codex-default-speed-hint"
+                class="text-xs text-[var(--apple-text-secondary)] leading-relaxed"
+                x-text="t('system.codexDefaultSpeedHint')"
+              ></p>
+            </div>
+            <select
+              id="codex-default-speed"
+              class="input text-xs sm:text-sm py-1.5 px-3 min-w-[200px]"
+              aria-describedby="codex-default-speed-hint"
+              x-model="settings.codexDefaultSpeed"
+              :disabled="saving"
+            >
+              <option
+                value="default"
+                x-text="t('system.codexSpeed.default')"
+              ></option>
+              <option
+                value="priority"
+                x-text="t('system.codexSpeed.priority')"
+              ></option>
+              <option
+                value="ultrafast"
+                x-text="t('system.codexSpeed.ultrafast')"
+              ></option>
+            </select>
+          </div>
+
           <!-- 自动使用即将过期的 Codex 重置次数 -->
           <div
             class="p-4 sm:p-5 flex items-center justify-between gap-4 hover:bg-[var(--apple-bg-secondary)] transition"

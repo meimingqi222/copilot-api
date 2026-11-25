@@ -1,5 +1,8 @@
 import type { AccountModel } from "~/lib/provider-connections"
-import type { ProviderConnection } from "~/lib/provider-connections"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 
 import { canonicalNativeModelId } from "~/lib/route-target/model-reference"
 import { logger } from "~/lib/logger"
@@ -8,7 +11,10 @@ import {
   getConnectionProxyUrl,
   getConnectionSettings,
 } from "~/lib/provider-connections"
-import { executeUpstreamProxyCall } from "~/lib/quota/upstream-proxy"
+import {
+  executeUpstreamProxyCall,
+  fetchWithConnectionProxy,
+} from "~/lib/quota/upstream-proxy"
 import { CODEX_API_BASE_URL } from "~/services/oauth/codex"
 import { oauthFetch } from "~/services/oauth/fetch"
 import { rememberCodexClientModels } from "~/services/codex/client-models"
@@ -25,6 +31,7 @@ interface CodexModelPayload {
   context_window?: unknown
   max_context_window?: unknown
   max_output_tokens?: unknown
+  service_tiers?: Array<{ id?: string }>
   /** Codex 目录的思考档位：`[{ effort: "low" }, …]` 或裸字符串。 */
   supported_reasoning_levels?: Array<unknown>
 }
@@ -175,22 +182,99 @@ async function fetchCodexModelsFromMirror(
   return undefined
 }
 
-async function fetchCodexModelsFromUpstream(
-  connection: ProviderConnection,
-  accessToken: string,
-  baseUrl: string,
-  accountId?: string,
-  signal?: AbortSignal,
-): Promise<Array<AccountModel>> {
-  const url = new URL(`${baseUrl.replace(/\/$/, "")}/models`)
+function codexModelsUrl(connection: ProviderConnection): URL {
+  const base = getConnectionSettings(connection)?.baseUrl
+  const url = new URL(
+    `${(typeof base === "string" ? base : CODEX_API_BASE_URL).replace(/\/+$/, "")}/models`,
+  )
   // Upstream filters models by client_version. 0.135.0 omits gpt-5.6-*;
   // we claim the newer fetch version CPA's fetch_codex_models uses (0.159.0)
   // so the catalog keeps including freshly shipped models.
   url.searchParams.set("client_version", CODEX_MODELS_CLIENT_VERSION)
+  return url
+}
 
+const accountSpeedCatalogs = new WeakMap<
+  ApiCredential,
+  {
+    accessToken: string
+    url: string
+    expiresAt: number
+    speeds: Map<string, "ultrafast" | "priority">
+  }
+>()
+
+export async function getCodexAccountModelSpeed(
+  connection: ProviderConnection,
+  credential: ApiCredential,
+  accessToken: string,
+  model: string,
+  signal?: AbortSignal,
+): Promise<"ultrafast" | "priority" | undefined> {
+  const url = codexModelsUrl(connection).toString()
+  let catalog = accountSpeedCatalogs.get(credential)
+  if (
+    catalog?.accessToken !== accessToken
+    || catalog.url !== url
+    || catalog.expiresAt <= Date.now()
+  ) {
+    const speeds = new Map<string, "ultrafast" | "priority">()
+    let ttl = 30_000
+    try {
+      // The public mirror can list tiers from a different subscription.
+      // Only the selected credential's authenticated catalog can opt in.
+      const response = await fetchWithConnectionProxy(connection, url, {
+        headers: buildCodexHeaders(accessToken, undefined, {
+          accountId:
+            typeof credential.context?.oauthAccountId === "string" ?
+              credential.context.oauthAccountId
+            : undefined,
+        }),
+        signal:
+          signal ?
+            AbortSignal.any([signal, AbortSignal.timeout(3_000)])
+          : AbortSignal.timeout(3_000),
+      })
+      if (!response.ok) {
+        await response.body?.cancel()
+        throw new Error(`Codex model catalog returned ${response.status}`)
+      }
+      const payload = (await response.json()) as {
+        models?: Array<CodexModelPayload>
+      }
+      if (Array.isArray(payload.models)) {
+        for (const entry of payload.models) {
+          const id = entry && parseCodexModelId(entry)
+          if (!id || !Array.isArray(entry.service_tiers)) continue
+          if (entry.service_tiers.some((tier) => tier?.id === "ultrafast")) {
+            speeds.set(id, "ultrafast")
+          } else if (
+            entry.service_tiers.some((tier) => tier?.id === "priority")
+          ) {
+            speeds.set(id, "priority")
+          }
+        }
+        ttl = 5 * 60_000
+      }
+    } catch (error) {
+      signal?.throwIfAborted()
+      logger.debug(`Codex speed discovery failed: ${String(error)}`)
+    }
+    catalog = { accessToken, url, speeds, expiresAt: Date.now() + ttl }
+    accountSpeedCatalogs.set(credential, catalog)
+  }
+  return catalog.speeds.get(model)
+}
+
+async function fetchCodexModelsFromUpstream(
+  connection: ProviderConnection,
+  accessToken: string,
+  accountId?: string,
+  signal?: AbortSignal,
+): Promise<Array<AccountModel>> {
   const response = await executeUpstreamProxyCall(connection, {
     method: "GET",
-    url: url.toString(),
+    url: codexModelsUrl(connection).toString(),
     headers: buildCodexHeaders(accessToken, undefined, { accountId }),
     signal,
   })
@@ -228,14 +312,9 @@ export async function getCodexModelsForConnection(
     return mirrored
   }
 
-  const settings = getConnectionSettings(connection)
-  const baseUrl =
-    (typeof settings?.baseUrl === "string" ? settings.baseUrl : undefined)
-    ?? CODEX_API_BASE_URL
   return fetchCodexModelsFromUpstream(
     connection,
     accessToken,
-    baseUrl,
     typeof cred.context?.oauthAccountId === "string" ?
       cred.context.oauthAccountId
     : undefined,

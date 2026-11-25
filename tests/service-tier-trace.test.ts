@@ -114,25 +114,28 @@ test("initial lifecycle frames do not confirm Fast", async () => {
   ).toBeUndefined()
 })
 
-test("Fast aliases retain their raw request and response values", async () => {
+test.each([
+  ["fast", "priority"],
+  ["ultrafast", "ultrafast"],
+])("%s retains its raw request and response values", async (tier, sent) => {
   const current = await context()
-  recordRequestedServiceTier(current, { service_tier: "fast" })
-  recordRoutedServiceTier(current, { service_tier: "fast" })
-  recordSentServiceTier(current, "priority")
+  recordRequestedServiceTier(current, { service_tier: tier })
+  recordRoutedServiceTier(current, { service_tier: tier })
+  recordSentServiceTier(current, sent)
   recordUpstreamAttempt(current, target, { status: 200 }, 1)
   observeResponseServiceTier(current, {
     type: "response.completed",
-    response: { service_tier: "fast" },
+    response: { service_tier: tier },
   })
   expect(getRequestLogContext(current)?.entry).toMatchObject({
-    serviceTierRequested: "fast",
-    serviceTierRouted: "fast",
-    serviceTierUpstream: "priority",
-    serviceTierResponse: "fast",
+    serviceTierRequested: tier,
+    serviceTierRouted: tier,
+    serviceTierUpstream: sent,
+    serviceTierResponse: tier,
   })
   expect(
     getRequestLogContext(current)?.entry.attempts?.[0].serviceTierResponse,
-  ).toBe("fast")
+  ).toBe(tier)
 })
 
 test("service tier records requested, routed, sent and reported independently", async () => {

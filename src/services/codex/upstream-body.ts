@@ -1,7 +1,13 @@
 import type { RequestExecutionContext } from "~/services/providers/runtime"
+import type {
+  ApiCredential,
+  ProviderConnection,
+} from "~/lib/provider-connections"
 
 import { HTTPError } from "~/lib/error"
 import { updateMemoryTrace } from "~/lib/memory-diagnostics"
+import { getSystemSettings } from "~/lib/system-config"
+import { getCodexAccountModelSpeed } from "~/services/codex/get-models"
 import {
   type ResponsesPayload,
   withDefaultReasoningSummary,
@@ -108,6 +114,28 @@ export function resolveCodexServiceTier(
     : undefined
 }
 
+export async function resolveCodexRequestServiceTier(
+  value: unknown,
+  target: { connection: ProviderConnection; credential: ApiCredential },
+  accessToken: string,
+  model: string,
+  signal?: AbortSignal,
+) {
+  // Apply the default before normalization: an explicit "default" is stripped,
+  // not promoted to Fast. Routing hints only reflect the finalized body.
+  if (value != null) return resolveCodexServiceTier(value)
+  const speed = getSystemSettings().codexDefaultSpeed
+  return speed === "ultrafast" ?
+      getCodexAccountModelSpeed(
+        target.connection,
+        target.credential,
+        accessToken,
+        model,
+        signal,
+      )
+    : resolveCodexServiceTier(speed)
+}
+
 /**
  * Builds the body sent to the Codex upstream /responses endpoint.
  *
@@ -124,6 +152,7 @@ export function buildCodexUpstreamBody(
   payload: ResponsesPayload,
   model: string,
   responsesLite: boolean,
+  serviceTier: ReturnType<typeof resolveCodexServiceTier>,
 ): Record<string, unknown> {
   const rawInclude = (payload as { include?: unknown }).include
   const clientInclude: Array<string> =
@@ -163,7 +192,7 @@ export function buildCodexUpstreamBody(
     truncation: undefined,
     user: undefined,
     context_management: undefined,
-    service_tier: resolveCodexServiceTier(payload.service_tier),
+    service_tier: serviceTier,
   }
 }
 

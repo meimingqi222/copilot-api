@@ -3,6 +3,8 @@ import { Hono } from "hono"
 
 import { getRequestLogContext, initRequestLog } from "~/lib/request-log"
 import { recordRequestedServiceTier } from "~/lib/service-tier-trace"
+import { initializeSystemConfig } from "~/lib/system-config"
+import { systemConfigApiRoutes } from "~/routes/admin/api/system-config"
 import { clearUpstreamWebsocketSessionsForTest } from "~/services/responses/upstream-ws"
 import { loopbackTest } from "./helpers/loopback-test"
 
@@ -83,6 +85,7 @@ async function capturePostedBody(
   opts: {
     headers?: Record<string, string>
     captureHeaders?: (headers: Headers) => void
+    modelCatalog?: (url: URL, headers: Headers) => Response
     /**
      * Transcript recovery fails closed without a tenant scope, so any test
      * exercising the replay path must model a real scoped caller (both route
@@ -93,7 +96,12 @@ async function capturePostedBody(
   subject?: ReturnType<typeof makeCodexSubject>,
 ): Promise<Record<string, unknown>> {
   let postedBody: Record<string, unknown> | undefined
-  globalThis.fetch = ((_url: unknown, init: RequestInit) => {
+  globalThis.fetch = ((url: string, init: RequestInit) => {
+    if (init.method !== "POST" && opts.modelCatalog) {
+      return Promise.resolve(
+        opts.modelCatalog(new URL(url), new Headers(init.headers)),
+      )
+    }
     postedBody = JSON.parse(init.body as string) as Record<string, unknown>
     opts.captureHeaders?.(new Headers(init.headers))
     return Promise.resolve(sseOkBody())
@@ -163,6 +171,119 @@ describe("codex request compatibility (CPA parity)", () => {
           "model=gpt-6.1-sol;tier=priority"
         ),
       )
+    }
+  })
+
+  test("saved Codex speed defaults use the selected account's advertised tiers without overriding the caller", async () => {
+    let saved: string | undefined
+    const normal = {
+      logLevel: "info",
+      requestDump: false,
+      memoryVerbose: false,
+      performanceDetails: true,
+    }
+    const initialize = (value?: string) =>
+      initializeSystemConfig({
+        value,
+        save: (data) => {
+          saved = data
+        },
+        onChange: () => {},
+      })
+    const save = async (codexDefaultSpeed?: string) => {
+      const response = await systemConfigApiRoutes.request("/", {
+        method: "PUT",
+        body: JSON.stringify({
+          ...normal,
+          debugMinutes: 15,
+          codexDefaultSpeed,
+        }),
+      })
+      expect(response.status).toBe(200)
+    }
+    const check = async (
+      tier?: string,
+      expected?: string,
+      subject = makeCodexSubject(),
+    ) => {
+      const posted = await capturePostedBody(
+        { model: "gpt-6.1-sol", input: "hi", stream: true, service_tier: tier },
+        {
+          modelCatalog: (url, headers) => {
+            catalogReads.push(headers.get("chatgpt-account-id"))
+            expect(url.host).toBe("chatgpt.com")
+            expect(url.pathname).toBe("/backend-api/codex/models")
+            expect(headers.get("authorization")).toBe(
+              `Bearer ${subject.credential.value}`,
+            )
+            const account = headers.get("chatgpt-account-id")
+            if (account === "unavailable")
+              return new Response(null, { status: 503 })
+            return Response.json({
+              models: [
+                { slug: "gpt-6-astra", service_tiers: [{ id: "ultrafast" }] },
+                {
+                  slug: "gpt-6.1-sol",
+                  service_tiers:
+                    account === "eligible" ?
+                      [{ id: "ultrafast" }, { id: "priority" }]
+                    : account === "fast-only" ? [{ id: "priority" }]
+                    : [],
+                },
+              ],
+            })
+          },
+          captureHeaders: (headers) => {
+            expect(headers.get("x-codex-routing-hint")).toBe(
+              `model=gpt-6.1-sol${expected ? `;tier=${expected}` : ""}`,
+            )
+          },
+        },
+        subject,
+      )
+      expect(posted.service_tier).toBe(expected)
+    }
+    const catalogReads: Array<string | null> = []
+    initialize()
+    try {
+      await check()
+      initialize(
+        JSON.stringify({
+          settings: { ...normal, codexDefaultFast: true },
+          expiresAt: null,
+        }),
+      )
+      await check(undefined, "priority")
+      await save("ultrafast")
+      await save()
+      initialize(saved)
+      await check("flex", "flex")
+      await check("default")
+      for (const [account, expected] of [
+        ["eligible", "ultrafast"],
+        ["fast-only", "priority"],
+        ["standard-only", undefined],
+        ["unavailable", undefined],
+      ] as const) {
+        const subject = makeCodexSubject()
+        subject.credential.context = {
+          ...subject.credential.context,
+          oauthAccountId: account,
+        }
+        await check(undefined, expected, subject)
+        await check(undefined, expected, subject)
+      }
+      expect(catalogReads).toEqual([
+        "eligible",
+        "fast-only",
+        "standard-only",
+        "unavailable",
+      ])
+      await save("default")
+      await check()
+      await check("fast", "priority")
+    } finally {
+      initialize()
     }
   })
 

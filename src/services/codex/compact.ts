@@ -46,7 +46,7 @@ import { buildCodexHeaders } from "./headers"
 import {
   normalizeCodexBuiltinTools,
   normalizeCodexInputItems,
-  resolveCodexServiceTier,
+  resolveCodexRequestServiceTier,
 } from "./upstream-body"
 
 type CodexOutboundTransport = "http" | "ws"
@@ -159,7 +159,13 @@ async function createCodexCompactOnce(
     tools: body.tools,
     parallel_tool_calls: body.parallel_tool_calls,
     reasoning: body.reasoning,
-    service_tier: resolveCodexServiceTier(body.service_tier),
+    service_tier: await resolveCodexRequestServiceTier(
+      body.service_tier,
+      { connection, credential },
+      accessToken,
+      model,
+      signal,
+    ),
     prompt_cache_key:
       sessionId
       ?? (typeof body.prompt_cache_key === "string" ?

@@ -36,6 +36,9 @@ const settingsSchema = z
     concurrencyQueueLimit: z.number().int().min(0).max(10000).default(100),
     concurrencyQueueWaitSeconds: z.number().int().min(1).max(600).default(30),
     codexAutoReset: z.boolean().default(false),
+    codexDefaultSpeed: z
+      .enum(["default", "priority", "ultrafast"])
+      .default("default"),
     /** ZCode 限时套餐自动领取（活动赠送额度，原生 JWT 账号）。 */
     zcodeAutoClaim: z.boolean().default(false),
     accountWarmup: z
@@ -135,6 +138,9 @@ export const systemConfigUpdateSchema = settingsSchema
     codexModelIds: settingsSchema.shape.codexModelIds
       .removeDefault()
       .optional(),
+    codexDefaultSpeed: settingsSchema.shape.codexDefaultSpeed
+      .removeDefault()
+      .optional(),
     logRetentionDays: settingsSchema.shape.logRetentionDays
       .removeDefault()
       .optional(),
@@ -164,7 +170,19 @@ export const systemConfigUpdateSchema = settingsSchema
 
 const storedSchema = z
   .object({
-    settings: settingsSchema,
+    settings: settingsSchema
+      .extend({
+        codexDefaultFast: z.boolean().optional(),
+        codexDefaultSpeed: systemConfigUpdateSchema.shape.codexDefaultSpeed,
+      })
+      .transform(
+        ({ codexDefaultFast, ...settings }): SystemSettings => ({
+          ...settings,
+          codexDefaultSpeed:
+            settings.codexDefaultSpeed
+            ?? (codexDefaultFast ? "priority" : "default"),
+        }),
+      ),
     expiresAt: z.number().finite().nonnegative().nullable(),
   })
   .strict()
@@ -181,6 +199,7 @@ const safeDefaults: SystemSettings = {
   concurrencyQueueLimit: 100,
   concurrencyQueueWaitSeconds: 30,
   codexAutoReset: false,
+  codexDefaultSpeed: "default",
   zcodeAutoClaim: false,
   accountWarmup: settingsSchema.shape.accountWarmup.parse(undefined),
   codexModelIds: null,
@@ -307,6 +326,8 @@ export function updateSystemConfig(
       redaction: settings.redaction ?? effectiveSettings().redaction,
       accountWarmup:
         settings.accountWarmup ?? effectiveSettings().accountWarmup,
+      codexDefaultSpeed:
+        settings.codexDefaultSpeed ?? effectiveSettings().codexDefaultSpeed,
       codexModelIds:
         settings.codexModelIds === undefined ?
           effectiveSettings().codexModelIds

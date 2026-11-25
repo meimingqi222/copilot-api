@@ -273,6 +273,7 @@ function systemConfigView() {
     accept(data) {
       this.settings = data.settings
       this.settings.zcodeAutoClaim ??= false
+      this.settings.codexDefaultSpeed ??= "default"
       this.settings.codexModelIds ??= null
       this.settings.concurrencyQueueLimit ??= 100
       this.settings.concurrencyQueueWaitSeconds ??= 30
@@ -340,6 +341,7 @@ function systemConfigView() {
         concurrencyQueueLimit: 100,
         concurrencyQueueWaitSeconds: 30,
         codexAutoReset: false,
+        codexDefaultSpeed: "default",
         zcodeAutoClaim: false,
         accountWarmup: { ...this.settings.accountWarmup, enabled: false },
         codexModelIds: this.settings?.codexModelIds ?? null,
